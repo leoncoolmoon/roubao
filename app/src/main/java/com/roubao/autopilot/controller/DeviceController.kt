@@ -13,6 +13,7 @@ import android.os.Looper
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
 import com.roubao.autopilot.service.ShellService
+import com.roubao.autopilot.utils.MediaProjectionHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -349,7 +350,11 @@ class DeviceController(private val context: Context? = null) {
 
             // 检查是否截图失败（敏感页面保护）
             if (output.contains("Status: -1") || output.contains("Failed") || output.contains("error")) {
-                println("[DeviceController] Screenshot blocked (sensitive screen), returning fallback")
+                println("[DeviceController] Screenshot blocked (sensitive screen), trying MediaProjection fallback")
+                val fallbackBitmap = tryMediaProjectionFallback()
+                if (fallbackBitmap != null) {
+                    return@withContext ScreenshotResult(fallbackBitmap, isFallback = false)
+                }
                 return@withContext createFallbackScreenshot(isSensitive = true)
             }
 
@@ -377,13 +382,31 @@ class DeviceController(private val context: Context? = null) {
                 }
             }
 
-            println("[DeviceController] Screenshot file empty or not accessible, returning fallback")
+            println("[DeviceController] Screenshot file empty or not accessible, trying MediaProjection fallback")
+            val fallbackBitmap = tryMediaProjectionFallback()
+            if (fallbackBitmap != null) {
+                return@withContext ScreenshotResult(fallbackBitmap, isFallback = false)
+            }
+
             createFallbackScreenshot(isSensitive = false)
         } catch (e: Exception) {
             e.printStackTrace()
-            println("[DeviceController] Screenshot exception, returning fallback")
+            println("[DeviceController] Screenshot exception, trying MediaProjection fallback")
+            val fallbackBitmap = tryMediaProjectionFallback()
+            if (fallbackBitmap != null) {
+                return@withContext ScreenshotResult(fallbackBitmap, isFallback = false)
+            }
             createFallbackScreenshot(isSensitive = false)
         }
+    }
+
+    private suspend fun tryMediaProjectionFallback(): Bitmap? {
+        val ctx = context ?: App.getInstance()
+        if (MediaProjectionHelper.hasProjectionPermission()) {
+            println("[DeviceController] Attempting screenshot via MediaProjectionHelper")
+            return MediaProjectionHelper.captureScreen(ctx)
+        }
+        return null
     }
 
     /**

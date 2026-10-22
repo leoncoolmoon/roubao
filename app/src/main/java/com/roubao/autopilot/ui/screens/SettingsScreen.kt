@@ -46,6 +46,7 @@ import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
+import com.roubao.autopilot.service.AutoPilotAccessibilityService
 
 @Composable
 fun SettingsScreen(
@@ -59,6 +60,8 @@ fun SettingsScreen(
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
+    onUpdateAccessibilityEnabled: (Boolean) -> Unit = {},
+    onRequestMediaProjectionPermission: () -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
@@ -106,6 +109,156 @@ fun SettingsScreen(
         // 连接状态卡片
         item {
             StatusCard(shizukuAvailable = shizukuAvailable)
+        }
+
+        // 辅助功能分组 (无障碍与截屏)
+        item {
+            SettingsSection(title = "AI 辅助增强")
+        }
+
+        // MediaProjection 截图 Fallback
+        item {
+            val hasProjection = com.roubao.autopilot.utils.MediaProjectionHelper.hasProjectionPermission()
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "系统截图 Fallback (MediaProjection)",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (hasProjection) "已授权，Shell 截图失败时自动回退" else "当 Shizuku 截图失败时提供系统截图备用",
+                            fontSize = 13.sp,
+                            color = if (hasProjection) colors.success else colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    Button(
+                        onClick = onRequestMediaProjectionPermission,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (hasProjection) colors.success else colors.primary
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = if (hasProjection) "已授权" else "授权",
+                            fontSize = 12.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            val context = LocalContext.current
+            val isAccessibilityActive = AutoPilotAccessibilityService.isServiceEnabled()
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = null,
+                                tint = colors.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "无障碍辅助识别",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textPrimary
+                            )
+                            Text(
+                                text = if (isAccessibilityActive) "服务已运行，允许 AI 获取 UI 名称与位置" else "允许 AI 通过无障碍功能读取 UI 结构",
+                                fontSize = 13.sp,
+                                color = if (isAccessibilityActive) colors.success else colors.textSecondary,
+                                maxLines = 1
+                            )
+                        }
+                        Switch(
+                            checked = settings.accessibilityEnabled,
+                            onCheckedChange = { enabled ->
+                                onUpdateAccessibilityEnabled(enabled)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = colors.primary,
+                                checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                                uncheckedThumbColor = colors.textHint,
+                                uncheckedTrackColor = colors.backgroundInput
+                            )
+                        )
+                    }
+
+                    if (settings.accessibilityEnabled) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                val intent = android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                context.startActivity(intent)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = if (isAccessibilityActive) "管理无障碍服务 (已开启)" else "前往系统设置开启无障碍服务",
+                                fontSize = 13.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // 外观设置分组

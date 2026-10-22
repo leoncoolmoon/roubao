@@ -2,6 +2,7 @@
 <resources>
     <!-- App Name -->
     <string name="app_name">肉包</string>
+    <string name="accessibility_service_description">无障碍服务允许肉包 AI 识别当前界面的元素名称和位置，从而进行更精准的自动化操作。</string>
 
     <!-- Tab Titles -->
     <string name="tab_home">肉包</string>

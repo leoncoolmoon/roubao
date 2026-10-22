@@ -26,6 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import android.net.Uri
 import android.provider.Settings
+import android.media.projection.MediaProjectionManager
+import androidx.activity.result.contract.ActivityResultContracts
+import com.roubao.autopilot.utils.MediaProjectionHelper
 import com.roubao.autopilot.agent.MobileAgent
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
@@ -74,6 +77,28 @@ class MainActivity : ComponentActivity() {
 
     // 是否需要跳转到记录详情（悬浮窗停止后触发）
     private val shouldNavigateToRecord = mutableStateOf(false)
+
+    // MediaProjection 权限请求 Launcher
+    private val mediaProjectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            MediaProjectionHelper.setProjectionData(result.resultCode, result.data!!)
+            Toast.makeText(this, "媒体投影 (屏幕截图) 授权成功", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "未授予屏幕截图权限，应用将仅依赖 Shizuku 截图", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 请求 MediaProjection 权限
+     */
+    fun requestMediaProjectionPermission() {
+        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+        if (projectionManager != null) {
+            mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
+        }
+    }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.d(TAG, "Shizuku binder received")
@@ -311,6 +336,8 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
+                                onUpdateAccessibilityEnabled = { settingsManager.updateAccessibilityEnabled(it) },
+                                onRequestMediaProjectionPermission = { requestMediaProjectionPermission() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {

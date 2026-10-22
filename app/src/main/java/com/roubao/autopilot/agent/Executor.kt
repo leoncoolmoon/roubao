@@ -47,6 +47,12 @@ Text Related:
             append("No progress yet.\n\n")
         }
 
+        // 无障碍 UI 上下文
+        if (infoPool.accessibilityUiContext.isNotEmpty()) {
+            append("### Accessibility UI Nodes ###\n")
+            append("${infoPool.accessibilityUiContext}\n\n")
+        }
+
         append("### Guidelines ###\n")
         append("$GUIDELINES\n\n")
 

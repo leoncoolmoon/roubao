@@ -7,6 +7,8 @@ import com.roubao.autopilot.App
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
+import com.roubao.autopilot.data.SettingsManager
+import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
@@ -122,6 +124,19 @@ class MobileAgent(
             log("已匹配到可用技能:\n$skillContext")
         } else {
             log("未匹配到特定技能，使用通用 GUI 自动化")
+        }
+
+        // 检查无障碍设置并提取当前 UI 结构信息
+        val settingsManager = SettingsManager(context)
+        if (settingsManager.settings.value.accessibilityEnabled && AutoPilotAccessibilityService.isServiceEnabled()) {
+            val accessibilityService = AutoPilotAccessibilityService.getInstance()
+            if (accessibilityService != null) {
+                val uiPrompt = accessibilityService.getFormattedUiPrompt()
+                infoPool.accessibilityUiContext = uiPrompt
+                log("已获取无障碍 UI 节点信息 (${uiPrompt.lines().size} 行)")
+            }
+        } else {
+            infoPool.accessibilityUiContext = ""
         }
 
         // 获取屏幕尺寸

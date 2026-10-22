@@ -37,6 +37,12 @@ class Manager {
             append("${infoPool.skillContext}\n\n")
         }
 
+        // 无障碍 UI 上下文
+        if (infoPool.accessibilityUiContext.isNotEmpty()) {
+            append("### Accessibility UI Nodes ###\n")
+            append("${infoPool.accessibilityUiContext}\n\n")
+        }
+
         append("### Guidelines ###\n")
         append("1. IMPORTANT: If you see the \"肉包\" or \"Baozi\" app interface (this automation tool), press Home button first to go back to the home screen, then proceed with the task.\n")
         append("2. ALWAYS use `open_app` action to open apps - NEVER go to home screen to look for app icons! The open_app action can launch any installed app directly.\n")

@@ -43,6 +43,9 @@ data class InfoPool(
     // Skill 上下文（从 SkillManager 获取的相关技能信息）
     var skillContext: String = "",
 
+    // 无障碍 UI 结构信息 Prompt
+    var accessibilityUiContext: String = "",
+
     // 对话记忆（保存完整对话历史，用于 Executor）
     var executorMemory: ConversationMemory? = null,
 

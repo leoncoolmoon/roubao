@@ -2,6 +2,7 @@
 <resources>
     <!-- App Name -->
     <string name="app_name">Baozi</string>
+    <string name="accessibility_service_description">Accessibility Service allows Roubao AI to retrieve UI element names and positions for precise automation.</string>
 
     <!-- Tab Titles -->
     <string name="tab_home">Baozi</string>
