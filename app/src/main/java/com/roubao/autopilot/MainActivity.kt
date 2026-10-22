@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            MediaProjectionHelper.setProjectionData(result.resultCode, result.data!!)
+            MediaProjectionHelper.setProjectionData(this, result.resultCode, result.data!!)
             Toast.makeText(this, "媒体投影 (屏幕截图) 授权成功", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "未授予屏幕截图权限，应用将仅依赖 Shizuku 截图", Toast.LENGTH_SHORT).show()

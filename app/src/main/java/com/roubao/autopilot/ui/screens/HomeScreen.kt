@@ -26,12 +26,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import android.graphics.BitmapFactory
 import com.roubao.autopilot.agent.AgentState
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.Primary
@@ -157,6 +160,7 @@ fun HomeScreen(
                     isRunning = isRunning,
                     currentStep = agentState?.currentStep ?: 0,
                     currentModel = currentModel,
+                    agentState = agentState,
                     listState = listState,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -294,9 +298,11 @@ fun ExecutionLogView(
     isRunning: Boolean,
     currentStep: Int,
     currentModel: String,
+    agentState: AgentState? = null,
     listState: androidx.compose.foundation.lazy.LazyListState,
     modifier: Modifier = Modifier
 ) {
+    val colors = BaoziTheme.colors
     Column(modifier = modifier) {
         // 执行状态指示器
         if (isRunning) {
@@ -313,6 +319,29 @@ fun ExecutionLogView(
         ) {
             items(logs) { log ->
                 LogItem(log = log)
+            }
+
+            // 如果有步骤截图，在底部以水平列表展示缩略图
+            val stepsWithScreenshots = agentState?.executionSteps?.filter { !it.screenshotPath.isNullOrEmpty() } ?: emptyList()
+            if (stepsWithScreenshots.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "执行截图缩略图",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.primary,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        items(stepsWithScreenshots) { step ->
+                            StepScreenshotThumbnail(step = step)
+                        }
+                    }
+                }
             }
         }
     }
@@ -406,6 +435,39 @@ fun ExecutingIndicator(currentStep: Int, currentModel: String = "") {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun StepScreenshotThumbnail(step: com.roubao.autopilot.data.ExecutionStep) {
+    val colors = BaoziTheme.colors
+    val bitmap = remember(step.screenshotPath) {
+        step.screenshotPath?.let { path ->
+            try {
+                BitmapFactory.decodeFile(path)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    if (bitmap != null) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Step ${step.stepNumber}",
+                modifier = Modifier
+                    .size(width = 80.dp, height = 140.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, colors.primary, RoundedCornerShape(8.dp))
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Step ${step.stepNumber}",
+                fontSize = 10.sp,
+                color = colors.textSecondary
+            )
         }
     }
 }

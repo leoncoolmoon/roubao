@@ -25,6 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.BitmapFactory
 import com.roubao.autopilot.data.ExecutionRecord
 import com.roubao.autopilot.data.ExecutionStatus
 import com.roubao.autopilot.data.ExecutionStep
@@ -588,6 +591,25 @@ fun TimelineItem(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+                if (!step.screenshotPath.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val bitmap = remember(step.screenshotPath) {
+                        try {
+                            BitmapFactory.decodeFile(step.screenshotPath)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Screenshot ${step.stepNumber}",
+                            modifier = Modifier
+                                .size(width = 100.dp, height = 180.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        )
+                    }
                 }
             }
         }

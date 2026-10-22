@@ -50,6 +50,7 @@ Text Related:
         // 无障碍 UI 上下文
         if (infoPool.accessibilityUiContext.isNotEmpty()) {
             append("### Accessibility UI Nodes ###\n")
+            append("The active screen contains the following detected UI elements and bounds. Use these element labels and coordinates if screenshot image is unclear or black:\n")
             append("${infoPool.accessibilityUiContext}\n\n")
         }
 

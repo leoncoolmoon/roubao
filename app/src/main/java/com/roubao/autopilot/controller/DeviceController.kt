@@ -13,6 +13,7 @@ import android.os.Looper
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
 import com.roubao.autopilot.service.ShellService
+import com.roubao.autopilot.utils.CrashHandler
 import com.roubao.autopilot.utils.MediaProjectionHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -404,7 +405,10 @@ class DeviceController(private val context: Context? = null) {
         val ctx = context ?: App.getInstance()
         if (MediaProjectionHelper.hasProjectionPermission()) {
             println("[DeviceController] Attempting screenshot via MediaProjectionHelper")
+            CrashHandler.getInstance().log("DeviceController", "尝试使用 MediaProjection 截图 Fallback")
             return MediaProjectionHelper.captureScreen(ctx)
+        } else {
+            CrashHandler.getInstance().log("DeviceController", "MediaProjection 未授权，无法使用截图 Fallback")
         }
         return null
     }

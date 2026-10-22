@@ -11,6 +11,7 @@ import com.roubao.autopilot.data.SettingsManager
 import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.ui.OverlayService
+import com.roubao.autopilot.utils.CrashHandler
 import com.roubao.autopilot.vlm.GUIOwlClient
 import com.roubao.autopilot.vlm.MAIUIClient
 import com.roubao.autopilot.vlm.VLMClient
@@ -181,13 +182,26 @@ class MobileAgent(
                 log("\n========== Step ${step + 1} ==========")
                 OverlayService.update("Step ${step + 1}/$maxSteps")
 
-                // 1. 截图 (先隐藏悬浮窗避免被识别)
+                // 1. 动态刷新无障碍 UI 节点
+                if (settingsManager.settings.value.accessibilityEnabled && AutoPilotAccessibilityService.isServiceEnabled()) {
+                    val accessibilityService = AutoPilotAccessibilityService.getInstance()
+                    if (accessibilityService != null) {
+                        val uiPrompt = accessibilityService.getFormattedUiPrompt()
+                        infoPool.accessibilityUiContext = uiPrompt
+                        log("实时刷新无障碍 UI 结构信息 (${uiPrompt.lines().size} 行)")
+                    }
+                }
+
+                // 2. 截图 (先隐藏悬浮窗避免被识别)
                 log("截图中...")
                 OverlayService.setVisible(false)
                 delay(100) // 等待悬浮窗隐藏
                 val screenshotResult = controller.screenshotWithFallback()
                 OverlayService.setVisible(true)
                 val screenshot = screenshotResult.bitmap
+
+                // 保存截图供 UI 缩略图与调试展示
+                val screenshotPath = saveStepScreenshot(screenshot, step + 1)
 
                 // 处理敏感页面（截图被系统阻止）
                 if (screenshotResult.isSensitive) {
@@ -404,7 +418,8 @@ class MobileAgent(
                     action = action.type,
                     description = executorResult.description,
                     thought = executorResult.thought,
-                    outcome = "?" // 进行中
+                    outcome = "?", // 进行中
+                    screenshotPath = screenshotPath
                 )
                 updateState { copy(executionSteps = executionSteps + executionStep) }
 
@@ -1156,9 +1171,26 @@ class MobileAgent(
         }
     }
 
+    /**
+     * 保存单步截图到缓存目录
+     */
+    private fun saveStepScreenshot(bitmap: Bitmap, stepNumber: Int): String? {
+        return try {
+            val file = java.io.File(context.cacheDir, "step_thumb_${System.currentTimeMillis()}_$stepNumber.jpg")
+            java.io.FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
+            }
+            file.absolutePath
+        } catch (e: Exception) {
+            println("[MobileAgent] Failed to save step screenshot: ${e.message}")
+            null
+        }
+    }
+
     private fun log(message: String) {
         println("[肉包] $message")
         _logs.value = _logs.value + message
+        CrashHandler.getInstance().log("MobileAgent", message)
     }
 
     private fun updateState(update: AgentState.() -> AgentState) {
