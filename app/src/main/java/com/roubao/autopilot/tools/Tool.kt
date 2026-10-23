@@ -85,6 +85,14 @@ interface Tool {
      * 生成给 LLM 的工具描述
      */
     fun toLLMDescription(): String {
+        val customPrompt = try {
+            com.roubao.autopilot.data.PromptRepository.getInstance().getToolSkillPrompt(name)?.prompt
+        } catch (e: Exception) { null }
+
+        if (!customPrompt.isNullOrBlank()) {
+            return customPrompt
+        }
+
         val paramsDesc = params.joinToString("\n") { p ->
             val required = if (p.required) "(必填)" else "(可选)"
             "  - ${p.name}: ${p.type} $required - ${p.description}"

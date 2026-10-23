@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
+import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.data.SettingsManager
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.tools.ToolManager
@@ -46,6 +47,9 @@ class App : Application() {
     }
 
     private fun initializeComponents() {
+        // 初始化 Prompt 数据库
+        PromptRepository.init(this)
+
         // 初始化设备控制器
         deviceController = DeviceController(this)
         deviceController.setCacheDir(cacheDir)

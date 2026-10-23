@@ -1,5 +1,7 @@
 package com.roubao.autopilot.agent
 
+import com.roubao.autopilot.data.PromptRepository
+
 /**
  * Notetaker Agent - 记录重要信息
  */
@@ -8,36 +10,18 @@ class Notetaker {
     /**
      * 生成笔记 Prompt
      */
-    fun getPrompt(infoPool: InfoPool): String = buildString {
-        append("You are a helpful AI assistant for operating mobile phones. ")
-        append("Your goal is to take notes of important content relevant to the user's request.\n\n")
-
-        append("### User Request ###\n")
-        append("${infoPool.instruction}\n\n")
-
-        append("### Progress Status ###\n")
-        append("${infoPool.progressStatus}\n\n")
-
-        append("### Existing Important Notes ###\n")
-        if (infoPool.importantNotes.isNotEmpty()) {
-            append("${infoPool.importantNotes}\n\n")
-        } else {
-            append("No important notes recorded.\n\n")
+    fun getPrompt(infoPool: InfoPool): String {
+        val rawPrompt = try {
+            PromptRepository.getInstance().getAgentPrompt("notetaker")?.prompt
+                ?: PromptRepository.DEFAULT_NOTETAKER_PROMPT
+        } catch (e: Exception) {
+            PromptRepository.DEFAULT_NOTETAKER_PROMPT
         }
 
-        append("---\n")
-        append("Examine the current screen to identify any important content that needs to be recorded.\n\n")
-
-        append("IMPORTANT:\n")
-        append("- Do not take notes on low-level actions\n")
-        append("- Only keep track of significant textual or visual information relevant to the request\n")
-        append("- Do not repeat user request or progress status\n")
-        append("- Do not make up content that you are not sure about\n\n")
-
-        append("Provide your output in the following format:\n\n")
-        append("### Important Notes ###\n")
-        append("The updated important notes, combining old and new ones. ")
-        append("If nothing new to record, copy the existing important notes.\n")
+        return rawPrompt
+            .replace("{{instruction}}", infoPool.instruction)
+            .replace("{{progressStatus}}", infoPool.progressStatus.ifEmpty { "No progress yet." })
+            .replace("{{importantNotes}}", infoPool.importantNotes.ifEmpty { "No important notes recorded." })
     }
 
     /**
