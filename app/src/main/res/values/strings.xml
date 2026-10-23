@@ -52,6 +52,9 @@
     <string name="steps_label">步骤数</string>
     <string name="duration_label">耗时</string>
 
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_description">肉包无障碍服务，用于提取UI元素树协助定位及截图失败盲操</string>
+
     <!-- Settings Screen -->
     <string name="settings_title">设置</string>
     <string name="settings_subtitle">配置 API 和应用选项</string>

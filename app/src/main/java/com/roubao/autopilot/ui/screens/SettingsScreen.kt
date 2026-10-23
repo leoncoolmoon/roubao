@@ -59,6 +59,7 @@ fun SettingsScreen(
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
+    onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
@@ -140,6 +141,64 @@ fun SettingsScreen(
                 subtitle = "${settings.maxSteps} 步",
                 onClick = { showMaxStepsDialog = true }
             )
+        }
+
+        // 无障碍支持开关
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "无障碍支持模式",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (settings.accessibilityModeEnabled) "开启后提取UI元素树协助定位与截图失败盲操" else "未开启（仅依靠视觉图像识别）",
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = settings.accessibilityModeEnabled,
+                        onCheckedChange = { onUpdateAccessibilityModeEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.primary,
+                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput
+                        )
+                    )
+                }
+            }
         }
 
         // Shizuku 高级设置分组（仅在 Shizuku 可用时显示）

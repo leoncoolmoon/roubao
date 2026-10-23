@@ -47,7 +47,10 @@ data class InfoPool(
     var executorMemory: ConversationMemory? = null,
 
     // 已安装应用列表（用于 open_app 动作）
-    var installedApps: String = ""
+    var installedApps: String = "",
+
+    // 无障碍 UI 元素树信息
+    var accessibilityTree: String = ""
 )
 
 /**

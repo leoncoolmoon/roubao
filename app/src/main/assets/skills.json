@@ -535,7 +535,7 @@
         "required": false
       }
     ],
-    "prompt_hint": "小红书笔记内容不能超过100字，请精炼表达",
+    "prompt_hint": "小红书笔记内容不能超过100字，请精炼表达；无障碍模式下可通过 UI 节点树精确定位按钮坐标，截图失败时可依据元素属性盲操",
     "related_apps": [
       {
         "package": "com.xingin.xhs",

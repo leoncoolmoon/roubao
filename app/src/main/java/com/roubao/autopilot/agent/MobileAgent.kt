@@ -40,7 +40,8 @@ class MobileAgent(
     private val controller: DeviceController,
     private val context: Context,
     private val guiOwlClient: GUIOwlClient? = null,  // GUI-Owl 专用客户端
-    private val maiuiClient: MAIUIClient? = null     // MAI-UI 专用客户端
+    private val maiuiClient: MAIUIClient? = null,    // MAI-UI 专用客户端
+    private val accessibilityModeEnabled: Boolean = false  // 无障碍模式开关
 ) {
     // 是否使用 GUI-Owl 模式
     private val useGUIOwlMode: Boolean = guiOwlClient != null
@@ -174,6 +175,15 @@ class MobileAgent(
                 OverlayService.setVisible(true)
                 val screenshot = screenshotResult.bitmap
 
+                // 无障碍 UI 元素树提取 (仅在无障碍设置开启且服务连接时)
+                val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
+                if (accessibilityModeEnabled && accessibilityService != null) {
+                    infoPool.accessibilityTree = accessibilityService.dumpNodeTree()
+                    log("已成功提取无障碍 UI 元素树")
+                } else {
+                    infoPool.accessibilityTree = ""
+                }
+
                 // 处理敏感页面（截图被系统阻止）
                 if (screenshotResult.isSensitive) {
                     log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
@@ -186,9 +196,9 @@ class MobileAgent(
                         bringAppToFront()
                         return AgentResult(success = false, message = "敏感页面，用户取消")
                     }
-                    log("用户确认继续（使用黑屏占位图）")
+                    log("用户确认继续（使用黑屏占位图/无障碍元素树辅助定位）")
                 } else if (screenshotResult.isFallback) {
-                    log("⚠️ 截图失败，使用黑屏占位图继续")
+                    log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                 }
 
                 // 再次检查停止状态（截图后）
@@ -959,21 +969,56 @@ class MobileAgent(
     private suspend fun executeAction(action: Action, infoPool: InfoPool) = withContext(Dispatchers.IO) {
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
+        val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
 
         when (action.type) {
             "click" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
+                var x = mapCoordinate(action.x ?: 0, screenWidth)
+                var y = mapCoordinate(action.y ?: 0, screenHeight)
+
+                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
+
+                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
+                    val exactCoords = accessibilityService.findElementCoordinates(query)
+                    if (exactCoords != null) {
+                        x = exactCoords.first
+                        y = exactCoords.second
+                        log("🎯 无障碍精确校准点击坐标: ($x, $y) [查询: $query]")
+                    } else if (accessibilityService.performActionByAttribute(query)) {
+                        log("🤖 无障碍精确触发节点点击盲操 [查询: $query]")
+                        return@withContext
+                    }
+                }
                 controller.tap(x, y)
             }
             "double_tap" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
+                var x = mapCoordinate(action.x ?: 0, screenWidth)
+                var y = mapCoordinate(action.y ?: 0, screenHeight)
+
+                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
+                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
+                    val exactCoords = accessibilityService.findElementCoordinates(query)
+                    if (exactCoords != null) {
+                        x = exactCoords.first
+                        y = exactCoords.second
+                        log("🎯 无障碍精确校准双击坐标: ($x, $y) [查询: $query]")
+                    }
+                }
                 controller.doubleTap(x, y)
             }
             "long_press" -> {
-                val x = mapCoordinate(action.x ?: 0, screenWidth)
-                val y = mapCoordinate(action.y ?: 0, screenHeight)
+                var x = mapCoordinate(action.x ?: 0, screenWidth)
+                var y = mapCoordinate(action.y ?: 0, screenHeight)
+
+                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
+                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
+                    val exactCoords = accessibilityService.findElementCoordinates(query)
+                    if (exactCoords != null) {
+                        x = exactCoords.first
+                        y = exactCoords.second
+                        log("🎯 无障碍精确校准长按坐标: ($x, $y) [查询: $query]")
+                    }
+                }
                 controller.longPress(x, y)
             }
             "swipe" -> {

@@ -14,6 +14,10 @@ General:
 - For requests that are questions, remember to use the `answer` action to reply before finish!
 - If the desired state is already achieved, you can just complete the task.
 
+Accessibility & Fallback:
+- When Accessibility Mode is enabled, review the Accessibility UI Tree to obtain accurate element coordinates, text, and resource IDs.
+- If screenshot capture fails or is blocked (black/sensitive screen), rely on the Accessibility UI Tree attributes to accurately locate elements and perform blind actions.
+
 Action Related:
 - Use `open_app` to open an app, do not use the app drawer.
 - Consider using `swipe` to reveal additional content.
@@ -57,11 +61,17 @@ Text Related:
             "No actions have been taken yet.\n"
         }
 
-        return rawPrompt
+        var prompt = rawPrompt
             .replace("{{instruction}}", infoPool.instruction)
             .replace("{{plan}}", infoPool.plan)
             .replace("{{progressStatus}}", infoPool.progressStatus.ifEmpty { "No progress yet." })
             .replace("{{actionHistory}}", actionHistoryStr)
+
+        if (infoPool.accessibilityTree.isNotEmpty()) {
+            prompt += "\n\n### Accessibility UI Tree:\n${infoPool.accessibilityTree}\n"
+        }
+
+        return prompt
     }
 
     /**

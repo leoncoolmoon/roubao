@@ -311,6 +311,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
+                                onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
@@ -470,6 +471,9 @@ class MainActivity : ComponentActivity() {
         // 立即设置执行状态为 true，显示停止按钮
         isExecuting.value = true
 
+        val settings = settingsManager.settings.value
+        val accessibilityEnabled = settings.accessibilityModeEnabled
+
         // 根据服务商类型创建相应的客户端
         if (isGUIAgent) {
             // GUI-Owl 模式
@@ -481,7 +485,8 @@ class MainActivity : ComponentActivity() {
                 vlmClient = null,
                 controller = deviceController,
                 context = this,
-                guiOwlClient = guiOwlClient
+                guiOwlClient = guiOwlClient,
+                accessibilityModeEnabled = accessibilityEnabled
             )
         } else if (providerId == "mai_ui") {
             // MAI-UI 模式
@@ -493,7 +498,8 @@ class MainActivity : ComponentActivity() {
                 vlmClient = null,
                 controller = deviceController,
                 context = this,
-                maiuiClient = maiuiClient
+                maiuiClient = maiuiClient,
+                accessibilityModeEnabled = accessibilityEnabled
             )
         } else {
             // OpenAI 兼容模式 (阿里云 Qwen-VL, OpenAI, OpenRouter 等)
@@ -502,7 +508,12 @@ class MainActivity : ComponentActivity() {
                 baseUrl = baseUrl.ifBlank { "https://dashscope.aliyuncs.com/compatible-mode/v1" },
                 model = model.ifBlank { "qwen3-vl-plus" }
             )
-            mobileAgent.value = MobileAgent(vlmClient, deviceController, this)
+            mobileAgent.value = MobileAgent(
+                vlmClient = vlmClient,
+                controller = deviceController,
+                context = this,
+                accessibilityModeEnabled = accessibilityEnabled
+            )
         }
 
         // 设置停止回调，用于取消协程
