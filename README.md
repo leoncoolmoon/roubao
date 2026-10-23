@@ -38,7 +38,7 @@
 
 ## 项目背景
 
-2025 年 12 月，字节跳动联合中兴发布了「豆包手机助手」，一款能够自动操作手机完成复杂任务的 AI 助手。它能帮你比价下单、批量投简历、刷视频，甚至代打游戏。
+2025 年 12 月，字节跳动联合中兴发布了「豆包手机助手」，一款能够自动操作手机完成复杂任务的 AI 助手。它能帮你比价下单、批量投简历、刷视频[...]
 
 首批 3 万台工程机定价 3499 元，上线当天即告售罄，二手市场一度炒到 5000+。
 
@@ -129,8 +129,8 @@ Android 系统出于安全考虑，普通 App 无法：
 (Delegation)  (GUI 自动化)
     │              │
     ▼              ▼
-直接 DeepLink   Agent 循环
-打开小美 AI     操作美团 App
+ 直接 DeepLink   Agent 循环
+ 打开小美 AI     操作美团 App
 ```
 
 **Tools 层（原子能力）**
@@ -173,6 +173,21 @@ Android 系统出于安全考虑，普通 App 无法：
 - 基于先进的视觉语言模型（VLM），能够"看懂"屏幕内容
 - 自然语言指令，说人话就能操作手机
 - 智能决策，根据屏幕状态自动规划下一步操作
+
+### 🗃️ Prompt 数据库化管理与无障碍增强
+
+#### 1. Agent 与 Tool/Skill Prompt 数据库化管理
+
+- SQLite 持久化（`PromptRepository.kt`）：新增了一套专门的数据库仓库，将原本硬编码在代码中的各大 Agent（如 `Manager`、`Executor`、`Reflector`、`Notetaker`）以及各种内置工具和技能的 Prompt 存入 SQLite 数据库中。
+- 动态管理与编辑：支持 UI 预览、长按多行编辑器修改、恢复默认值，以及自定义添加和删除 Agent 或 Tool/Skill。
+- 各 Agent 代码重构：`ActionReflector.kt`、`Executor.kt`、`Manager.kt` 和 `Notetaker.kt` 已重构，不再使用长字符串拼接，而是从 `PromptRepository` 读取模板，并动态替换占位符（如 `{{instruction}}`、`{{plan}}` 等）。
+
+#### 2. Android 无障碍服务与增强自动化
+
+- 无障碍服务（`AutoPilotAccessibilityService.kt`）：在 `AndroidManifest.xml` 中注册了无障碍服务，能够实时 Dump 当前窗口的 UI 元素树（Node Tree）。
+- 精准坐标校准与盲操（`MobileAgent.kt`）：
+  - 开启无障碍模式后，系统可以通过 UI 节点的文本、ID 或查询条件在树中精确定位按钮坐标。
+  - 当遇到截图失败、黑屏或敏感页面阻止截图时，Agent 可以依托无障碍属性进行盲操，或直接触发节点点击。
 
 ### 🎨 精心设计的 UI
 
@@ -413,7 +428,8 @@ app/src/main/assets/
 - [x] **Skills 层** - 用户意图映射，支持 Delegation 和 GUI 自动化两种模式
 - [x] **智能应用搜索** - 拼音、语义、分类多维度匹配
 - [x] **快速路径** - 高置信度 Skill 直接 DeepLink 跳转
-- [x] **Agent 与 Tool/Skill Prompt 数据库化管理** - 将 Prompt 存储于数据库中，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent 和 Tool/Skill
+- [x] **Agent 与 Tool/Skill Prompt 数据库化管理** - 将 Prompt 存储于数据库中，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent、Tool/Skill
+- [x] **Android 无障碍服务与增强自动化** - 注册 `AccessibilityService`，支持 UI 树 Dump、精确定位坐标和盲操兜底，提升复杂页面场景下的执行稳定性
 
 ### 🚀 v2.0 开发中
 
