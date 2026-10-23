@@ -87,7 +87,8 @@ data class AppSettings(
     val maxSteps: Int = 25,
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
-    val suCommandEnabled: Boolean = false
+    val suCommandEnabled: Boolean = false,
+    val accessibilityModeEnabled: Boolean = false
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -224,7 +225,8 @@ class SettingsManager(context: Context) {
             maxSteps = prefs.getInt("max_steps", 25),
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
-            suCommandEnabled = prefs.getBoolean("su_command_enabled", false)
+            suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
+            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", false)
         )
     }
 
@@ -355,5 +357,10 @@ class SettingsManager(context: Context) {
     fun updateSuCommandEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("su_command_enabled", enabled).apply()
         _settings.value = _settings.value.copy(suCommandEnabled = enabled)
+    }
+
+    fun updateAccessibilityModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("accessibility_mode_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(accessibilityModeEnabled = enabled)
     }
 }
