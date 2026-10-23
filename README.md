@@ -413,6 +413,7 @@ app/src/main/assets/
 - [x] **Skills 层** - 用户意图映射，支持 Delegation 和 GUI 自动化两种模式
 - [x] **智能应用搜索** - 拼音、语义、分类多维度匹配
 - [x] **快速路径** - 高置信度 Skill 直接 DeepLink 跳转
+- [x] **Agent 与 Tool/Skill Prompt 数据库化管理** - 将 Prompt 存储于数据库中，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent 和 Tool/Skill
 
 ### 🚀 v2.0 开发中
 
