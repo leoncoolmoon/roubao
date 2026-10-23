@@ -176,18 +176,8 @@ User-facing task layer that maps natural language to specific operations:
 
 ### 🗃️ Database-Backed Prompt Management and Accessibility Enhancements
 
-#### 1. Agent and Tool/Skill Prompt Database Management
-
-- SQLite persistence (`PromptRepository.kt`): added a dedicated database repository that stores the prompt templates of various built-in agents (such as `Manager`, `Executor`, `Reflector`, and `Notetaker`) and numerous built-in tools/skills in SQLite.
-- Dynamic management and editing: supports UI preview, long-press multiline editing, restoring defaults, and custom adding/deleting of agents and tool/skill entries.
-- Agent refactor: `ActionReflector.kt`, `Executor.kt`, `Manager.kt`, and `Notetaker.kt` were refactored to stop concatenating long prompt strings and instead load templates from `PromptRepository` and replace placeholders such as `{{instruction}}`, `{{plan}}`, etc.
-
-#### 2. Android Accessibility Service and Enhanced Automation
-
-- Accessibility service (`AutoPilotAccessibilityService.kt`): registered in `AndroidManifest.xml`, it can dump the current window UI element tree (Node Tree) in real time.
-- Precise coordinate calibration and blind operation (`MobileAgent.kt`):
-  - When accessibility mode is enabled, the system can locate button coordinates precisely within the UI tree using node text, ID, or query conditions.
-  - When screenshot capture fails, a black screen occurs, or a sensitive page blocks screenshots, the agent can rely on accessibility properties for blind operation or directly trigger a node click.
+- Agent and Tool/Skill Prompt Database Management, support inport/export and modification
+- Android Accessibility Service and Enhanced Automation
 
 ### 🎨 Beautifully Designed UI
 
