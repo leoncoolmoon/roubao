@@ -147,13 +147,18 @@ class MobileAgent(
             // 调用 stop() 方法确保清理
             stop()
         }
+        OverlayService.setPauseCallback {
+            togglePause()
+            OverlayService.updatePauseState(_state.value.isPaused)
+        }
 
-        updateState { copy(isRunning = true, currentStep = 0, instruction = instruction) }
+        updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
         try {
             for (step in 0 until maxSteps) {
                 // 检查协程是否被取消
                 coroutineContext.ensureActive()
+                awaitIfPaused()
 
                 // 检查是否被用户停止
                 if (!_state.value.isRunning) {
@@ -218,7 +223,7 @@ class MobileAgent(
                         infoPool.actionHistory.last().type == "invalid"
 
                 // 4. Manager 规划
-                if (!skipManager) {
+                if (!skipManager && isAgentEnabled("manager")) {
                     log("Manager 规划中...")
 
                     // 检查停止状态
@@ -388,7 +393,7 @@ class MobileAgent(
                 // 7. 执行动作
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
-                executeAction(action, infoPool)
+                executeAction(action)
                 infoPool.lastAction = action
 
                 // 立即记录执行步骤（outcome 暂时为 "?" 表示进行中）
@@ -425,8 +430,6 @@ class MobileAgent(
                 }
 
                 // 9. Reflector 反思
-                log("Reflector 反思中...")
-
                 // 检查停止状态
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
@@ -435,13 +438,18 @@ class MobileAgent(
                     return AgentResult(success = false, message = "用户停止")
                 }
 
-                val reflectPrompt = reflector.getPrompt(infoPool)
-                val reflectResponse = vlmClient.predict(reflectPrompt, listOf(screenshot, afterScreenshot))
-
-                val reflectResult = if (reflectResponse.isSuccess) {
-                    reflector.parseResponse(reflectResponse.getOrThrow())
+                val reflectResult = if (!isAgentEnabled("reflector")) {
+                    log("Reflector 已停用，跳过反思（按 A 处理）")
+                    ReflectorResult("A", "")
                 } else {
-                    ReflectorResult("C", "Failed to call reflector")
+                    log("Reflector 反思中...")
+                    val reflectPrompt = reflector.getPrompt(infoPool)
+                    val reflectResponse = vlmClient.predict(reflectPrompt, listOf(screenshot, afterScreenshot))
+                    if (reflectResponse.isSuccess) {
+                        reflector.parseResponse(reflectResponse.getOrThrow())
+                    } else {
+                        ReflectorResult("C", "Failed to call reflector")
+                    }
                 }
 
                 log("结果: ${reflectResult.outcome} - ${reflectResult.errorDescription.take(50)}")
@@ -465,7 +473,7 @@ class MobileAgent(
                 }
 
                 // 10. Notetaker (可选)
-                if (useNotetaker && reflectResult.outcome == "A" && action.type != "answer") {
+                if (useNotetaker && isAgentEnabled("notetaker") && reflectResult.outcome == "A" && action.type != "answer") {
                     log("Notetaker 记录中...")
 
                     // 检查停止状态
@@ -524,11 +532,12 @@ class MobileAgent(
             stop()
         }
 
-        updateState { copy(isRunning = true, currentStep = 0, instruction = instruction) }
+        updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
         try {
             for (step in 0 until maxSteps) {
                 coroutineContext.ensureActive()
+                awaitIfPaused()
 
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
@@ -726,11 +735,12 @@ class MobileAgent(
             stop()
         }
 
-        updateState { copy(isRunning = true, currentStep = 0, instruction = instruction) }
+        updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
         try {
             for (step in 0 until maxSteps) {
                 coroutineContext.ensureActive()
+                awaitIfPaused()
 
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
@@ -966,60 +976,48 @@ class MobileAgent(
     /**
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
-    private suspend fun executeAction(action: Action, infoPool: InfoPool) = withContext(Dispatchers.IO) {
+    private suspend fun executeAction(action: Action) = withContext(Dispatchers.IO) {
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
 
         when (action.type) {
-            "click" -> {
+            "click", "double_tap", "long_press" -> {
                 var x = mapCoordinate(action.x ?: 0, screenWidth)
                 var y = mapCoordinate(action.y ?: 0, screenHeight)
+                val modelX = x
+                val modelY = y
+                var calibrated = false
 
-                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
+                // 只使用模型显式给出的元素文本做无障碍匹配；
+                // 不要用 lastSummary（整句描述），否则几乎永远匹配不到节点。
+                val query = action.text?.takeIf { it.isNotBlank() }
 
-                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
-                    val exactCoords = accessibilityService.findElementCoordinates(query)
-                    if (exactCoords != null) {
-                        x = exactCoords.first
-                        y = exactCoords.second
-                        log("🎯 无障碍精确校准点击坐标: ($x, $y) [查询: $query]")
-                    } else if (accessibilityService.performActionByAttribute(query)) {
-                        log("🤖 无障碍精确触发节点点击盲操 [查询: $query]")
-                        return@withContext
+                if (accessibilityModeEnabled && accessibilityService != null) {
+                    if (query != null) {
+                        val exactCoords = accessibilityService.findElementCoordinates(query)
+                        if (exactCoords != null) {
+                            x = exactCoords.first
+                            y = exactCoords.second
+                            calibrated = true
+                            log("🎯 无障碍文本校准${action.type}: ($x, $y) [查询: $query]")
+                        } else if (action.type == "click" && accessibilityService.performActionByAttribute(query)) {
+                            log("🤖 无障碍直接触发节点点击: [查询: $query]")
+                            return@withContext
+                        }
                     }
-                }
-                controller.tap(x, y)
-            }
-            "double_tap" -> {
-                var x = mapCoordinate(action.x ?: 0, screenWidth)
-                var y = mapCoordinate(action.y ?: 0, screenHeight)
 
-                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
-                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
-                    val exactCoords = accessibilityService.findElementCoordinates(query)
-                    if (exactCoords != null) {
-                        x = exactCoords.first
-                        y = exactCoords.second
-                        log("🎯 无障碍精确校准双击坐标: ($x, $y) [查询: $query]")
-                    }
+                    // 不再做“几何吸附”：输入法键盘是独立窗口，rootInActiveWindow
+                    // 往往只拿到下层 App，吸附会把坐标跳到聊天/设置界面上。
+                    // 没有 text 时直接使用模型给的绝对坐标。
                 }
-                controller.doubleTap(x, y)
-            }
-            "long_press" -> {
-                var x = mapCoordinate(action.x ?: 0, screenWidth)
-                var y = mapCoordinate(action.y ?: 0, screenHeight)
 
-                val query = action.text ?: action.message ?: infoPool.lastSummary.takeIf { it.isNotBlank() }
-                if (accessibilityModeEnabled && accessibilityService != null && query != null) {
-                    val exactCoords = accessibilityService.findElementCoordinates(query)
-                    if (exactCoords != null) {
-                        x = exactCoords.first
-                        y = exactCoords.second
-                        log("🎯 无障碍精确校准长按坐标: ($x, $y) [查询: $query]")
-                    }
+                log("${action.type}: ($x, $y) [模型原始: ($modelX, $modelY), 已校准: $calibrated]")
+                when (action.type) {
+                    "click" -> controller.tap(x, y)
+                    "double_tap" -> controller.doubleTap(x, y)
+                    "long_press" -> controller.longPress(x, y)
                 }
-                controller.longPress(x, y)
             }
             "swipe" -> {
                 // 支持两种 swipe 方式:
@@ -1047,7 +1045,61 @@ class MobileAgent(
                 }
             }
             "type" -> {
-                action.text?.let { controller.type(it) }
+                val text = action.text
+                if (text != null) {
+                    // 优先用无障碍 ACTION_SET_TEXT 直接写入，绕过输入法中英文状态，
+                    // 避免为了切英文去点键盘“中”键而误触。
+                    val setDirectly = if (accessibilityModeEnabled && accessibilityService != null) {
+                        accessibilityService.setTextOnFocusedEditable(text)
+                    } else false
+                    if (setDirectly) {
+                        log("type: 已通过无障碍直接写入 ${text.length} 个字符（无需切换键盘）")
+                    } else {
+                        controller.type(text)
+                    }
+                }
+            }
+            "shell" -> {
+                val command = action.command
+                if (!command.isNullOrBlank()) {
+                    log("shell: $command")
+                    val output = controller.shell(command)
+                    log("shell 输出: ${output.take(800)}")
+                }
+            }
+            "key" -> {
+                val key = action.key
+                if (!key.isNullOrBlank()) {
+                    log("按键: $key")
+                    controller.keyEvent(key)
+                }
+            }
+            "set_selection" -> {
+                val start = action.start ?: 0
+                val end = action.end ?: start
+                val ok = if (accessibilityModeEnabled && accessibilityService != null) {
+                    accessibilityService.setSelection(start, end)
+                } else false
+                log("选择文本: [$start, $end] -> ${if (ok) "成功" else "失败"}")
+            }
+            "scroll" -> {
+                val direction = action.direction ?: action.text ?: "down"
+                val ok = if (accessibilityModeEnabled && accessibilityService != null) {
+                    accessibilityService.scrollPage(direction)
+                } else false
+                if (ok) {
+                    log("滚动: $direction (无障碍)")
+                } else {
+                    val centerX = screenWidth / 2
+                    val centerY = screenHeight / 2
+                    log("滚动: $direction (坐标 fallback)")
+                    when (direction.lowercase()) {
+                        "up" -> controller.swipe(centerX, centerY + 400, centerX, centerY - 400)
+                        "down" -> controller.swipe(centerX, centerY - 400, centerX, centerY + 400)
+                        "left" -> controller.swipe(centerX + 400, centerY, centerX - 400, centerY)
+                        "right" -> controller.swipe(centerX - 400, centerY, centerX + 400, centerY)
+                    }
+                }
             }
             "system_button" -> {
                 when (action.button) {
@@ -1117,23 +1169,17 @@ class MobileAgent(
     }
 
     /**
-     * 坐标映射 - 支持相对坐标和绝对坐标
+     * 坐标处理：模型输出的是截图的绝对像素坐标（与 input tap 的显示坐标一致）。
      *
-     * 坐标格式判断:
-     * - 0-999: Qwen-VL 相对坐标 (0-999 映射到屏幕)
-     * - >= 1000: 绝对像素坐标，直接使用
+     * 不要再用 value < 1000 来判断“归一化坐标”：在 1080x2400 屏幕上，
+     * 屏幕上方 42% 的绝对 y 都小于 1000，会被错误放大 2.4 倍。
+     * 如果以后要支持 0-999 归一化的模型，请按模型/配置显式区分，而不是按数值猜。
      *
      * @param value 模型输出的坐标值
      * @param screenMax 屏幕实际尺寸
      */
     private fun mapCoordinate(value: Int, screenMax: Int): Int {
-        return if (value < 1000) {
-            // 相对坐标 (0-999) -> 绝对像素
-            (value * screenMax / 999)
-        } else {
-            // 绝对坐标，限制在屏幕范围内
-            value.coerceAtMost(screenMax)
-        }
+        return value.coerceIn(0, (screenMax - 1).coerceAtLeast(0))
     }
 
     /**
@@ -1160,9 +1206,48 @@ class MobileAgent(
      */
     fun stop() {
         OverlayService.hide(context)
-        updateState { copy(isRunning = false) }
+        updateState { copy(isRunning = false, isPaused = false) }
         // 通知 MainActivity 取消协程
         onStopRequested?.invoke()
+    }
+
+    /**
+     * 暂停执行（在当前步骤的检查点生效）
+     */
+    fun pause() {
+        if (_state.value.isRunning && !_state.value.isPaused) {
+            updateState { copy(isPaused = true) }
+            OverlayService.updatePauseState(true)
+            log("⏸ 已暂停，点击继续恢复")
+        }
+    }
+
+    /**
+     * 恢复执行
+     */
+    fun resume() {
+        if (_state.value.isPaused) {
+            updateState { copy(isPaused = false) }
+            OverlayService.updatePauseState(false)
+            log("▶ 继续执行")
+        }
+    }
+
+    fun togglePause() {
+        if (_state.value.isPaused) resume() else pause()
+    }
+
+    private fun isAgentEnabled(id: String): Boolean = try {
+        com.roubao.autopilot.data.PromptRepository.getInstance().isAgentEnabled(id)
+    } catch (e: Exception) {
+        true
+    }
+
+    private suspend fun awaitIfPaused() {
+        if (!_state.value.isPaused) return
+        while (_state.value.isPaused && _state.value.isRunning) {
+            delay(200)
+        }
     }
 
     /**
@@ -1199,6 +1284,7 @@ class MobileAgent(
 
 data class AgentState(
     val isRunning: Boolean = false,
+    val isPaused: Boolean = false,
     val isCompleted: Boolean = false,
     val currentStep: Int = 0,
     val instruction: String = "",

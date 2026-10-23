@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import com.roubao.autopilot.controller.AppScanner
+import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.tools.ToolManager
 import com.roubao.autopilot.vlm.VLMClient
 import org.json.JSONObject
@@ -58,6 +59,7 @@ class SkillManager private constructor(
      */
     fun matchAvailableApp(query: String): AvailableAppMatch? {
         return registry.getBestAvailableApp(query, minScore = 0.3f)
+            ?.takeIf { isSkillEnabled(it.skill.config.id) }
     }
 
     /**
@@ -65,6 +67,13 @@ class SkillManager private constructor(
      */
     fun matchAllAvailableApps(query: String): List<AvailableAppMatch> {
         return registry.matchAvailableApps(query, minScore = 0.2f)
+            .filter { isSkillEnabled(it.skill.config.id) }
+    }
+
+    private fun isSkillEnabled(id: String): Boolean = try {
+        PromptRepository.getInstance().isToolSkillEnabled(id)
+    } catch (e: Exception) {
+        true
     }
 
     /**
@@ -81,6 +90,7 @@ class SkillManager private constructor(
             append("可用技能列表：\n")
             for (skill in registry.getAll()) {
                 val config = skill.config
+                if (!isSkillEnabled(config.id)) continue
                 // 只展示有已安装应用的 Skill
                 val installedApps = config.relatedApps.filter { registry.isAppInstalled(it.packageName) }
                 if (installedApps.isNotEmpty()) {

@@ -1,5 +1,6 @@
 package com.roubao.autopilot
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
@@ -69,6 +70,9 @@ class MainActivity : ComponentActivity() {
     // 是否正在执行（点击发送后立即为 true）
     private val isExecuting = mutableStateOf(false)
 
+    // 定时任务通知点开后预填的 prompt
+    private val scheduledPrompt = mutableStateOf<String?>(null)
+
     // 当前执行的记录 ID（用于停止后跳转）
     private val currentRecordId = mutableStateOf<String?>(null)
 
@@ -102,6 +106,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
 
         // 设置边到边显示，深色状态栏和导航栏
         enableEdgeToEdge(
@@ -288,7 +293,10 @@ class MainActivity : ComponentActivity() {
                                     currentModel = settings.model,
                                     onRefreshShizuku = { refreshShizukuStatus() },
                                     onShizukuRequired = { showShizukuHelpDialog = true },
-                                    isExecuting = executing
+                                    isExecuting = executing,
+                                    isPaused = agentState?.isPaused == true,
+                                    onTogglePause = { mobileAgent.value?.togglePause() },
+                                    initialPrompt = scheduledPrompt.value
                                 )
                             }
                             Screen.Capabilities -> CapabilitiesScreen()
@@ -636,5 +644,15 @@ class MainActivity : ComponentActivity() {
             }
         }
         return if (instruction.length > 10) instruction.take(10) + "..." else instruction
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
+    }
+
+    companion object {
+        const val EXTRA_SCHEDULED_PROMPT = "scheduled_prompt"
     }
 }

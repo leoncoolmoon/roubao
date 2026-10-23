@@ -1,19 +1,26 @@
 package com.roubao.autopilot.ui.screens
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,7 +37,11 @@ import androidx.compose.ui.unit.sp
 import com.roubao.autopilot.data.AgentPromptEntity
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.data.ToolSkillPromptEntity
+import com.roubao.autopilot.data.UserFeedbackEntity
 import com.roubao.autopilot.ui.theme.BaoziTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -44,39 +55,111 @@ sealed class PromptTarget {
 /**
  * 能力展示与管理页面
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CapabilitiesScreen() {
     val colors = BaoziTheme.colors
 
     val repository = remember { PromptRepository.getInstance() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var refreshTrigger by remember { mutableStateOf(0) }
 
     var agentsList by remember { mutableStateOf<List<AgentPromptEntity>>(emptyList()) }
     var toolSkillList by remember { mutableStateOf<List<ToolSkillPromptEntity>>(emptyList()) }
+    var feedbackList by remember { mutableStateOf<List<UserFeedbackEntity>>(emptyList()) }
+
+    fun showToast(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                    val result = repository.importPromptsJson(json)
+                    withContext(Dispatchers.Main) {
+                        refreshTrigger++
+                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill, ${result.feedback} 反馈"
+                        showToast(
+                            if (result.errors.isEmpty()) summary
+                            else summary + "\n" + result.errors.take(3).joinToString("\n")
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导入失败: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = repository.exportPromptsJson()
+                    context.contentResolver.openOutputStream(uri)?.use {
+                        it.write(json.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) { showToast("Prompt JSON 已导出") }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导出失败: ${e.message}") }
+                }
+            }
+        }
+    }
 
     LaunchedEffect(refreshTrigger) {
         agentsList = repository.getAllAgentPrompts()
         toolSkillList = repository.getAllToolSkillPrompts()
+        feedbackList = repository.getAllFeedback()
     }
 
-    // Tab 状态: 0 - Agents, 1 - Tools & Skills
-    var selectedTab by remember { mutableStateOf(0) }
-    var selectedCategoryFilter by remember { mutableStateOf("全部") } // 全部, Tools, Skills
+    // 顶层分区：能力（Agents/Tools/Skills）与 反馈（建议/吐槽）分开
+    var mainSection by remember { mutableStateOf("能力") }
+    var selectedFilter by remember { mutableStateOf("全部") }
+    val filters = if (mainSection == "能力") {
+        listOf("全部", "Agents", "Tools", "Skills")
+    } else {
+        listOf("建议", "吐槽")
+    }
+    LaunchedEffect(mainSection) {
+        selectedFilter = if (mainSection == "能力") "全部" else "吐槽"
+    }
+    var feedbackDraftKind by remember { mutableStateOf("complaint") }
+    var editingFeedback by remember { mutableStateOf<UserFeedbackEntity?>(null) }
 
     // 弹窗状态
     var activePromptTarget by remember { mutableStateOf<PromptTarget?>(null) }
     var showAddAgentDialog by remember { mutableStateOf(false) }
     var showAddToolSkillDialog by remember { mutableStateOf(false) }
+    var showAddFeedbackDialog by remember { mutableStateOf(false) }
+    var showAddMenu by remember { mutableStateOf(false) }
+    var toolSkillDraftCategory by remember { mutableStateOf("tool") }
     var deleteConfirmTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
-    val filteredToolSkills = when (selectedCategoryFilter) {
-        "Tools" -> toolSkillList.filter { it.category == "tool" }
-        "Skills" -> toolSkillList.filter { it.category == "skill" }
-        else -> toolSkillList
-    }
-
-    val tabs = listOf("Agents (${agentsList.size})", "Tools & Skills (${filteredToolSkills.size})")
+    val visibleAgents = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Agents")) {
+        agentsList
+    } else emptyList()
+    val visibleTools = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Tools")) {
+        toolSkillList.filter { it.category == "tool" }
+    } else emptyList()
+    val visibleSkills = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Skills")) {
+        toolSkillList.filter { it.category == "skill" }
+    } else emptyList()
+    val visibleFeedback = if (mainSection == "反馈") {
+        when (selectedFilter) {
+            "建议" -> feedbackList.filter { it.kind == "suggestion" }
+            else -> feedbackList.filter { it.kind != "suggestion" }
+        }
+    } else emptyList()
 
     Column(
         modifier = Modifier
@@ -105,69 +188,144 @@ fun CapabilitiesScreen() {
                 )
             }
 
-            // 添加按钮
-            ElevatedButton(
-                onClick = {
-                    if (selectedTab == 0) {
-                        showAddAgentDialog = true
-                    } else {
-                        showAddToolSkillDialog = true
-                    }
-                },
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.elevatedButtonColors(
-                    containerColor = colors.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "添加",
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = if (selectedTab == 0) "添加 Agent" else "添加 Tool/Skill",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+            // 右上角“+”菜单
+            Box {
+                IconButton(onClick = { showAddMenu = true }) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "菜单"
+                    )
+                }
+                DropdownMenu(
+                    expanded = showAddMenu,
+                    onDismissRequest = { showAddMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("🧠 添加 Agent") },
+                        onClick = { showAddMenu = false; showAddAgentDialog = true }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🎯 添加 Skill") },
+                        onClick = {
+                            showAddMenu = false
+                            toolSkillDraftCategory = "skill"
+                            showAddToolSkillDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🔧 添加 Tool") },
+                        onClick = {
+                            showAddMenu = false
+                            toolSkillDraftCategory = "tool"
+                            showAddToolSkillDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("💡 添加建议") },
+                        onClick = {
+                            showAddMenu = false
+                            feedbackDraftKind = "suggestion"
+                            showAddFeedbackDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🙅 添加吐槽") },
+                        onClick = {
+                            showAddMenu = false
+                            feedbackDraftKind = "complaint"
+                            showAddFeedbackDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📥 导入 JSON") },
+                        onClick = {
+                            showAddMenu = false
+                            importLauncher.launch(arrayOf("application/json", "text/plain"))
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📤 导出 JSON") },
+                        onClick = {
+                            showAddMenu = false
+                            exportLauncher.launch("roubao-prompts.json")
+                        }
+                    )
+                }
             }
         }
 
-        // Tab 切换
+        // 顶层 Tab：能力 / 建议吐槽
         TabRow(
-            selectedTabIndex = selectedTab,
+            selectedTabIndex = if (mainSection == "能力") 0 else 1,
             containerColor = colors.background,
             contentColor = colors.primary
         ) {
-            tabs.forEachIndexed { index, title ->
-                Tab(
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index },
-                    text = {
-                        Text(
-                            text = title,
-                            color = if (selectedTab == index) colors.primary else colors.textSecondary
-                        )
-                    }
+            Tab(
+                selected = mainSection == "能力",
+                onClick = {
+                    mainSection = "能力"
+                    selectedFilter = "全部"
+                },
+                text = { Text("🧠 能力") }
+            )
+            Tab(
+                selected = mainSection == "反馈",
+                onClick = {
+                    mainSection = "反馈"
+                    selectedFilter = "吐槽"
+                },
+                text = { Text("💬 建议 / 吐槽") }
+            )
+        }
+
+        // 分区内过滤标签
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            filters.forEach { filter ->
+                FilterChip(
+                    selected = selectedFilter == filter,
+                    onClick = { selectedFilter = filter },
+                    label = { Text(filter) }
                 )
             }
         }
 
         // 内容区域
-        when (selectedTab) {
-            0 -> AgentsListView(
-                agents = agentsList,
-                onEditPrompt = { agent -> activePromptTarget = PromptTarget.AgentTarget(agent) },
-                onDeleteAgent = { agent -> deleteConfirmTarget = PromptTarget.AgentTarget(agent) }
+        if (mainSection == "反馈") {
+            FeedbackListView(
+                items = visibleFeedback,
+                onToggle = { item, enabled ->
+                    repository.setFeedbackEnabled(item.id, enabled)
+                    refreshTrigger++
+                },
+                onDelete = { item ->
+                    repository.deleteFeedback(item.id)
+                    refreshTrigger++
+                },
+                onEdit = { item -> editingFeedback = item }
             )
-            1 -> ToolsSkillsListView(
-                items = filteredToolSkills,
-                selectedCategoryFilter = selectedCategoryFilter,
-                onFilterSelected = { selectedCategoryFilter = it },
-                onEditPrompt = { item -> activePromptTarget = PromptTarget.ToolSkillTarget(item) },
-                onDeleteItem = { item -> deleteConfirmTarget = PromptTarget.ToolSkillTarget(item) }
+        } else {
+            UnifiedCapabilitiesList(
+                agents = visibleAgents,
+                tools = visibleTools,
+                skills = visibleSkills,
+                onEditAgent = { agent -> activePromptTarget = PromptTarget.AgentTarget(agent) },
+                onDeleteAgent = { agent -> deleteConfirmTarget = PromptTarget.AgentTarget(agent) },
+                onToggleAgent = { agent, enabled ->
+                    repository.updateAgentEnabled(agent.id, enabled)
+                    refreshTrigger++
+                },
+                onEditTool = { item -> activePromptTarget = PromptTarget.ToolSkillTarget(item) },
+                onDeleteTool = { item -> deleteConfirmTarget = PromptTarget.ToolSkillTarget(item) },
+                onToggleTool = { item, enabled ->
+                    repository.updateToolSkillEnabled(item.id, enabled)
+                    refreshTrigger++
+                }
             )
         }
     }
@@ -223,6 +381,7 @@ fun CapabilitiesScreen() {
     if (showAddToolSkillDialog) {
         AddToolSkillDialog(
             onDismiss = { showAddToolSkillDialog = false },
+            initialCategory = toolSkillDraftCategory,
             onConfirm = { category, name, displayName, description, prompt ->
                 val newItem = ToolSkillPromptEntity(
                     id = UUID.randomUUID().toString(),
@@ -237,6 +396,106 @@ fun CapabilitiesScreen() {
                 repository.addToolSkillPrompt(newItem)
                 refreshTrigger++
                 showAddToolSkillDialog = false
+            }
+        )
+    }
+
+    // 4. 添加建议/吐槽弹窗
+    if (showAddFeedbackDialog) {
+        var feedbackText by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddFeedbackDialog = false },
+            title = { Text(if (feedbackDraftKind == "suggestion") "添加建议" else "添加吐槽") },
+            text = {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = feedbackDraftKind == "suggestion",
+                            onClick = { feedbackDraftKind = "suggestion" },
+                            label = { Text("💡 建议") }
+                        )
+                        FilterChip(
+                            selected = feedbackDraftKind == "complaint",
+                            onClick = { feedbackDraftKind = "complaint" },
+                            label = { Text("🙅 吐槽") }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "建议=正面提示，吐槽=负面教训；会注入 Manager / Executor 的 prompt。",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = feedbackText,
+                        onValueChange = { feedbackText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4,
+                        placeholder = { Text("写一条建议或吐槽...") }
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (feedbackText.isNotBlank()) {
+                            repository.addFeedback(feedbackText, feedbackDraftKind)
+                            refreshTrigger++
+                            showAddFeedbackDialog = false
+                        }
+                    }
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddFeedbackDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 4.1 编辑建议/吐槽
+    editingFeedback?.let { item ->
+        var editText by remember(item.id) { mutableStateOf(item.text) }
+        var editKind by remember(item.id) { mutableStateOf(item.kind) }
+        AlertDialog(
+            onDismissRequest = { editingFeedback = null },
+            title = { Text("编辑建议/吐槽") },
+            text = {
+                Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = editKind == "suggestion",
+                            onClick = { editKind = "suggestion" },
+                            label = { Text("💡 建议") }
+                        )
+                        FilterChip(
+                            selected = editKind == "complaint",
+                            onClick = { editKind = "complaint" },
+                            label = { Text("🙅 吐槽") }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = editText,
+                        onValueChange = { editText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editText.isNotBlank()) {
+                            repository.updateFeedback(item.id, editText, editKind)
+                            refreshTrigger++
+                            editingFeedback = null
+                        }
+                    }
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingFeedback = null }) { Text("取消") }
             }
         )
     }
@@ -276,10 +535,107 @@ fun CapabilitiesScreen() {
 }
 
 @Composable
+fun UnifiedCapabilitiesList(
+    agents: List<AgentPromptEntity>,
+    tools: List<ToolSkillPromptEntity>,
+    skills: List<ToolSkillPromptEntity>,
+    onEditAgent: (AgentPromptEntity) -> Unit,
+    onDeleteAgent: (AgentPromptEntity) -> Unit,
+    onToggleAgent: (AgentPromptEntity, Boolean) -> Unit,
+    onEditTool: (ToolSkillPromptEntity) -> Unit,
+    onDeleteTool: (ToolSkillPromptEntity) -> Unit,
+    onToggleTool: (ToolSkillPromptEntity, Boolean) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item(key = "unified_intro") {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.primary.copy(alpha = 0.1f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "🧠 Agents / Tools / Skills 统一列表",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.primary
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "用上方标签过滤。右侧开关控制是否参与运行；关闭 Agent 会跳过对应模型调用，" +
+                            "关闭 Tool/Skill 会从工具描述和技能匹配中隐藏。长按 Prompt 可编辑。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                }
+            }
+        }
+
+        if (agents.isEmpty() && tools.isEmpty() && skills.isEmpty()) {
+            item(key = "unified_empty") { EmptyState(message = "暂无相关项") }
+        }
+
+        if (agents.isNotEmpty()) {
+            item(key = "agents_header") { SectionHeader("🧠 Agents (${agents.size})") }
+            items(agents, key = { "agent_${it.id}" }) { agent ->
+                AgentCard(
+                    agent = agent,
+                    onEditPrompt = { onEditAgent(agent) },
+                    onDelete = { onDeleteAgent(agent) },
+                    onToggleEnabled = { onToggleAgent(agent, it) }
+                )
+            }
+        }
+
+        if (tools.isNotEmpty()) {
+            item(key = "tools_header") { SectionHeader("🔧 Tools (${tools.size})") }
+            items(tools, key = { "tool_${it.id}" }) { item ->
+                ToolSkillCard(
+                    item = item,
+                    onEditPrompt = { onEditTool(item) },
+                    onDelete = { onDeleteTool(item) },
+                    onToggleEnabled = { onToggleTool(item, it) }
+                )
+            }
+        }
+
+        if (skills.isNotEmpty()) {
+            item(key = "skills_header") { SectionHeader("🎯 Skills (${skills.size})") }
+            items(skills, key = { "skill_${it.id}" }) { item ->
+                ToolSkillCard(
+                    item = item,
+                    onEditPrompt = { onEditTool(item) },
+                    onDelete = { onDeleteTool(item) },
+                    onToggleEnabled = { onToggleTool(item, it) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SectionHeader(title: String) {
+    val colors = BaoziTheme.colors
+    Text(
+        text = title,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Bold,
+        color = colors.primary,
+        modifier = Modifier.padding(top = 8.dp)
+    )
+}
+
+@Composable
 fun AgentsListView(
     agents: List<AgentPromptEntity>,
     onEditPrompt: (AgentPromptEntity) -> Unit,
-    onDeleteAgent: (AgentPromptEntity) -> Unit
+    onDeleteAgent: (AgentPromptEntity) -> Unit,
+    onToggleEnabled: (AgentPromptEntity, Boolean) -> Unit = { _, _ -> }
 ) {
     val colors = BaoziTheme.colors
 
@@ -316,7 +672,166 @@ fun AgentsListView(
             AgentCard(
                 agent = agent,
                 onEditPrompt = { onEditPrompt(agent) },
-                onDelete = { onDeleteAgent(agent) }
+                onDelete = { onDeleteAgent(agent) },
+                onToggleEnabled = { onToggleEnabled(agent, it) }
+            )
+        }
+    }
+}
+
+@Composable
+fun FeedbackListView(
+    items: List<UserFeedbackEntity>,
+    onToggle: (UserFeedbackEntity, Boolean) -> Unit,
+    onDelete: (UserFeedbackEntity) -> Unit,
+    onEdit: (UserFeedbackEntity) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item(key = "feedback_intro") {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.primary.copy(alpha = 0.1f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "💡 建议 / 吐槽",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.primary
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "「建议」是正面提示，「吐槽」是负面教训；启用的条目会分别以 " +
+                            "User Suggestions / User Complaints 注入 Manager 与 Executor 的 prompt。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                }
+            }
+        }
+        if (items.isEmpty()) {
+            item(key = "empty") {
+                Text(
+                    "还没有内容。点右上角「添加建议/吐槽」写一条。",
+                    fontSize = 13.sp,
+                    color = colors.textSecondary
+                )
+            }
+        }
+        items(items, key = { it.id }) { item ->
+            FeedbackCard(
+                item = item,
+                onToggle = { onToggle(item, it) },
+                onDelete = { onDelete(item) },
+                onEdit = { onEdit(item) }
+            )
+        }
+    }
+}
+
+@Composable
+fun FeedbackCard(
+    item: UserFeedbackEntity,
+    onToggle: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val isSuggestion = item.kind == "suggestion"
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isSuggestion) colors.success.copy(alpha = 0.15f)
+                            else colors.error.copy(alpha = 0.15f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(text = if (isSuggestion) "💡" else "🙅", fontSize = 24.sp)
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (isSuggestion) "建议" else "吐槽",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.textPrimary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (isSuggestion) colors.success.copy(alpha = 0.2f)
+                                    else colors.error.copy(alpha = 0.2f)
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isSuggestion) "正面提示" else "负面教训",
+                                fontSize = 10.sp,
+                                color = if (isSuggestion) colors.success else colors.error
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = item.text,
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Switch(
+                    checked = item.enabled,
+                    onCheckedChange = onToggle,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+                IconButton(onClick = onEdit) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "编辑",
+                        tint = colors.textSecondary
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = colors.textSecondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 与 Agent/Tool 卡片相同的可长按编辑 Prompt 预览框
+            PromptPreviewBox(
+                prompt = item.text,
+                onLongPress = onEdit
             )
         }
     }
@@ -326,7 +841,8 @@ fun AgentsListView(
 fun AgentCard(
     agent: AgentPromptEntity,
     onEditPrompt: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit
 ) {
     val colors = BaoziTheme.colors
     var expanded by remember { mutableStateOf(false) }
@@ -402,6 +918,13 @@ fun AgentCard(
                     )
                 }
 
+                Switch(
+                    checked = agent.enabled,
+                    onCheckedChange = onToggleEnabled,
+                    enabled = agent.id != "executor",
+                    modifier = Modifier.padding(start = 4.dp)
+                )
+
                 // 自定义 Agent 支持删除
                 if (!agent.isDefault) {
                     IconButton(
@@ -465,7 +988,8 @@ fun ToolsSkillsListView(
     selectedCategoryFilter: String,
     onFilterSelected: (String) -> Unit,
     onEditPrompt: (ToolSkillPromptEntity) -> Unit,
-    onDeleteItem: (ToolSkillPromptEntity) -> Unit
+    onDeleteItem: (ToolSkillPromptEntity) -> Unit,
+    onToggleEnabled: (ToolSkillPromptEntity, Boolean) -> Unit = { _, _ -> }
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         // 分类筛选 Chip
@@ -496,7 +1020,8 @@ fun ToolsSkillsListView(
                     ToolSkillCard(
                         item = item,
                         onEditPrompt = { onEditPrompt(item) },
-                        onDelete = { onDeleteItem(item) }
+                        onDelete = { onDeleteItem(item) },
+                        onToggleEnabled = { onToggleEnabled(item, it) }
                     )
                 }
             }
@@ -508,7 +1033,8 @@ fun ToolsSkillsListView(
 fun ToolSkillCard(
     item: ToolSkillPromptEntity,
     onEditPrompt: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit
 ) {
     val colors = BaoziTheme.colors
 
@@ -585,6 +1111,12 @@ fun ToolSkillCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
+                Switch(
+                    checked = item.enabled,
+                    onCheckedChange = onToggleEnabled,
+                    modifier = Modifier.padding(start = 4.dp)
+                )
 
                 if (!item.isDefault) {
                     IconButton(
@@ -847,9 +1379,10 @@ fun AddAgentDialog(
 @Composable
 fun AddToolSkillDialog(
     onDismiss: () -> Unit,
-    onConfirm: (category: String, name: String, displayName: String, description: String, prompt: String) -> Unit
+    onConfirm: (category: String, name: String, displayName: String, description: String, prompt: String) -> Unit,
+    initialCategory: String = "tool"
 ) {
-    var category by remember { mutableStateOf("tool") } // "tool" or "skill"
+    var category by remember { mutableStateOf(initialCategory) } // "tool" or "skill"
     var name by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
