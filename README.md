@@ -176,8 +176,8 @@ Android 系统出于安全考虑，普通 App 无法：
 
 ### 🗃️ Prompt 数据库化管理与无障碍增强
 
-- 1. Agent 与 Tool/Skill Prompt 数据库化管理
-- 2. Android 无障碍服务与增强自动化
+- Agent 与 Tool/Skill Prompt 数据库化管理，支持导入导出以及修改和自定义
+- Android 无障碍服务与增强自动化
 
 ### 🎨 精心设计的 UI
 
