@@ -1,19 +1,35 @@
 package com.roubao.autopilot.ui.screens
 
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.provider.OpenableColumns
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Close
@@ -26,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -33,9 +50,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.roubao.autopilot.agent.AgentState
+import com.roubao.autopilot.service.ReminderMode
+import com.roubao.autopilot.service.ReminderResult
+import com.roubao.autopilot.service.ReminderScheduler
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.Primary
 import com.roubao.autopilot.ui.theme.Secondary
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 预设命令
@@ -66,10 +92,45 @@ fun HomeScreen(
     currentModel: String = "",
     onRefreshShizuku: () -> Unit = {},
     onShizukuRequired: () -> Unit = {},
-    isExecuting: Boolean = false
+    isExecuting: Boolean = false,
+    isPaused: Boolean = false,
+    onTogglePause: () -> Unit = {},
+    initialPrompt: String? = null,
+    initialAutoRun: Boolean = false
 ) {
     val colors = BaoziTheme.colors
     var inputText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var attachmentPath by remember { mutableStateOf<String?>(null) }
+    var attachmentName by remember { mutableStateOf<String?>(null) }
+    var reminderResult by remember { mutableStateOf<ReminderResult?>(null) }
+    val attachmentPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val result = copyAttachmentToDownloads(context, uri)
+                withContext(Dispatchers.Main) {
+                    if (result != null) {
+                        attachmentPath = result.first
+                        attachmentName = result.second
+                    } else {
+                        Toast.makeText(context, "读取附件失败", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+    LaunchedEffect(initialPrompt, initialAutoRun) {
+        if (!initialPrompt.isNullOrBlank()) {
+            inputText = initialPrompt
+            if (initialAutoRun) {
+                onExecute(initialPrompt)
+                inputText = ""
+            }
+        }
+    }
     // 使用 isExecuting 或 agentState?.isRunning 来判断是否运行中
     val isRunning = isExecuting || agentState?.isRunning == true
     val listState = rememberLazyListState()
@@ -184,7 +245,27 @@ fun HomeScreen(
                     // 收起键盘并清除焦点
                     keyboardController?.hide()
                     focusManager.clearFocus()
-                    onExecute(inputText)
+                    val attachmentSuffix = attachmentPath?.let {
+                        "\n\n[附件] 用户附加了文件：$it\n请用 shell 读取该文件（cat / file / unzip 等），不要打开文件管理器 UI。"
+                    } ?: ""
+                    onExecute(inputText + attachmentSuffix)
+                    attachmentPath = null
+                    attachmentName = null
+                }
+            },
+            attachmentName = attachmentName,
+            onPickAttachment = { attachmentPicker.launch(arrayOf("*/*")) },
+            onClearAttachment = {
+                attachmentPath = null
+                attachmentName = null
+            },
+            onSchedule = { triggerAt ->
+                if (inputText.isNotBlank()) {
+                    val result = ReminderScheduler.schedule(context, triggerAt, inputText)
+                    reminderResult = result
+                    if (result.mode != ReminderMode.FAILED) {
+                        inputText = ""
+                    }
                 }
             },
             onStop = {
@@ -193,6 +274,8 @@ fun HomeScreen(
                 onStop()
             },
             isRunning = isRunning,
+            isPaused = isPaused,
+            onTogglePause = onTogglePause,
             enabled = shizukuAvailable,
             onInputClick = {
                 if (!shizukuAvailable) {
@@ -200,6 +283,13 @@ fun HomeScreen(
                 }
             }
         )
+
+        reminderResult?.let { result ->
+            ReminderFeedbackDialog(
+                result = result,
+                onDismiss = { reminderResult = null }
+            )
+        }
     }
 }
 
@@ -430,57 +520,112 @@ fun LogItem(log: String) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun InputArea(
     inputText: String,
     onInputChange: (String) -> Unit,
     onExecute: () -> Unit,
     onStop: () -> Unit,
+    attachmentName: String? = null,
+    onPickAttachment: () -> Unit = {},
+    onClearAttachment: () -> Unit = {},
+    onSchedule: (Long) -> Unit = {},
     isRunning: Boolean,
+    isPaused: Boolean = false,
+    onTogglePause: () -> Unit = {},
     enabled: Boolean,
     onInputClick: () -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
+    var showScheduleDialog by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = colors.backgroundCard,
         shadowElevation = 8.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (isRunning) Arrangement.Center else Arrangement.Start
-        ) {
-            if (isRunning) {
-                // 运行中只显示停止按钮
-                Button(
-                    onClick = onStop,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.error
-                    ),
-                    shape = RoundedCornerShape(24.dp),
+        Column {
+            if (attachmentName != null) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "停止",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "停止执行",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
+                        text = "📎 $attachmentName",
+                        fontSize = 12.sp,
+                        color = colors.primary,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
                     )
+                    TextButton(onClick = onClearAttachment) {
+                        Text("移除", fontSize = 11.sp)
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (isRunning) Arrangement.Center else Arrangement.Start
+            ) {
+            if (isRunning) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onTogglePause,
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                    ) {
+                        Text(
+                            text = if (isPaused) "继续执行" else "暂停",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Button(
+                        onClick = onStop,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.error
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "停止",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "停止执行",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             } else {
-                // 非运行状态显示输入框和发送按钮
+                // 非运行状态显示附件、输入框和发送按钮
+                TextButton(
+                    onClick = onPickAttachment,
+                    enabled = enabled
+                ) {
+                    Text("📎", fontSize = 20.sp)
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+
                 // 输入框
                 Box(
                     modifier = Modifier
@@ -532,10 +677,8 @@ fun InputArea(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // 发送按钮
-                IconButton(
-                    onClick = onExecute,
-                    enabled = enabled && inputText.isNotBlank(),
+                // 发送按钮（长按设置定时提醒）
+                Box(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
@@ -543,15 +686,274 @@ fun InputArea(
                             if (inputText.isNotBlank() && enabled) colors.primary
                             else colors.backgroundInput
                         )
+                        .combinedClickable(
+                            enabled = enabled && inputText.isNotBlank(),
+                            onClick = onExecute,
+                            onLongClick = { showScheduleDialog = true }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Send,
-                        contentDescription = "发送",
+                        contentDescription = "发送，长按设置定时",
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }
             }
         }
+        }
     }
+
+    if (showScheduleDialog) {
+        ScheduleTaskDialog(
+            prompt = inputText,
+            onDismiss = { showScheduleDialog = false },
+            onSchedule = { triggerAt ->
+                onSchedule(triggerAt)
+                showScheduleDialog = false
+            }
+        )
+    }
+}
+
+private fun copyAttachmentToDownloads(context: Context, uri: Uri): Pair<String, String>? {
+    val resolver = context.contentResolver
+    var displayName = "attachment_${System.currentTimeMillis()}"
+    try {
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                displayName = cursor.getString(0) ?: displayName
+            }
+        }
+    } catch (e: Exception) {
+        // 用默认名
+    }
+    displayName = displayName.replace("/", "_").replace("\\", "_")
+    val uniqueName = "${System.currentTimeMillis()}_$displayName"
+    val mime = resolver.getType(uri) ?: "application/octet-stream"
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, uniqueName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Roubao")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        return try {
+            val input = resolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                resolver.openOutputStream(itemUri)?.use { target ->
+                    source.copyTo(target)
+                }
+            }
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(itemUri, values, null, null)
+            Pair("/sdcard/Download/Roubao/$uniqueName", displayName)
+        } catch (e: Exception) {
+            try {
+                resolver.delete(itemUri, null, null)
+            } catch (_: Exception) {
+            }
+            null
+        }
+    } else {
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+        dir.mkdirs()
+        val file = java.io.File(dir, uniqueName)
+        return try {
+            val input = resolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                file.outputStream().use { target ->
+                    source.copyTo(target)
+                }
+            }
+            Pair(file.absolutePath, displayName)
+        } catch (e: Exception) {
+            null
+        }
+    }
+}
+
+@Composable
+fun ScheduleTaskDialog(
+    prompt: String,
+    onDismiss: () -> Unit,
+    onSchedule: (Long) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val now = remember { Date() }
+    var dateText by remember {
+        mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(now))
+    }
+    var timeText by remember {
+        mutableStateOf(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now))
+    }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("定时执行") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "到时间会发系统通知；点通知打开肉包并预填这段 prompt。",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
+                )
+                Text(
+                    prompt.take(100),
+                    fontSize = 12.sp,
+                    color = colors.textPrimary
+                )
+                OutlinedTextField(
+                    value = dateText,
+                    onValueChange = { dateText = it },
+                    label = { Text("日期 yyyy-MM-dd") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = timeText,
+                    onValueChange = { timeText = it },
+                    label = { Text("时间 HH:mm") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                error?.let {
+                    Text(it, fontSize = 12.sp, color = colors.error)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    try {
+                        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                        val date = formatter.parse("$dateText $timeText")
+                        if (date == null || date.time <= System.currentTimeMillis()) {
+                            error = "时间必须晚于现在"
+                        } else {
+                            onSchedule(date.time)
+                        }
+                    } catch (e: Exception) {
+                        error = "日期或时间格式不对"
+                    }
+                }
+            ) {
+                Text("设置提醒")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
+@Composable
+fun ReminderFeedbackDialog(
+    result: ReminderResult,
+    onDismiss: () -> Unit
+) {
+    val colors = BaoziTheme.colors
+    val context = LocalContext.current
+    val notificationsEnabled = ReminderScheduler.notificationsEnabled(context)
+    val timeText = remember(result.triggerAtMillis) {
+        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(result.triggerAtMillis))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when (result.mode) {
+                    ReminderMode.EXACT -> "提醒已设置"
+                    ReminderMode.INEXACT -> "已设置近似提醒"
+                    ReminderMode.FAILED -> "提醒设置失败"
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (result.mode != ReminderMode.FAILED) {
+                    Text("时间：$timeText", color = colors.textPrimary)
+                }
+                Text(result.message, fontSize = 13.sp, color = colors.textSecondary)
+
+                if (result.mode == ReminderMode.INEXACT) {
+                    Text(
+                        "精确闹钟权限未开启，系统可能延迟几分钟才提醒。",
+                        fontSize = 13.sp,
+                        color = colors.error
+                    )
+                }
+                if (!notificationsEnabled) {
+                    Text(
+                        "通知权限未开启，到点不会有通知。",
+                        fontSize = 13.sp,
+                        color = colors.error
+                    )
+                    TextButton(
+                        onClick = {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        }
+                    ) {
+                        Text("去开启通知")
+                    }
+                }
+
+                Text(
+                    "这是系统通知提醒，不会自动执行；到点后点通知回到肉包，再点发送。",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
+                )
+                Text(
+                    "HyperOS 提示：允许肉包自启动、省电策略设为“无限制”；不要在最近任务里划掉肉包，否则系统可能清理已设置的闹钟。",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary
+                )
+            }
+        },
+        confirmButton = {
+            if (result.mode == ReminderMode.INEXACT) {
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                            )
+                        }
+                        onDismiss()
+                    }
+                ) {
+                    Text("去授权精确闹钟")
+                }
+            } else {
+                TextButton(onClick = onDismiss) { Text("知道了") }
+            }
+        },
+        dismissButton = {
+            if (result.mode == ReminderMode.INEXACT) {
+                TextButton(onClick = onDismiss) { Text("知道了") }
+            }
+        }
+    )
 }

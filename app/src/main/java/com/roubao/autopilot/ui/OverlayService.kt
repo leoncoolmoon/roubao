@@ -33,6 +33,7 @@ class OverlayService : Service() {
     private var overlayView: View? = null
     private var textView: TextView? = null
     private var actionButton: TextView? = null
+    private var pauseButton: TextView? = null
     private var cancelButton: TextView? = null  // 确认模式下的取消按钮
     private var divider: View? = null
     private var divider2: View? = null  // 确认模式下第二个分隔线
@@ -41,10 +42,12 @@ class OverlayService : Service() {
     companion object {
         private var instance: OverlayService? = null
         private var stopCallback: (() -> Unit)? = null
+        private var pauseCallback: (() -> Unit)? = null
         private var continueCallback: (() -> Unit)? = null
         private var confirmCallback: ((Boolean) -> Unit)? = null  // 敏感操作确认回调
         private var isTakeOverMode = false
         private var isConfirmMode = false  // 敏感操作确认模式
+        private var isPaused = false
 
         // 等待 instance 回调队列
         private val pendingCallbacks = mutableListOf<() -> Unit>()
@@ -53,6 +56,7 @@ class OverlayService : Service() {
             stopCallback = onStop
             isTakeOverMode = false
             isConfirmMode = false
+            isPaused = false
             instance?.updateText(text) ?: run {
                 val intent = Intent(context, OverlayService::class.java).apply {
                     putExtra("text", text)
@@ -64,10 +68,12 @@ class OverlayService : Service() {
 
         fun hide(context: Context) {
             stopCallback = null
+            pauseCallback = null
             continueCallback = null
             confirmCallback = null
             isTakeOverMode = false
             isConfirmMode = false
+            isPaused = false
             pendingCallbacks.clear()
             // 只有当 service 已经启动完成时才停止它
             // 否则会导致 ForegroundServiceDidNotStartInTimeException
@@ -78,6 +84,15 @@ class OverlayService : Service() {
 
         fun update(text: String) {
             instance?.updateText(text)
+        }
+
+        fun setPauseCallback(callback: (() -> Unit)?) {
+            pauseCallback = callback
+        }
+
+        fun updatePauseState(paused: Boolean) {
+            isPaused = paused
+            instance?.applyPauseState(paused)
         }
 
         /** 截图时临时隐藏悬浮窗 */
@@ -293,6 +308,23 @@ class OverlayService : Service() {
         }
         container.addView(actionButton)
 
+        // 暂停/继续按钮（正常模式可见）
+        pauseButton = TextView(this).apply {
+            text = "⏸ 暂停"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(16, 4, 16, 4)
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            typeface = Typeface.DEFAULT_BOLD
+            setOnClickListener {
+                if (!isTakeOverMode && !isConfirmMode) {
+                    pauseCallback?.invoke()
+                }
+            }
+        }
+        container.addView(pauseButton)
+
         // 第二个分隔线（确认模式用）
         divider2 = View(this).apply {
             setBackgroundColor(Color.WHITE)
@@ -469,6 +501,7 @@ class OverlayService : Service() {
             // 隐藏取消按钮（人机协作只有继续按钮）
             divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
+            pauseButton?.visibility = View.GONE
         }
     }
 
@@ -478,9 +511,19 @@ class OverlayService : Service() {
         overlayView?.post {
             actionButton?.text = "⏹ 停止"
             actionButton?.setTextColor(Color.WHITE)
+            pauseButton?.visibility = View.VISIBLE
+            pauseButton?.text = if (isPaused) "▶ 继续" else "⏸ 暂停"
+            pauseButton?.setTextColor(if (isPaused) Color.parseColor("#90EE90") else Color.WHITE)
             // 隐藏取消按钮和第二分隔线
             divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
+        }
+    }
+
+    private fun applyPauseState(paused: Boolean) {
+        overlayView?.post {
+            pauseButton?.text = if (paused) "▶ 继续" else "⏸ 暂停"
+            pauseButton?.setTextColor(if (paused) Color.parseColor("#90EE90") else Color.WHITE)
         }
     }
 
@@ -496,6 +539,7 @@ class OverlayService : Service() {
             // 显示取消按钮和第二分隔线
             divider2?.visibility = View.VISIBLE
             cancelButton?.visibility = View.VISIBLE
+            pauseButton?.visibility = View.GONE
         }
     }
 }

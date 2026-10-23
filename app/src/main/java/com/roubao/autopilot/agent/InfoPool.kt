@@ -72,13 +72,18 @@ data class Action(
     val y: Int? = null,
     val x2: Int? = null,
     val y2: Int? = null,
+    val index: Int? = null,          // 无障碍 UI 树编号（1-based），可选
     val text: String? = null,
     val button: String? = null,      // Back, Home, Enter, menu
     val duration: Int? = null,       // wait 动作的等待时长（秒）
     val message: String? = null,     // take_over/ask_user 动作的提示消息
     val needConfirm: Boolean = false,
     val direction: String? = null,   // swipe 方向: up, down, left, right
-    val status: String? = null       // terminate 状态: success, fail
+    val status: String? = null,      // terminate 状态: success, fail
+    val key: String? = null,         // key 动作: ENTER / TAB / DPAD_DOWN / ...
+    val start: Int? = null,          // set_selection 起始字符下标
+    val end: Int? = null,            // set_selection 结束字符下标
+    val command: String? = null      // shell 动作的命令
 ) {
     companion object {
         private const val SCALE_FACTOR = 999  // MAI-UI 坐标缩放因子
@@ -117,13 +122,18 @@ data class Action(
                     y = obj.optJSONArray("coordinate")?.optInt(1),
                     x2 = obj.optJSONArray("coordinate2")?.optInt(0),
                     y2 = obj.optJSONArray("coordinate2")?.optInt(1),
+                    index = if (obj.has("index")) obj.optInt("index") else null,
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
                     duration = if (obj.has("duration")) obj.optInt("duration", 3) else null,
                     message = obj.optString("message", null),
                     needConfirm = obj.optBoolean("need_confirm", false),
                     direction = obj.optString("direction", null),
-                    status = obj.optString("status", null)
+                    status = obj.optString("status", null),
+                    key = obj.optString("key", null),
+                    start = if (obj.has("start")) obj.optInt("start") else null,
+                    end = if (obj.has("end")) obj.optInt("end") else null,
+                    command = obj.optString("command", null)
                 )
             } catch (e: Exception) {
                 null
@@ -179,6 +189,7 @@ data class Action(
                     y = y,
                     x2 = x2,
                     y2 = y2,
+                    index = if (arguments.has("index")) arguments.optInt("index") else null,
                     text = arguments.optString("text", null),
                     button = arguments.optString("button", null),
                     direction = arguments.optString("direction", null),
@@ -216,10 +227,15 @@ data class Action(
             coord2.put(y2)
             obj.put("coordinate2", coord2)
         }
+        index?.let { obj.put("index", it) }
         text?.let { obj.put("text", it) }
         button?.let { obj.put("button", it) }
         duration?.let { obj.put("duration", it) }
         message?.let { obj.put("message", it) }
+        key?.let { obj.put("key", it) }
+        start?.let { obj.put("start", it) }
+        end?.let { obj.put("end", it) }
+        command?.let { obj.put("command", it) }
         if (needConfirm) obj.put("need_confirm", true)
 
         return obj.toString()

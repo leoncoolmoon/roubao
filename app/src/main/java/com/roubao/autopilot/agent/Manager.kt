@@ -18,7 +18,17 @@ class Manager {
             PromptRepository.DEFAULT_MANAGER_PROMPT
         }
 
-        return formatManagerPrompt(infoPool, template)
+        val formatted = formatManagerPrompt(infoPool, template)
+        val feedback = try {
+            PromptRepository.getInstance().getFeedbackPrompt()
+        } catch (e: Exception) {
+            ""
+        }
+        return if (feedback.isNotEmpty()) {
+            "### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback\n\n$formatted"
+        } else {
+            formatted
+        }
     }
 
     private fun formatManagerPrompt(infoPool: InfoPool, template: String): String {

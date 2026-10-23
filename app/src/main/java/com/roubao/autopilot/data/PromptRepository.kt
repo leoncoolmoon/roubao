@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
+import org.json.JSONObject
 
 data class AgentPromptEntity(
     val id: String,
@@ -15,7 +16,8 @@ data class AgentPromptEntity(
     val responsibilities: List<String>,
     val prompt: String,
     val defaultPrompt: String,
-    val isDefault: Boolean
+    val isDefault: Boolean,
+    val enabled: Boolean = true
 )
 
 data class ToolSkillPromptEntity(
@@ -26,7 +28,23 @@ data class ToolSkillPromptEntity(
     val description: String,
     val prompt: String,
     val defaultPrompt: String,
-    val isDefault: Boolean
+    val isDefault: Boolean,
+    val enabled: Boolean = true
+)
+
+data class UserFeedbackEntity(
+    val id: Long,
+    val text: String,
+    val createdAt: Long,
+    val enabled: Boolean,
+    val kind: String = "complaint" // "suggestion" or "complaint"
+)
+
+data class PromptImportResult(
+    val agents: Int,
+    val tools: Int,
+    val feedback: Int,
+    val errors: List<String>
 )
 
 class PromptRepository private constructor(context: Context) {
@@ -60,7 +78,8 @@ class PromptRepository private constructor(context: Context) {
                         responsibilities = respList,
                         prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                         defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
-                        isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1
+                        isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
+                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1
                     )
                 )
             }
@@ -107,6 +126,32 @@ class PromptRepository private constructor(context: Context) {
         db.update("agent_prompts", cv, "id = ?", arrayOf(id))
     }
 
+    /** 同时更新 Agent 的展示信息和 Prompt（添加/编辑共用表单）。 */
+    fun updateAgentDetails(agent: AgentPromptEntity) {
+        val db = dbHelper.writableDatabase
+        val cv = ContentValues().apply {
+            put("name", agent.name)
+            put("icon", agent.icon)
+            put("role", agent.role)
+            put("description", agent.description)
+            put("responsibilities", JSONArray(agent.responsibilities).toString())
+            put("prompt", agent.prompt)
+        }
+        db.update("agent_prompts", cv, "id = ?", arrayOf(agent.id))
+    }
+
+    fun updateAgentEnabled(id: String, enabled: Boolean) {
+        val db = dbHelper.writableDatabase
+        db.update(
+            "agent_prompts",
+            ContentValues().apply { put("enabled", if (enabled) 1 else 0) },
+            "id = ?",
+            arrayOf(id)
+        )
+    }
+
+    fun isAgentEnabled(id: String): Boolean = getAgentPrompt(id)?.enabled ?: true
+
     fun resetAgentPromptToDefault(id: String) {
         val db = dbHelper.writableDatabase
         val agent = getAgentPrompt(id) ?: return
@@ -128,6 +173,7 @@ class PromptRepository private constructor(context: Context) {
             put("prompt", agent.prompt)
             put("default_prompt", agent.defaultPrompt)
             put("is_default", if (agent.isDefault) 1 else 0)
+            put("enabled", if (agent.enabled) 1 else 0)
         }
         db.insertWithOnConflict("agent_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -158,7 +204,8 @@ class PromptRepository private constructor(context: Context) {
                         description = it.getString(it.getColumnIndexOrThrow("description")),
                         prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                         defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
-                        isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1
+                        isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
+                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1
                     )
                 )
             }
@@ -197,6 +244,30 @@ class PromptRepository private constructor(context: Context) {
         db.update("tool_skill_prompts", cv, "id = ?", arrayOf(id))
     }
 
+    /** 同时更新 Tool/Skill 的展示信息和 Prompt（添加/编辑共用表单）。 */
+    fun updateToolSkillDetails(item: ToolSkillPromptEntity) {
+        val db = dbHelper.writableDatabase
+        val cv = ContentValues().apply {
+            put("display_name", item.displayName)
+            put("description", item.description)
+            put("prompt", item.prompt)
+        }
+        db.update("tool_skill_prompts", cv, "id = ?", arrayOf(item.id))
+    }
+
+    fun updateToolSkillEnabled(id: String, enabled: Boolean) {
+        val db = dbHelper.writableDatabase
+        db.update(
+            "tool_skill_prompts",
+            ContentValues().apply { put("enabled", if (enabled) 1 else 0) },
+            "id = ?",
+            arrayOf(id)
+        )
+    }
+
+    fun isToolSkillEnabled(idOrName: String): Boolean =
+        getToolSkillPrompt(idOrName)?.enabled ?: true
+
     fun resetToolSkillPromptToDefault(id: String) {
         val db = dbHelper.writableDatabase
         val item = getToolSkillPrompt(id) ?: return
@@ -217,6 +288,7 @@ class PromptRepository private constructor(context: Context) {
             put("prompt", item.prompt)
             put("default_prompt", item.defaultPrompt)
             put("is_default", if (item.isDefault) 1 else 0)
+            put("enabled", if (item.enabled) 1 else 0)
         }
         db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -228,7 +300,298 @@ class PromptRepository private constructor(context: Context) {
         return db.delete("tool_skill_prompts", "id = ?", arrayOf(id)) > 0
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 2) {
+    // ---------------------------------------------------------------------
+    // 用户负面反馈 / 教训（会注入 Manager / Executor prompt）
+    // ---------------------------------------------------------------------
+
+    fun getAllFeedback(): List<UserFeedbackEntity> {
+        val list = mutableListOf<UserFeedbackEntity>()
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            "user_feedback",
+            null, null, null, null, null,
+            "created_at DESC, id DESC"
+        )
+        cursor.use {
+            while (it.moveToNext()) {
+                list.add(
+                    UserFeedbackEntity(
+                        id = it.getLong(it.getColumnIndexOrThrow("id")),
+                        text = it.getString(it.getColumnIndexOrThrow("text")),
+                        createdAt = it.getLong(it.getColumnIndexOrThrow("created_at")),
+                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
+                        kind = it.getString(it.getColumnIndexOrThrow("kind"))
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    fun addFeedback(text: String, kind: String = "complaint"): Long {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return -1
+        val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
+        val db = dbHelper.writableDatabase
+        val cv = ContentValues().apply {
+            put("text", trimmed)
+            put("created_at", System.currentTimeMillis())
+            put("enabled", 1)
+            put("kind", safeKind)
+        }
+        return db.insert("user_feedback", null, cv)
+    }
+
+    fun updateFeedback(id: Long, text: String, kind: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
+        val db = dbHelper.writableDatabase
+        db.update(
+            "user_feedback",
+            ContentValues().apply {
+                put("text", trimmed)
+                put("kind", safeKind)
+            },
+            "id = ?",
+            arrayOf(id.toString())
+        )
+    }
+
+    fun setFeedbackEnabled(id: Long, enabled: Boolean) {
+        val db = dbHelper.writableDatabase
+        db.update(
+            "user_feedback",
+            ContentValues().apply { put("enabled", if (enabled) 1 else 0) },
+            "id = ?",
+            arrayOf(id.toString())
+        )
+    }
+
+    fun deleteFeedback(id: Long): Boolean {
+        val db = dbHelper.writableDatabase
+        return db.delete("user_feedback", "id = ?", arrayOf(id.toString())) > 0
+    }
+
+    /** 返回可直接注入 prompt 的反馈文本；没有启用项时返回空串。 */
+    fun getFeedbackPrompt(): String {
+        return try {
+            val active = getAllFeedback()
+                .filter { it.enabled && it.text.isNotBlank() }
+                .take(30)
+            val suggestions = active.filter { it.kind == "suggestion" }
+            val complaints = active.filter { it.kind != "suggestion" }
+            buildString {
+                if (suggestions.isNotEmpty()) {
+                    append("### User Suggestions (positive) ###\n")
+                    suggestions.forEach { append("- ${it.text.trim()}\n") }
+                }
+                if (complaints.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n")
+                    append("### User Complaints / Lessons (negative) ###\n")
+                    complaints.forEach { append("- ${it.text.trim()}\n") }
+                }
+            }.trim()
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 批量 JSON 导入 / 导出
+    // ---------------------------------------------------------------------
+
+    fun exportPromptsJson(): String {
+        val root = JSONObject()
+        root.put("format", "roubao-prompts")
+        root.put("version", 1)
+        root.put("exported_at", System.currentTimeMillis())
+
+        val agents = JSONArray()
+        getAllAgentPrompts().forEach { agent ->
+            agents.put(JSONObject().apply {
+                put("id", agent.id)
+                put("name", agent.name)
+                put("icon", agent.icon)
+                put("role", agent.role)
+                put("description", agent.description)
+                put("responsibilities", JSONArray(agent.responsibilities))
+                put("prompt", agent.prompt)
+                put("default_prompt", agent.defaultPrompt)
+                put("is_default", agent.isDefault)
+                put("enabled", agent.enabled)
+            })
+        }
+        root.put("agents", agents)
+
+        val tools = JSONArray()
+        getAllToolSkillPrompts().forEach { item ->
+            tools.put(JSONObject().apply {
+                put("id", item.id)
+                put("name", item.name)
+                put("display_name", item.displayName)
+                put("category", item.category)
+                put("description", item.description)
+                put("prompt", item.prompt)
+                put("default_prompt", item.defaultPrompt)
+                put("is_default", item.isDefault)
+                put("enabled", item.enabled)
+            })
+        }
+        root.put("tools", tools)
+
+        val feedback = JSONArray()
+        getAllFeedback().forEach {
+            feedback.put(JSONObject().apply {
+                put("text", it.text)
+                put("kind", it.kind)
+            })
+        }
+        root.put("feedback", feedback)
+        return root.toString(2)
+    }
+
+    fun importPromptsJson(json: String): PromptImportResult {
+        val errors = mutableListOf<String>()
+        val root = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return PromptImportResult(0, 0, 0, listOf("JSON 解析失败: ${e.message}"))
+        }
+
+        if (root.optString("format") != "roubao-prompts") {
+            errors.add("format 不是 roubao-prompts（仍尝试导入）")
+        }
+
+        var agentCount = 0
+        var toolCount = 0
+        var feedbackCount = 0
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        try {
+            if (root.optBoolean("replace_feedback", false)) {
+                db.delete("user_feedback", null, null)
+            }
+
+            val agentsArr = root.optJSONArray("agents")
+            if (agentsArr != null) {
+                for (i in 0 until agentsArr.length()) {
+                    val obj = agentsArr.optJSONObject(i)
+                    if (obj == null) {
+                        errors.add("agents[$i] 不是对象")
+                        continue
+                    }
+                    val id = obj.optString("id").trim()
+                    if (id.isEmpty()) {
+                        errors.add("agents[$i] 缺少 id")
+                        continue
+                    }
+                    val prompt = obj.optString("prompt")
+                    if (prompt.isBlank()) {
+                        errors.add("agent $id 缺少 prompt")
+                        continue
+                    }
+                    val responsibilities = when (val r = obj.opt("responsibilities")) {
+                        is JSONArray -> r.toString()
+                        is String -> r
+                        else -> "[]"
+                    }
+                    val cv = ContentValues().apply {
+                        put("id", id)
+                        put("name", obj.optString("name", id))
+                        put("icon", obj.optString("icon", "🤖"))
+                        put("role", obj.optString("role", "自定义角色"))
+                        put("description", obj.optString("description", ""))
+                        put("responsibilities", responsibilities)
+                        put("prompt", prompt)
+                        put("default_prompt", obj.optString("default_prompt", prompt))
+                        put("is_default", if (obj.optBoolean("is_default", false)) 1 else 0)
+                        put("enabled", if (obj.optBoolean("enabled", true)) 1 else 0)
+                    }
+                    db.insertWithOnConflict("agent_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    agentCount++
+                }
+            }
+
+            val toolsArr = root.optJSONArray("tools")
+            if (toolsArr != null) {
+                for (i in 0 until toolsArr.length()) {
+                    val obj = toolsArr.optJSONObject(i)
+                    if (obj == null) {
+                        errors.add("tools[$i] 不是对象")
+                        continue
+                    }
+                    val id = obj.optString("id").trim()
+                    if (id.isEmpty()) {
+                        errors.add("tools[$i] 缺少 id")
+                        continue
+                    }
+                    val prompt = obj.optString("prompt")
+                    if (prompt.isBlank()) {
+                        errors.add("tool $id 缺少 prompt")
+                        continue
+                    }
+                    val category = obj.optString("category", "tool")
+                    if (category != "tool" && category != "skill") {
+                        errors.add("tool $id 的 category 必须是 tool 或 skill")
+                        continue
+                    }
+                    val cv = ContentValues().apply {
+                        put("id", id)
+                        put("name", obj.optString("name", id))
+                        put("display_name", obj.optString("display_name", obj.optString("name", id)))
+                        put("category", category)
+                        put("description", obj.optString("description", ""))
+                        put("prompt", prompt)
+                        put("default_prompt", obj.optString("default_prompt", prompt))
+                        put("is_default", if (obj.optBoolean("is_default", false)) 1 else 0)
+                        put("enabled", if (obj.optBoolean("enabled", true)) 1 else 0)
+                    }
+                    db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    toolCount++
+                }
+            }
+
+            val feedbackArr = root.optJSONArray("feedback")
+            if (feedbackArr != null) {
+                for (i in 0 until feedbackArr.length()) {
+                    var kind = "complaint"
+                    val text = when (val value = feedbackArr.opt(i)) {
+                        is String -> value
+                        is JSONObject -> {
+                            kind = if (value.optString("kind") == "suggestion") "suggestion" else "complaint"
+                            value.optString("text")
+                        }
+                        else -> ""
+                    }.trim()
+                    if (text.isEmpty()) continue
+                    val exists = db.rawQuery(
+                        "SELECT 1 FROM user_feedback WHERE text = ? LIMIT 1",
+                        arrayOf(text)
+                    ).use { it.moveToFirst() }
+                    if (!exists) {
+                        db.insert("user_feedback", null, ContentValues().apply {
+                            put("text", text)
+                            put("created_at", System.currentTimeMillis())
+                            put("enabled", 1)
+                            put("kind", kind)
+                        })
+                        feedbackCount++
+                    }
+                }
+            }
+
+            db.setTransactionSuccessful()
+        } catch (e: Exception) {
+            errors.add("导入失败: ${e.message}")
+        } finally {
+            db.endTransaction()
+        }
+
+        return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
+    }
+
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 4) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -242,7 +605,8 @@ class PromptRepository private constructor(context: Context) {
                     responsibilities TEXT NOT NULL,
                     prompt TEXT NOT NULL,
                     default_prompt TEXT NOT NULL,
-                    is_default INTEGER NOT NULL DEFAULT 1
+                    is_default INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 1
                 )
                 """.trimIndent()
             )
@@ -257,7 +621,20 @@ class PromptRepository private constructor(context: Context) {
                     description TEXT NOT NULL,
                     prompt TEXT NOT NULL,
                     default_prompt TEXT NOT NULL,
-                    is_default INTEGER NOT NULL DEFAULT 1
+                    is_default INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 1
+                )
+                """.trimIndent()
+            )
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS user_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    kind TEXT NOT NULL DEFAULT 'complaint'
                 )
                 """.trimIndent()
             )
@@ -267,9 +644,49 @@ class PromptRepository private constructor(context: Context) {
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            db.execSQL("DROP TABLE IF EXISTS agent_prompts")
-            db.execSQL("DROP TABLE IF EXISTS tool_skill_prompts")
-            onCreate(db)
+            // 保留用户已经改过的 prompt，只补新表/新列。
+            if (oldVersion < 3) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_feedback (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        text TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        enabled INTEGER NOT NULL DEFAULT 1,
+                        kind TEXT NOT NULL DEFAULT 'complaint'
+                    )
+                    """.trimIndent()
+                )
+            }
+            if (oldVersion < 4) {
+                addColumnIfMissing(db, "agent_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
+                addColumnIfMissing(db, "tool_skill_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
+                addColumnIfMissing(db, "user_feedback", "kind", "TEXT NOT NULL DEFAULT 'complaint'")
+            }
+        }
+
+        private fun addColumnIfMissing(db: SQLiteDatabase, table: String, column: String, definition: String) {
+            val exists = try {
+                db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+                    var found = false
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(cursor.getColumnIndexOrThrow("name")) == column) {
+                            found = true
+                            break
+                        }
+                    }
+                    found
+                }
+            } catch (e: Exception) {
+                false
+            }
+            if (!exists) {
+                try {
+                    db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
+                } catch (e: Exception) {
+                    println("[PromptRepository] add column $table.$column failed: ${e.message}")
+                }
+            }
         }
 
         private fun insertDefaultAgents(db: SQLiteDatabase) {

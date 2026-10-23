@@ -129,7 +129,14 @@ object ToolRegistry {
      * 生成所有工具的描述（给 LLM）
      */
     fun getAllDescriptions(): String {
-        return tools.values.joinToString("\n\n") { it.toLLMDescription() }
+        return tools.values.filter { isEnabled(it.name) }
+            .joinToString("\n\n") { it.toLLMDescription() }
+    }
+
+    private fun isEnabled(name: String): Boolean = try {
+        com.roubao.autopilot.data.PromptRepository.getInstance().isToolSkillEnabled(name)
+    } catch (e: Exception) {
+        true
     }
 
     /**
@@ -137,6 +144,9 @@ object ToolRegistry {
      */
     suspend fun execute(toolName: String, params: Map<String, Any?>): ToolResult {
         val tool = tools[toolName] ?: return ToolResult.Error("未找到工具: $toolName")
+        if (!isEnabled(tool.name)) {
+            return ToolResult.Error("工具已停用: $toolName")
+        }
 
         val errors = tool.validateParams(params)
         if (errors.isNotEmpty()) {

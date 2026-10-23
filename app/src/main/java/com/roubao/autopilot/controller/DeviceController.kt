@@ -169,6 +169,17 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
+     * 公开的 shell 入口，供 Agent 的 shell 动作 / ShellTool 使用。
+     * 明确要求 Shizuku ShellService 已连接，避免退化成 App uid 执行后“看起来成功、实际失败”。
+     */
+    fun shell(command: String): String {
+        if (!isAvailable()) {
+            return "Error: Shizuku ShellService 未连接，无法执行 shell 命令"
+        }
+        return exec(command)
+    }
+
+    /**
      * 点击屏幕
      */
     fun tap(x: Int, y: Int) {
@@ -322,6 +333,54 @@ class DeviceController(private val context: Context? = null) {
         exec("input keyevent 66")
     }
 
+    private val keyNameMap = mapOf(
+        "ENTER" to "KEYCODE_ENTER",
+        "BACK" to "KEYCODE_BACK",
+        "HOME" to "KEYCODE_HOME",
+        "TAB" to "KEYCODE_TAB",
+        "ESC" to "KEYCODE_ESCAPE",
+        "ESCAPE" to "KEYCODE_ESCAPE",
+        "SPACE" to "KEYCODE_SPACE",
+        "DEL" to "KEYCODE_DEL",
+        "BACKSPACE" to "KEYCODE_DEL",
+        "FORWARD_DEL" to "KEYCODE_FORWARD_DEL",
+        "DELETE" to "KEYCODE_FORWARD_DEL",
+        "DPAD_UP" to "KEYCODE_DPAD_UP",
+        "DPAD_DOWN" to "KEYCODE_DPAD_DOWN",
+        "DPAD_LEFT" to "KEYCODE_DPAD_LEFT",
+        "DPAD_RIGHT" to "KEYCODE_DPAD_RIGHT",
+        "DPAD_CENTER" to "KEYCODE_DPAD_CENTER",
+        "PAGE_UP" to "KEYCODE_PAGE_UP",
+        "PAGE_DOWN" to "KEYCODE_PAGE_DOWN",
+        "MOVE_HOME" to "KEYCODE_MOVE_HOME",
+        "MOVE_END" to "KEYCODE_MOVE_END",
+        "APP_SWITCH" to "KEYCODE_APP_SWITCH",
+        "MENU" to "KEYCODE_MENU"
+    )
+
+    /**
+     * 发送一个按键：ENTER / TAB / DPAD_DOWN / PAGE_DOWN 等，
+     * 也支持 KEYCODE_XXX、单个字母，以及 CTRL+A 这种组合键。
+     */
+    fun keyEvent(key: String) {
+        val normalized = key.trim().uppercase().removePrefix("KEYCODE_")
+        if (normalized.isEmpty()) return
+
+        if (normalized.contains("+")) {
+            val parts = normalized.split("+").mapNotNull { part ->
+                keyNameMap[part] ?: if (part.length == 1) "KEYCODE_$part" else null
+            }
+            if (parts.isNotEmpty()) {
+                exec("input keycombination ${parts.joinToString(" ")}")
+            }
+            return
+        }
+
+        val code = keyNameMap[normalized]
+            ?: if (normalized.length == 1) "KEYCODE_$normalized" else "KEYCODE_$normalized"
+        exec("input keyevent $code")
+    }
+
     private var cacheDir: File? = null
 
     fun setCacheDir(dir: File) {
@@ -466,10 +525,14 @@ class DeviceController(private val context: Context? = null) {
      * @return 0=竖屏, 1=横屏(90°), 2=倒置竖屏, 3=横屏(270°)
      */
     private fun getScreenOrientation(): Int {
-        val output = exec("dumpsys window displays | grep mCurrentOrientation")
-        // 输出格式: mCurrentOrientation=0 或 mCurrentOrientation=1
-        val match = Regex("mCurrentOrientation=(\\d)").find(output)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        // 部分 ROM（如 HyperOS）的 `dumpsys window displays` 不输出 mCurrentOrientation，
+        // 但 `dumpsys display` 有。先查后者，再回退到前者。
+        val regex = Regex("mCurrentOrientation=(\\d)")
+        val displayOutput = exec("dumpsys display | grep -m1 mCurrentOrientation")
+        regex.find(displayOutput)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+
+        val windowOutput = exec("dumpsys window displays | grep -m1 mCurrentOrientation")
+        return regex.find(windowOutput)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     /**

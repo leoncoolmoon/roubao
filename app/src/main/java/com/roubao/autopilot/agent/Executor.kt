@@ -67,9 +67,31 @@ Text Related:
             .replace("{{progressStatus}}", infoPool.progressStatus.ifEmpty { "No progress yet." })
             .replace("{{actionHistory}}", actionHistoryStr)
 
-        if (infoPool.accessibilityTree.isNotEmpty()) {
-            prompt += "\n\n### Accessibility UI Tree:\n${infoPool.accessibilityTree}\n"
+        val feedback = try {
+            PromptRepository.getInstance().getFeedbackPrompt()
+        } catch (e: Exception) {
+            ""
         }
+        if (feedback.isNotEmpty()) {
+            prompt = "### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback\n\n$prompt"
+        }
+
+        if (infoPool.accessibilityTree.isNotEmpty()) {
+            prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
+            prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +
+                "Coordinates here are ABSOLUTE PIXELS.\n"
+            prompt += "For click/double_tap/long_press: find the target node below, put its EXACT text " +
+                "into `text`, and its center coordinate into `coordinate` as fallback.\n"
+            prompt += "Optional index mode: each node is numbered 1..N. You may use " +
+                "{\"action\":\"click\",\"index\":N}, {\"action\":\"long_press\",\"index\":N}, " +
+                "{\"action\":\"type\",\"index\":N,\"text\":\"...\"} or " +
+                "{\"action\":\"scroll\",\"index\":N,\"direction\":\"down\"}. " +
+                "Index is a snapshot; if the page animates or an ad is moving, prefer text/coordinate.\n"
+            prompt += "${infoPool.accessibilityTree}\n"
+        } else {
+            println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
+        }
+        println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")
 
         return prompt
     }
