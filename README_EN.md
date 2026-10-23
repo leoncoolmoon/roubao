@@ -38,7 +38,7 @@
 
 ## Background
 
-In December 2025, ByteDance partnered with ZTE to release "Doubao Phone Assistant" - an AI assistant that can automatically operate your phone to complete complex tasks. It can compare prices and place orders, batch submit job applications, scroll through videos, and even play games for you.
+In December 2025, ByteDance partnered with ZTE to release "Doubao Phone Assistant" - an AI assistant that can automatically operate your phone to complete complex tasks. It can compare prices and place orders, batch-apply for jobs, and scroll through videos.
 
 The first batch of 30,000 engineering units priced at 3,499 CNY (~$480) sold out on launch day, with resale prices reaching 5,000+ CNY.
 
@@ -162,7 +162,7 @@ User-facing task layer that maps natural language to specific operations:
 
 1. **Delegation**: For high-confidence matches, directly open AI-capable apps (like Xiaomei, Doubao, Jimeng) via DeepLink to complete tasks. **Fast, one-step.**
 
-2. **GUI Automation**: For apps without AI capability (like Meituan, WeChat), complete tasks through traditional screenshot-analyze-operate loops. Skills provide step guidance for better success rates.
+2. **GUI Automation**: For apps without AI capability (like Meituan, WeChat), complete tasks through traditional screenshot-analyze-operate loops. Skills provide step guidance for better success.
 
 ---
 
@@ -173,6 +173,21 @@ User-facing task layer that maps natural language to specific operations:
 - Based on advanced Vision Language Models (VLM), can "see" and understand screen content
 - Natural language commands - just speak normally
 - Smart decision making, automatically plans next steps based on screen state
+
+### 🗃️ Database-Backed Prompt Management and Accessibility Enhancements
+
+#### 1. Agent and Tool/Skill Prompt Database Management
+
+- SQLite persistence (`PromptRepository.kt`): added a dedicated database repository that stores the prompt templates of various built-in agents (such as `Manager`, `Executor`, `Reflector`, and `Notetaker`) and numerous built-in tools/skills in SQLite.
+- Dynamic management and editing: supports UI preview, long-press multiline editing, restoring defaults, and custom adding/deleting of agents and tool/skill entries.
+- Agent refactor: `ActionReflector.kt`, `Executor.kt`, `Manager.kt`, and `Notetaker.kt` were refactored to stop concatenating long prompt strings and instead load templates from `PromptRepository` and replace placeholders such as `{{instruction}}`, `{{plan}}`, etc.
+
+#### 2. Android Accessibility Service and Enhanced Automation
+
+- Accessibility service (`AutoPilotAccessibilityService.kt`): registered in `AndroidManifest.xml`, it can dump the current window UI element tree (Node Tree) in real time.
+- Precise coordinate calibration and blind operation (`MobileAgent.kt`):
+  - When accessibility mode is enabled, the system can locate button coordinates precisely within the UI tree using node text, ID, or query conditions.
+  - When screenshot capture fails, a black screen occurs, or a sensitive page blocks screenshots, the agent can rely on accessibility properties for blind operation or directly trigger a node click.
 
 ### 🎨 Beautifully Designed UI
 
@@ -199,12 +214,6 @@ When Shizuku runs with Root privileges, Roubao can enable Root mode:
 - **Root Mode**: Unlock more system-level operation capabilities
 - **su Commands**: Allow execution of `su -c` commands (use with caution)
 - **Auto Detection**: Automatically detects Shizuku privilege level (ADB/Root), option is grayed out in non-Root environments
-
-### 🔧 Highly Customizable
-
-- Supports multiple VLMs: Alibaba Qwen-VL, OpenAI GPT-4V, Claude, etc.
-- Configurable custom API endpoints
-- Can add custom models
 
 ---
 
@@ -413,7 +422,8 @@ app/src/main/assets/
 - [x] **Skills Layer** - User intent mapping with Delegation and GUI Automation modes
 - [x] **Smart App Search** - Multi-dimensional matching via pinyin, semantic, and category
 - [x] **Fast Path** - High-confidence Skills direct DeepLink jump
-- [x] **Database-backed Agent & Tool/Skill Prompt Management** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agents and Tools/Skills
+- [x] **Database-backed Agent & Tool/Skill Prompt Management** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agent, Tool, and Skill entries
+- [x] **Android Accessibility Service and Enhanced Automation** - Registered `AccessibilityService`, supports UI tree dumping, precise coordinate targeting, and blind-operation fallback for unreliable screenshots
 
 ### 🚀 v2.0 In Development
 
