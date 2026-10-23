@@ -1,5 +1,7 @@
 package com.roubao.autopilot.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +45,7 @@ import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
+import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
@@ -75,6 +78,10 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var accessibilityServiceRunning by remember {
+        mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -181,11 +188,47 @@ fun SettingsScreen(
                             color = colors.textPrimary
                         )
                         Text(
-                            text = if (settings.accessibilityModeEnabled) "开启后提取UI元素树协助定位与截图失败盲操" else "未开启（仅依靠视觉图像识别）",
+                            text = when {
+                                settings.accessibilityModeEnabled && !accessibilityServiceRunning ->
+                                    "开关已开，但系统无障碍服务未启用，实际不会生效"
+                                settings.accessibilityModeEnabled ->
+                                    "已启用：UI 树 + 可选 index 点击/长按/输入/滚动"
+                                else -> "未开启（仅依靠视觉图像识别）"
+                            },
                             fontSize = 13.sp,
-                            color = colors.textSecondary,
-                            maxLines = 2
+                            color = if (settings.accessibilityModeEnabled && !accessibilityServiceRunning)
+                                colors.error else colors.textSecondary,
+                            maxLines = 3
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (accessibilityServiceRunning) "系统服务：已开启" else "系统服务：未开启",
+                                fontSize = 11.sp,
+                                color = if (accessibilityServiceRunning) colors.success else colors.error
+                            )
+                            if (!accessibilityServiceRunning) {
+                                TextButton(
+                                    onClick = {
+                                        context.startActivity(
+                                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                ) {
+                                    Text("去开启", fontSize = 11.sp)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        accessibilityServiceRunning =
+                                            AutoPilotAccessibilityService.isServiceRunning()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 6.dp)
+                                ) {
+                                    Text("刷新", fontSize = 11.sp)
+                                }
+                            }
+                        }
                     }
                     Switch(
                         checked = settings.accessibilityModeEnabled,

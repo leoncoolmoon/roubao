@@ -105,6 +105,204 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * 直接把文本写入当前焦点（或第一个）可编辑节点，绕过输入法/键盘状态。
+     * 适用于“英文输入但当前是中文输入法”的场景，避免去点键盘“中”键。
+     */
+    fun setTextOnFocusedEditable(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = try {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        } catch (e: Exception) {
+            null
+        }
+        val target = if (focused?.isEditable == true) focused else findFirstEditable(root)
+        if (target == null) return false
+
+        val args = android.os.Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        } catch (e: Exception) {
+            println("[AccessibilityService] setText failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 在焦点输入框里设置选区（start == end 就是移动光标）。
+     * 比长按拖拽/方向键更精确，适合“选中几个字/移动光标”。
+     */
+    fun setSelection(start: Int, end: Int): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = try {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        } catch (e: Exception) {
+            null
+        }
+        val editable = if (focused?.isEditable == true) focused else findFirstEditable(root)
+        val target = editable ?: return false
+
+        val args = android.os.Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, start.coerceAtLeast(0))
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, end.coerceAtLeast(0))
+        }
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+        } catch (e: Exception) {
+            println("[AccessibilityService] setSelection failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 对当前可滚动节点执行翻页（比 swipe 更稳）。
+     */
+    fun scrollPage(direction: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        var target: AccessibilityNodeInfo? = null
+
+        fun find(node: AccessibilityNodeInfo?) {
+            if (node == null || target != null || !node.isVisibleToUser) return
+            if (node.isScrollable) {
+                target = node
+                return
+            }
+            for (i in 0 until node.childCount) {
+                find(node.getChild(i))
+            }
+        }
+
+        find(root)
+        val node = target ?: return false
+        val action = when (direction.lowercase()) {
+            "up", "backward", "back" -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            "left", "right" -> return false
+            else -> AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        }
+        return try {
+            node.performAction(action)
+        } catch (e: Exception) {
+            println("[AccessibilityService] scrollPage failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 按 UI 树编号（从 1 开始）点击节点。
+     * 编号与 dumpNodeTree() 中的序号一致，每次动作前重新取树，避免使用过期节点。
+     */
+    fun clickByIndex(index: Int): Boolean {
+        var node = nodeByIndex(index) ?: return false
+        while (node != null && !node.isClickable) {
+            node = node.parent
+        }
+        return try {
+            node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        } catch (e: Exception) {
+            println("[AccessibilityService] clickByIndex failed: ${e.message}")
+            false
+        }
+    }
+
+    fun longPressByIndex(index: Int): Boolean {
+        var node = nodeByIndex(index) ?: return false
+        while (node != null && !node.isLongClickable) {
+            node = node.parent
+        }
+        return try {
+            node?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true
+        } catch (e: Exception) {
+            println("[AccessibilityService] longPressByIndex failed: ${e.message}")
+            false
+        }
+    }
+
+    fun setTextByIndex(index: Int, text: String): Boolean {
+        val node = nodeByIndex(index) ?: return false
+        val target = if (node.isEditable) node else findEditableChild(node) ?: return false
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val args = android.os.Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+            }
+            target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        } catch (e: Exception) {
+            println("[AccessibilityService] setTextByIndex failed: ${e.message}")
+            false
+        }
+    }
+
+    fun scrollByIndex(index: Int, forward: Boolean): Boolean {
+        var node = nodeByIndex(index) ?: return false
+        while (node != null && !node.isScrollable) {
+            node = node.parent
+        }
+        return try {
+            node?.performAction(
+                if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+            ) == true
+        } catch (e: Exception) {
+            println("[AccessibilityService] scrollByIndex failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun nodeByIndex(index: Int): AccessibilityNodeInfo? {
+        if (index <= 0) return null
+        val root = rootInActiveWindow ?: return null
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        collectNodeRefs(root, nodes, 80)
+        return nodes.getOrNull(index - 1)
+    }
+
+    private fun collectNodeRefs(
+        node: AccessibilityNodeInfo?,
+        list: MutableList<AccessibilityNodeInfo>,
+        maxNodes: Int
+    ) {
+        if (node == null || list.size >= maxNodes) return
+        if (node.isVisibleToUser) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            val text = node.text?.toString()?.trim() ?: ""
+            val desc = node.contentDescription?.toString()?.trim() ?: ""
+            val id = node.viewIdResourceName?.toString() ?: ""
+            if (!rect.isEmpty &&
+                (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() ||
+                    node.isClickable || node.isEditable)
+            ) {
+                list.add(node)
+            }
+        }
+        for (i in 0 until node.childCount) {
+            if (list.size >= maxNodes) break
+            collectNodeRefs(node.getChild(i), list, maxNodes)
+        }
+    }
+
+    private fun findEditableChild(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null || !node.isVisibleToUser) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val found = findEditableChild(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun findFirstEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null || !node.isVisibleToUser) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val found = findFirstEditable(node.getChild(i))
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /**
      * 根据元素属性进行盲操（在截图失败/黑屏或无障碍直接操作场景下使用）
      * @param query 匹配的关键词（文本/描述/viewId）
      * @param textToType 如果是输入类型动作，需要输入的文本
