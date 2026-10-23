@@ -59,8 +59,10 @@ Why "Roubao" (肉包, meaning "meat bun")? Because the author doesn't like veget
 | Native Android | ✅ Kotlin | ✅ Native | ❌ Python |
 | Open Source | ✅ MIT | ❌ Closed | ✅ Yes |
 | Skills/Tools Architecture | ✅ Full | ❓ Unknown | ❌ No |
+| UI Tree / Hybrid Positioning | ✅ Dual-mode (Index/Coords) | ❓ Unknown | ❌ Coordinate tap only |
+| Unified Prompt Editor | ✅ SQLite DB Management | ❌ Immutable | ❌ Config file/Hardcoded |
 | UI Design | ⭐⭐⭐½ | ⭐⭐⭐⭐ | ⭐⭐ |
-| Custom Models | ✅ Yes | ❌ Doubao only | ✅ Partial |
+| Custom Models | ✅ Qwen/GPT/Claude/GUIOwl/MAIUI | ❌ Doubao only | ✅ Partial |
 
 ### What Problem Do We Solve?
 
@@ -174,10 +176,25 @@ User-facing task layer that maps natural language to specific operations:
 - Natural language commands - just speak normally
 - Smart decision making, automatically plans next steps based on screen state
 
-### 🗃️ Database-Backed Prompt Management and Accessibility Enhancements
+### 🗃️ Unified Prompt Editor & Database-Backed Persistence
 
-- Agent and Tool/Skill Prompt Database Management, support inport/export and modification
-- Android Accessibility Service and Enhanced Automation
+- **Prompt Persistence**: Prompt templates for Agents, Tools, and Skills are stored and managed via SQLite database (`PromptRepository`).
+- **Dynamic Variables & Flexible Editing**: Supports variable placeholders, UI preview, long-press multi-line editor, and one-click reset to defaults.
+- **Custom Extensions**: Allows users to create or delete custom Agent, Tool, or Skill prompts, significantly expanding Agent capabilities.
+
+### ♿ Accessibility Service & UI Tree Hybrid Positioning (Index / Coordinate Dual-Mode)
+
+- **UI Tree Awareness**: Built-in `AutoPilotAccessibilityService` dumps live UI node trees to extract text, widget types, and layout bounds.
+- **Precise Element Index Click (Index Mode)**：Triggers UI operations directly via element index, bypassing resolution differences and dynamic UI shifts to boost execution success rates in complex layouts.
+- **Smart Fallback**: Automatically falls back to visual coordinate click mode if index mode fails or accessibility nodes are unavailable, guaranteeing smooth execution.
+
+### ⏰ Scheduled Reminders & Task Scheduling
+
+- **Reminder Scheduler**: Built-in `ReminderScheduler` and `ReminderReceiver` enable automatic scheduling and triggering of reminders at preset times.
+
+### 💬 Multi-Turn Conversation & Context Memory
+
+- **Conversation Memory**: Tracks multi-turn conversation context and execution history, improving the handling of complex multi-step instructions.
 
 ### 🎨 Beautifully Designed UI
 
@@ -188,6 +205,13 @@ User-facing task layer that maps natural language to specific operations:
 - Dark/Light theme auto-adaptation
 - Carefully designed onboarding experience
 - Full English and Chinese language support
+
+### 🔧 Highly Customizable
+
+- Supports various VLMs and specialized UI models: Alibaba Qwen-VL, OpenAI GPT-4V, Claude, GUIOwl, MAIUI, etc.
+- Preset API providers: One-click switching between Alibaba Cloud, OpenAI, OpenRouter.
+- Dynamically fetch available model lists from API with fuzzy search.
+- Configurable custom API endpoints for local models (Ollama, vLLM, etc.).
 
 ### 🔒 Safety Protection
 
@@ -405,29 +429,20 @@ app/src/main/assets/
 
 ## Roadmap
 
-### Completed (v1.x)
+### Completed
 
 - [x] **Native Android Implementation** - Kotlin rewrite of MobileAgent, no Python dependency
-- [x] **Tools Layer** - Atomic capability wrapper (search_apps, deep_link, clipboard, etc.)
+- [x] **Tools Layer** - Atomic capability wrapper (search_apps, deep_link, clipboard, shell, http, etc.)
 - [x] **Skills Layer** - User intent mapping with Delegation and GUI Automation modes
 - [x] **Smart App Search** - Multi-dimensional matching via pinyin, semantic, and category
 - [x] **Fast Path** - High-confidence Skills direct DeepLink jump
-- [x] **Database-backed Agent & Tool/Skill Prompt Management** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agent, Tool, and Skill entries
-- [x] **Android Accessibility Service and Enhanced Automation** - Registered `AccessibilityService`, supports UI tree dumping, precise coordinate targeting, and blind-operation fallback for unreliable screenshots
+- [x] **Unified Prompt Editor** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agent, Tool, and Skill entries
+- [x] **Accessibility Service & UI Tree Awareness** - Integrated `AccessibilityService` to dump UI tree nodes, extract widget structures, and reduce visual misjudgments
+- [x] **Accessibility Hybrid Mode (Index Mode + Coordinates)** - Prioritizes element index clicks (resilient against resolution/layout shifts) with smart fallback to coordinate mode
+- [x] **Scheduled Reminders & Task Scheduling** - Supports scheduled triggering and reminder management via `ReminderScheduler`
+- [x] **Specialized UI VLM Support** - Added adaptation and client support for UI-dedicated models like GUIOwl and MAIUI
 
-### 🚀 v2.0 In Development
-
-> Major update in progress on `roubao2.0+AccessibilityService` branch
-
-- [ ] **Accessibility Service Hybrid Mode** - Integrate AccessibilityService for more precise UI control
-  - Prioritize element index-based clicking (unaffected by screen changes)
-  - Smart fallback: auto-switch to coordinate mode when index mode fails
-  - No Root required, further lowering the barrier to entry
-
-- [ ] **UI Tree Awareness** - Agent can access complete UI structure
-  - Identify clickable elements, input fields, scrollable areas
-  - Provide structured UI context to LLM
-  - Reduce pure-visual misjudgments
+### 🚀 Planned & In Development
 
 - [ ] **Macro Script System** - Record, store, and replay action sequences
   - Record execution as replayable scripts

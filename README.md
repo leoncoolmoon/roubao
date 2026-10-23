@@ -59,8 +59,10 @@
 | 原生 Android 实现 | ✅ Kotlin | ✅ 原生 | ❌ Python |
 | 开源 | ✅ MIT | ❌ 闭源 | ✅ 开源 |
 | Skills/Tools 架构 | ✅ 完整 | ❓ 未知 | ❌ 无 |
+| UI 树 / 无障碍混合定位 | ✅ 支持 Index/坐标双模式 | ❓ 未知 | ❌ 仅坐标点击 |
+| Prompt 统一编辑器 | ✅ 支持 SQLite 数据库化管理 | ❌ 无法修改 | ❌ 配置文件/硬编码 |
 | UI 设计 | ⭐⭐⭐½ | ⭐⭐⭐⭐ | ⭐⭐ |
-| 自定义模型 | ✅ 支持 | ❌ 仅豆包 | ✅ 部分支持 |
+| 自定义模型 | ✅ Qwen/GPT/Claude/GUIOwl/MAIUI | ❌ 仅豆包 | ✅ 部分支持 |
 
 ### 我们解决了什么问题？
 
@@ -174,10 +176,25 @@ Android 系统出于安全考虑，普通 App 无法：
 - 自然语言指令，说人话就能操作手机
 - 智能决策，根据屏幕状态自动规划下一步操作
 
-### 🗃️ Prompt 数据库化管理与无障碍增强
+### 🗃️ 统一 Prompt 编辑器与数据库化持久层
 
-- Agent 与 Tool/Skill Prompt 数据库化管理，支持导入导出以及修改和自定义
-- Android 无障碍服务与增强自动化
+- **Prompt 数据库化**：Agent、Tool 与 Skill 的 Prompt 模板均通过 SQLite 数据库（`PromptRepository`）统一持久化管理。
+- **模板变量与灵活编辑**：支持动态变量占位符，提供 UI 预览、长按多行编辑器修改、一键恢复默认值。
+- **自定义扩充**：支持用户自定义创建与删除 Agent、Tool 或 Skill 的 Prompt，极大地拓展了 Agent 的能力边界。
+
+### ♿ 无障碍服务与 UI 树混合定位 (Index / 坐标双模式)
+
+- **UI 树结构感知**：内置 `AutoPilotAccessibilityService` 无障碍服务，实时 Dump 界面 UI 节点树，提取文本、控件类型与布局位置。
+- **元素索引准确点击 (Index Mode)**：直接通过元素 index 触发控件操作，摆脱屏幕分辨率限制与动态 UI 变动影响，显著提高复杂界面场景的执行成功率。
+- **智能兜底保障**：索引模式失败或无障碍节点不可用时，自动回退到视觉坐标点击模式，确保自动化流程稳健运行。
+
+### ⏰ 定时任务与提醒调度
+
+- **提醒调度器**：内置 `ReminderScheduler` 与 `ReminderReceiver`，支持按设定时间自动调度与触发提醒任务。
+
+### 💬 多轮对话与上下文记忆
+
+- **上下文记忆 (Conversation Memory)**：支持多轮对话上下文管理，能够精准追踪任务执行进度与历史交互，提升复杂多步骤指令的处理能力。
 
 ### 🎨 精心设计的 UI
 
@@ -191,7 +208,7 @@ Android 系统出于安全考虑，普通 App 无法：
 
 ### 🔧 高度可定制
 
-- 支持多种 VLM：阿里云通义千问、OpenAI GPT-4V、Claude 等
+- 支持多种 VLM 及专用 UI 模型：阿里云通义千问、OpenAI GPT-4V、Claude、GUIOwl、MAIUI 等
 - 预设 API 服务商：阿里云、OpenAI、OpenRouter 一键切换
 - 从 API 动态获取可用模型列表，支持模糊搜索
 - 可配置自定义 API 端点，支持本地模型（Ollama、vLLM 等）
@@ -411,29 +428,20 @@ app/src/main/assets/
 
 ## 路线图
 
-### 已完成 (v1.x)
+### 已完成
 
 - [x] **原生 Android 实现** - Kotlin 重写 MobileAgent，摆脱 Python 依赖
-- [x] **Tools 层** - 原子能力封装（search_apps、deep_link、clipboard 等）
+- [x] **Tools 层** - 原子能力封装（search_apps、deep_link、clipboard、shell、http 等）
 - [x] **Skills 层** - 用户意图映射，支持 Delegation 和 GUI 自动化两种模式
 - [x] **智能应用搜索** - 拼音、语义、分类多维度匹配
 - [x] **快速路径** - 高置信度 Skill 直接 DeepLink 跳转
-- [x] **Agent 与 Tool/Skill Prompt 数据库化管理** - 将 Prompt 存储于数据库中，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent、Tool/Skill
-- [x] **Android 无障碍服务与增强自动化** - 注册 `AccessibilityService`，支持 UI 树 Dump、精确定位坐标和盲操兜底，提升复杂页面场景下的执行稳定性
+- [x] **统一 Prompt 编辑器** - 将 Prompt 持久化于 SQLite 数据库，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent、Tool/Skill
+- [x] **无障碍服务与 UI 树感知** - 集成 `AccessibilityService`，实时 Dump UI 树节点，提取控件结构，大幅降低纯视觉误判
+- [x] **无障碍混合模式 (Index Mode + 坐标)** - 优先使用元素索引点击（不受屏幕变化与分辨率影响），索引失败时自动智能回退到坐标模式
+- [x] **定时提醒与任务调度** - 支持通过 `ReminderScheduler` 进行定时触发与提醒调度
+- [x] **专用 UI VLM 支持** - 增加对 GUIOwl、MAIUI 等专用 UI 模型的适配与 Client 调用支持
 
-### 🚀 v2.0 开发中
-
-> 正在开发的重大更新，目前在 `roubao2.0+AccessibilityService` 分支
-
-- [ ] **无障碍服务混合模式** - 集成 AccessibilityService，实现更精准的 UI 操作
-  - 优先使用元素索引点击（不受屏幕变化影响）
-  - 智能回退：索引模式失败时自动切换到坐标模式
-  - 无需 Root，进一步降低使用门槛
-
-- [ ] **UI 树感知** - Agent 能够获取完整的 UI 结构
-  - 识别可点击元素、输入框、滚动区域
-  - 为 LLM 提供结构化 UI 上下文
-  - 减少纯视觉误判
+### 🚀 规划与开发中
 
 - [ ] **宏脚本系统** - 录制、存储、回放操作序列
   - 将执行过程录制为可重复播放的脚本
