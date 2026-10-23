@@ -176,18 +176,8 @@ Android 系统出于安全考虑，普通 App 无法：
 
 ### 🗃️ Prompt 数据库化管理与无障碍增强
 
-#### 1. Agent 与 Tool/Skill Prompt 数据库化管理
-
-- SQLite 持久化（`PromptRepository.kt`）：新增了一套专门的数据库仓库，将原本硬编码在代码中的各大 Agent（如 `Manager`、`Executor`、`Reflector`、`Notetaker`）以及各种内置工具和技能的 Prompt 存入 SQLite 数据库中。
-- 动态管理与编辑：支持 UI 预览、长按多行编辑器修改、恢复默认值，以及自定义添加和删除 Agent 或 Tool/Skill。
-- 各 Agent 代码重构：`ActionReflector.kt`、`Executor.kt`、`Manager.kt` 和 `Notetaker.kt` 已重构，不再使用长字符串拼接，而是从 `PromptRepository` 读取模板，并动态替换占位符（如 `{{instruction}}`、`{{plan}}` 等）。
-
-#### 2. Android 无障碍服务与增强自动化
-
-- 无障碍服务（`AutoPilotAccessibilityService.kt`）：在 `AndroidManifest.xml` 中注册了无障碍服务，能够实时 Dump 当前窗口的 UI 元素树（Node Tree）。
-- 精准坐标校准与盲操（`MobileAgent.kt`）：
-  - 开启无障碍模式后，系统可以通过 UI 节点的文本、ID 或查询条件在树中精确定位按钮坐标。
-  - 当遇到截图失败、黑屏或敏感页面阻止截图时，Agent 可以依托无障碍属性进行盲操，或直接触发节点点击。
+- 1. Agent 与 Tool/Skill Prompt 数据库化管理
+- 2. Android 无障碍服务与增强自动化
 
 ### 🎨 精心设计的 UI
 
