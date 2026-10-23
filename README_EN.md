@@ -413,6 +413,7 @@ app/src/main/assets/
 - [x] **Skills Layer** - User intent mapping with Delegation and GUI Automation modes
 - [x] **Smart App Search** - Multi-dimensional matching via pinyin, semantic, and category
 - [x] **Fast Path** - High-confidence Skills direct DeepLink jump
+- [x] **Database-backed Agent & Tool/Skill Prompt Management** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agents and Tools/Skills
 
 ### 🚀 v2.0 In Development
 
