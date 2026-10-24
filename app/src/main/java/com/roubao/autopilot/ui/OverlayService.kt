@@ -521,12 +521,20 @@ class OverlayService : Service() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             visibility = View.GONE
             setPadding(dp(2), dp(2), dp(2), dp(2))
-            layoutParams = FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER)
+            layoutParams = FrameLayout.LayoutParams(dp(80), dp(80), Gravity.CENTER)
             var downRawX = 0f
             var downRawY = 0f
             var startX = 0
             var startY = 0
             var moved = false
+            var longPressed = false
+            val idleLongHandler = Handler(Looper.getMainLooper())
+            val idleLongRunnable = Runnable {
+                if (!moved) {
+                    longPressed = true
+                    openMainWindow()
+                }
+            }
             setOnTouchListener { _, event ->
                 val p = overlayParams
                 if (p == null) return@setOnTouchListener false
@@ -537,6 +545,8 @@ class OverlayService : Service() {
                         startX = p.x
                         startY = p.y
                         moved = false
+                        longPressed = false
+                        idleLongHandler.postDelayed(idleLongRunnable, 500)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -544,6 +554,7 @@ class OverlayService : Service() {
                         val dy = event.rawY - downRawY
                         if (kotlin.math.abs(dx) > dp(6) || kotlin.math.abs(dy) > dp(6)) {
                             moved = true
+                            idleLongHandler.removeCallbacks(idleLongRunnable)
                         }
                         if (moved) {
                             p.x = startX + dx.toInt()
@@ -553,7 +564,8 @@ class OverlayService : Service() {
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (!moved) showIdleInput()
+                        idleLongHandler.removeCallbacks(idleLongRunnable)
+                        if (!moved && !longPressed) showIdleInput()
                         true
                     }
                     else -> false
@@ -650,8 +662,8 @@ class OverlayService : Service() {
             progressRing?.visibility = View.GONE
             actionRowTag?.visibility = View.GONE
             val params = overlayParams ?: return@post
-            params.width = dp(72)
-            params.height = dp(72)
+            params.width = dp(84)
+            params.height = dp(84)
             windowManager?.updateViewLayout(overlayView, params)
         }
     }
