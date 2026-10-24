@@ -478,28 +478,87 @@ class OverlayService : Service() {
             }
             setOnClickListener { submitAskUser() }
         }
+        val askCancel = TextView(this).apply {
+            text = "取消"
+            textSize = 12f
+            setTextColor(Color.argb(190, 255, 255, 255))
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.argb(55, 255, 255, 255))
+            }
+            setOnClickListener { cancelAskUser() }
+        }
+        val askButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        askButtons.addView(askCancel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            dp(30)
+        ).apply { rightMargin = dp(8) })
+        askButtons.addView(askSubmit, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            dp(30)
+        ))
         askPanel.addView(askUserQuestion)
         askPanel.addView(askUserInput, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             dp(34)
         ).apply { topMargin = dp(4) })
-        askPanel.addView(askSubmit, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT,
+        askPanel.addView(askButtons, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
             dp(30)
-        ).apply {
-            topMargin = dp(6)
-            gravity = Gravity.END
-        })
+        ).apply { topMargin = dp(6) })
         askUserPanel = askPanel
         container.addView(askPanel)
 
         // 空闲态只显示肉包图标；点击复用输入面板
         idleIconView = ImageView(this).apply {
             setImageResource(R.drawable.roubao_idle_icon)
-            scaleType = ImageView.ScaleType.CENTER_CROP
+            scaleType = ImageView.ScaleType.FIT_CENTER
             visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER)
-            setOnClickListener { showIdleInput() }
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+            layoutParams = FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER)
+            var downRawX = 0f
+            var downRawY = 0f
+            var startX = 0
+            var startY = 0
+            var moved = false
+            setOnTouchListener { _, event ->
+                val p = overlayParams
+                if (p == null) return@setOnTouchListener false
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawX = event.rawX
+                        downRawY = event.rawY
+                        startX = p.x
+                        startY = p.y
+                        moved = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - downRawX
+                        val dy = event.rawY - downRawY
+                        if (kotlin.math.abs(dx) > dp(6) || kotlin.math.abs(dy) > dp(6)) {
+                            moved = true
+                        }
+                        if (moved) {
+                            p.x = startX + dx.toInt()
+                            p.y = startY + dy.toInt()
+                            windowManager?.updateViewLayout(container, p)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (!moved) showIdleInput()
+                        true
+                    }
+                    else -> false
+                }
+            }
         }
         container.addView(idleIconView)
         overlayRoot = container
@@ -591,8 +650,8 @@ class OverlayService : Service() {
             progressRing?.visibility = View.GONE
             actionRowTag?.visibility = View.GONE
             val params = overlayParams ?: return@post
-            params.width = dp(64)
-            params.height = dp(64)
+            params.width = dp(72)
+            params.height = dp(72)
             windowManager?.updateViewLayout(overlayView, params)
         }
     }
@@ -736,6 +795,14 @@ class OverlayService : Service() {
         pendingAskAnswer = null
         hideAskUserPanel()
         callback?.invoke(answer)
+    }
+
+    private fun cancelAskUser() {
+        val fromIdle = askUserFromIdle
+        val callback = pendingAskAnswer
+        pendingAskAnswer = null
+        hideAskUserPanel()
+        if (!fromIdle) callback?.invoke("")
     }
 
     private fun hideAskUserPanel() {
