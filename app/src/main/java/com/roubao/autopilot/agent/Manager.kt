@@ -7,6 +7,17 @@ import com.roubao.autopilot.data.PromptRepository
  */
 class Manager {
 
+    private val initialPhaseGuidance = """
+        ### Planning Phase: Initial ###
+        Make a high-level plan from the request and current screen. Do not mark "Finished" yet.
+    """.trimIndent()
+
+    private val updatePhaseGuidance = """
+        ### Planning Phase: Update ###
+        Assess progress. Mark "Finished" only when the request is fully complete, the final state is visible, the last outcome was A, and there are no consecutive failures. Otherwise update the plan or change strategy.
+        Stop for payment, password, or biometric pages; do not stop for price displays or cart pages.
+    """.trimIndent()
+
     /**
      * 生成规划 Prompt
      */
@@ -84,8 +95,11 @@ class Manager {
             "5. ${infoPool.additionalKnowledge}\n"
         } else ""
 
+        val phaseGuidance = if (infoPool.plan.isEmpty()) initialPhaseGuidance else updatePhaseGuidance
+
         return template
             .replace("{{instruction}}", infoPool.instruction)
+            .replace("{{phaseGuidance}}", phaseGuidance)
             .replace("{{completedPlan}}", completedPlanStr)
             .replace("{{planSection}}", planSectionStr)
             .replace("{{lastActionSection}}", lastActionStr)

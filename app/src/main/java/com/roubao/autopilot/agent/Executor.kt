@@ -7,26 +7,18 @@ import com.roubao.autopilot.data.PromptRepository
  */
 class Executor {
 
-    companion object {
-        val GUIDELINES = """
-General:
-- For any pop-up window, close it (e.g., by clicking 'Don't Allow' or 'Accept') before proceeding.
-- For requests that are questions, remember to use the `answer` action to reply before finish!
-- If the desired state is already achieved, you can just complete the task.
-
-Accessibility & Fallback:
-- When Accessibility Mode is enabled, review the Accessibility UI Tree to obtain accurate element coordinates, text, and resource IDs.
-- If screenshot capture fails or is blocked (black/sensitive screen), rely on the Accessibility UI Tree attributes to accurately locate elements and perform blind actions.
-
-Action Related:
-- Use `open_app` to open an app, do not use the app drawer.
-- Consider using `swipe` to reveal additional content.
-- If swiping doesn't change the page, it may have reached the bottom.
-
-Text Related:
-- To input text: first click the input box, make sure keyboard is visible, then use `type` action.
-- To clear text: long press the backspace button in the keyboard.
-        """.trimIndent()
+    private fun resolveCurrentSubgoal(infoPool: InfoPool): String {
+        if (infoPool.currentSubgoal.isNotBlank()) return infoPool.currentSubgoal
+        val plan = infoPool.plan
+        if (plan.isBlank()) return "No active subgoal."
+        val numberedRegex = Regex("""^\d+[.)]\s+""")
+        val numbered = plan.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { numberedRegex.containsMatchIn(it) }
+            ?.replaceFirst(numberedRegex, "")
+            ?.trim()
+        if (!numbered.isNullOrBlank()) return numbered
+        return plan.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "No active subgoal."
     }
 
     /**
@@ -61,9 +53,14 @@ Text Related:
             "No actions have been taken yet.\n"
         }
 
+        val currentSubgoal = resolveCurrentSubgoal(infoPool)
+        val installedApps = infoPool.installedApps.ifBlank { "Unknown" }
+
         var prompt = rawPrompt
             .replace("{{instruction}}", infoPool.instruction)
             .replace("{{plan}}", infoPool.plan)
+            .replace("{{currentSubgoal}}", currentSubgoal)
+            .replace("{{installedApps}}", installedApps)
             .replace("{{progressStatus}}", infoPool.progressStatus.ifEmpty { "No progress yet." })
             .replace("{{actionHistory}}", actionHistoryStr)
 

@@ -6,6 +6,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.util.Locale
 
 data class AgentPromptEntity(
     val id: String,
@@ -46,6 +48,55 @@ data class PromptImportResult(
     val feedback: Int,
     val errors: List<String>
 )
+
+/** 归一化反馈文本：仅用于判重，不改变落库原文。 */
+private fun normalizeFeedbackText(text: String): String =
+    text.trim()
+        .replace(Regex("\\s+"), " ")
+        .trim { it.isWhitespace() || it in "。！？!?.;；,，" }
+        .lowercase(Locale.ROOT)
+
+private fun sha256(text: String): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+/**
+ * 上一版内置/预设 Agent Prompt 的指纹。
+ * 只有命中这些指纹才在 v5 迁移时替换，避免覆盖真正手改过的 Prompt。
+ */
+private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
+    "manager" to setOf(
+        "2bbdec26b012c32c5e5788fb926d7d169a80b97d15b947a4f69f090432d6ac46",
+        "f22cc9cd39d2e7352bbdc8dff36d2c5535784f9d8e69fd72942143b5377c2083"
+    ),
+    "executor" to setOf(
+        "73a77a0c33fddcf8bdab9d3f4ae9d75824c429fbfc8a42f1dd96e756f1336a59",
+        "99642e0f4e4f69a6899b7614974ef94080d04dc173d96460180410e8a73eb732"
+    ),
+    "reflector" to setOf(
+        "5d89e1b1e6514cabf0e236c378ce646d988c55bc6d9e85a363bcdc2330124b96",
+        "3262c2439cda07e3dba84e53721ea446f9db3ad462afc037fd04726c98f7d778"
+    ),
+    "notetaker" to setOf(
+        "8cf2e0fbd3e94b68ab81cd68504f54bb1854624e445940843fa3c9434b07a941",
+        "f43a88e076cab7d3d12bb4cbe853dff61cb0c2b48c9b6e488f7fa325374943af"
+    )
+)
+
+/** 旧预设中与默认 Prompt 重复的反馈，v5 迁移时一次性删除。 */
+private val LEGACY_REDUNDANT_FEEDBACK_TEXTS = setOf(
+    "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
+    "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
+    "选择文字/移动光标优先用 set_selection，不要长按拖拽。",
+    "翻页优先用 scroll，不要反复 swipe。",
+    "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。",
+    "截图只在需要视觉判断时使用，不要每一步都依赖截图。",
+    "不要打开文件管理器做文件操作，任务会因此失败。",
+    "不要点键盘中/英切输入法，type 会直接写入。",
+    "不要长按拖拽选字，用 set_selection。",
+    "不要反复点同一个位置；失败两次必须换策略。"
+).map { normalizeFeedbackText(it) }.toSet()
 
 class PromptRepository private constructor(context: Context) {
 
@@ -333,6 +384,9 @@ class PromptRepository private constructor(context: Context) {
         if (trimmed.isEmpty()) return -1
         val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
         val db = dbHelper.writableDatabase
+        if (findFeedbackByNormalizedText(db, normalizeFeedbackText(trimmed)) != null) {
+            return FEEDBACK_DUPLICATE
+        }
         val cv = ContentValues().apply {
             put("text", trimmed)
             put("created_at", System.currentTimeMillis())
@@ -342,11 +396,30 @@ class PromptRepository private constructor(context: Context) {
         return db.insert("user_feedback", null, cv)
     }
 
-    fun updateFeedback(id: Long, text: String, kind: String) {
+    private fun findFeedbackByNormalizedText(db: SQLiteDatabase, normalized: String): Long? {
+        val cursor = db.query(
+            "user_feedback",
+            arrayOf("id", "text"),
+            null, null, null, null,
+            "created_at DESC, id DESC"
+        )
+        cursor.use {
+            while (it.moveToNext()) {
+                if (normalizeFeedbackText(it.getString(1)) == normalized) {
+                    return it.getLong(0)
+                }
+            }
+        }
+        return null
+    }
+
+    fun updateFeedback(id: Long, text: String, kind: String): Boolean {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty()) return false
         val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
         val db = dbHelper.writableDatabase
+        val duplicateId = findFeedbackByNormalizedText(db, normalizeFeedbackText(trimmed))
+        if (duplicateId != null && duplicateId != id) return false
         db.update(
             "user_feedback",
             ContentValues().apply {
@@ -356,6 +429,7 @@ class PromptRepository private constructor(context: Context) {
             "id = ?",
             arrayOf(id.toString())
         )
+        return true
     }
 
     fun setFeedbackEnabled(id: Long, enabled: Boolean) {
@@ -378,6 +452,7 @@ class PromptRepository private constructor(context: Context) {
         return try {
             val active = getAllFeedback()
                 .filter { it.enabled && it.text.isNotBlank() }
+                .distinctBy { normalizeFeedbackText(it.text) }
                 .take(30)
             val suggestions = active.filter { it.kind == "suggestion" }
             val complaints = active.filter { it.kind != "suggestion" }
@@ -565,10 +640,7 @@ class PromptRepository private constructor(context: Context) {
                         else -> ""
                     }.trim()
                     if (text.isEmpty()) continue
-                    val exists = db.rawQuery(
-                        "SELECT 1 FROM user_feedback WHERE text = ? LIMIT 1",
-                        arrayOf(text)
-                    ).use { it.moveToFirst() }
+                    val exists = findFeedbackByNormalizedText(db, normalizeFeedbackText(text)) != null
                     if (!exists) {
                         db.insert("user_feedback", null, ContentValues().apply {
                             put("text", text)
@@ -591,7 +663,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 4) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 5) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -662,6 +734,74 @@ class PromptRepository private constructor(context: Context) {
                 addColumnIfMissing(db, "agent_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
                 addColumnIfMissing(db, "tool_skill_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
                 addColumnIfMissing(db, "user_feedback", "kind", "TEXT NOT NULL DEFAULT 'complaint'")
+            }
+            if (oldVersion < 5) {
+                migrateBuiltInAgentPrompts(db)
+                cleanupRedundantAndDuplicateFeedback(db)
+            }
+        }
+
+        /**
+         * 只替换命中旧版内置/预设指纹的 Agent Prompt。
+         * 真正手改过的 Prompt（指纹不匹配）保持原样。
+         */
+        private fun migrateBuiltInAgentPrompts(db: SQLiteDatabase) {
+            val newDefaults = mapOf(
+                "manager" to PromptRepository.DEFAULT_MANAGER_PROMPT,
+                "executor" to PromptRepository.DEFAULT_EXECUTOR_PROMPT,
+                "reflector" to PromptRepository.DEFAULT_REFLECTOR_PROMPT,
+                "notetaker" to PromptRepository.DEFAULT_NOTETAKER_PROMPT
+            )
+            for ((id, newDefault) in newDefaults) {
+                val row = db.query(
+                    "agent_prompts",
+                    arrayOf("prompt"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: continue
+
+                val legacyHashes = LEGACY_AGENT_PROMPT_HASHES[id].orEmpty()
+                if (sha256(row) !in legacyHashes) continue
+
+                db.update(
+                    "agent_prompts",
+                    ContentValues().apply {
+                        put("prompt", newDefault)
+                        put("default_prompt", newDefault)
+                    },
+                    "id = ?",
+                    arrayOf(id)
+                )
+                println("[PromptRepository] migrated default prompt: $id")
+            }
+        }
+
+        /** v5 一次性清理：旧预设中与默认 Prompt 重复的反馈 + 归一化后的完全重复反馈。 */
+        private fun cleanupRedundantAndDuplicateFeedback(db: SQLiteDatabase) {
+            val seen = mutableSetOf<String>()
+            val toDelete = mutableListOf<Long>()
+            db.query(
+                "user_feedback",
+                arrayOf("id", "text"),
+                null, null, null, null,
+                "created_at DESC, id DESC"
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val normalized = normalizeFeedbackText(cursor.getString(1))
+                    if (normalized in LEGACY_REDUNDANT_FEEDBACK_TEXTS || !seen.add(normalized)) {
+                        toDelete.add(id)
+                    }
+                }
+            }
+            for (id in toDelete) {
+                db.delete("user_feedback", "id = ?", arrayOf(id.toString()))
+            }
+            if (toDelete.isNotEmpty()) {
+                println("[PromptRepository] removed ${toDelete.size} redundant feedback rows")
             }
         }
 
@@ -814,6 +954,9 @@ class PromptRepository private constructor(context: Context) {
     }
 
     companion object {
+        /** addFeedback 遇到归一化后完全相同的反馈时返回。 */
+        const val FEEDBACK_DUPLICATE = -2L
+
         @Volatile
         private var instance: PromptRepository? = null
 
@@ -829,52 +972,38 @@ class PromptRepository private constructor(context: Context) {
             return instance ?: throw IllegalStateException("PromptRepository 未初始化，请先调用 init()")
         }
 
-        const val DEFAULT_MANAGER_PROMPT = """You are an agent who can operate an Android phone on behalf of a user. Your goal is to track progress and devise/update high-level plans to achieve the user's requests.
+        const val DEFAULT_MANAGER_PROMPT = """You are the planning agent for an Android automation app. Keep the plan short, concrete, and tool-first.
 
 ### User Request ###
 {{instruction}}
 
-{{completedPlan}}
-{{planSection}}
-{{lastActionSection}}
-{{lastSummarySection}}
-{{recentOutcomes}}
-{{importantNotes}}
-{{errorDetails}}
-{{skillContext}}
+{{completedPlan}}{{planSection}}{{lastActionSection}}{{lastSummarySection}}{{recentOutcomes}}{{importantNotes}}{{errorDetails}}{{skillContext}}{{additionalKnowledge}}
 
-### Guidelines ###
-1. IMPORTANT: If you see the "肉包" or "Baozi" app interface (this automation tool), press Home button first to go back to the home screen, then proceed with the task.
-2. ALWAYS use `open_app` action to open apps - NEVER go to home screen to look for app icons! The open_app action can launch any installed app directly.
-3. Use search to quickly find a file or entry with a specific name.
-4. If there are relevant skills listed above, follow their suggested steps for better efficiency.
-{{additionalKnowledge}}
+### Planning Rules ###
+1. Prefer the cheapest reliable action:
+   - File/system tasks -> `shell` (ls/find/grep/cp/mv/mkdir/rm/stat/du/pm/dumpsys/content). Never plan to open the file manager UI for file operations.
+   - Text input -> `type` (writes directly via ACTION_SET_TEXT; no keyboard switching).
+   - Cursor/selection -> `set_selection`; page -> `scroll`; focus/navigation -> `key`.
+   - Visible element with text -> `click` with exact `text`; coordinate only as fallback.
+2. Do NOT plan to tap on-screen keyboard keys (`中`/`英`) or switch IME.
+3. Do NOT plan screenshots or visual inspection unless the UI tree cannot answer the question.
+4. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
+5. If the same action failed twice, switch strategy instead of retrying.
+6. For questions use `answer`; for login/captcha use `take_over`.
 
-### ⛔ SECURITY: Sensitive Pages - MUST STOP ###
-ONLY output "STOP_SENSITIVE" when the screen is ACTIVELY REQUESTING payment confirmation, password input, or biometric verification.
+{{phaseGuidance}}
 
-### CRITICAL: When to mark "Finished" ###
-ONLY mark as "Finished" when ALL of these are true:
-1. The user's request has been FULLY completed (not partially)
-2. You can SEE the final success state in the screenshot
-3. The last action was SUCCESSFUL (outcome A)
-4. There are NO recent consecutive failures
-
-Provide your output in the following format:
-
+### Output ###
 ### Thought ###
-Your rationale for the plan or updated plan.
-
+One or two sentences.
 ### Historical Operations ###
-Add newly completed subgoals on top of existing ones (if updating an existing plan).
-
+Completed subgoals (or "None yet").
 ### Plan ###
-Updated plan or "Finished" if truly done.
-1. first subgoal
-2. second subgoal
-..."""
+1. ...
+2. ..."""
 
-        const val DEFAULT_EXECUTOR_PROMPT = """You are an agent who can operate an Android phone. Decide the next action based on the current state.
+        const val DEFAULT_EXECUTOR_PROMPT = """You are the execution agent for an Android automation app. Choose exactly ONE next action.
+The Accessibility UI Tree is authoritative; the screenshot is only a fallback for visual-only targets.
 
 ### User Request ###
 {{instruction}}
@@ -882,110 +1011,101 @@ Updated plan or "Finished" if truly done.
 ### Overall Plan ###
 {{plan}}
 
+### Current Subgoal ###
+{{currentSubgoal}}
+
 ### Progress Status ###
 {{progressStatus}}
 
-### Guidelines ###
-General:
-- For any pop-up window, close it (e.g., by clicking 'Don't Allow' or 'Accept') before proceeding.
-- For requests that are questions, remember to use the `answer` action to reply before finish!
-- If the desired state is already achieved, you can just complete the task.
+### Action Priority (cheapest reliable first) ###
+1. FILE / SYSTEM -> `shell`: files, packages, settings, content (ls/find/grep/cat/cp/mv/mkdir/rm/stat/du/pm/dumpsys/content query). Never open File Manager for file operations.
+2. TEXT INPUT -> `type`: click the input, then type exact text via ACTION_SET_TEXT. Do not click keyboard keys or switch `中`/`英`.
+3. TEXT EDITING -> `set_selection`: start/end indices on the focused input; no long-press drag.
+4. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
+5. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
+6. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
+7. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
 
-Action Related:
-- Use `open_app` to open an app, do not use the app drawer.
-- Consider using `swipe` to reveal additional content.
-- If swiping doesn't change the page, it may have reached the bottom.
+### Hard Rules ###
+- Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
+- If the same action failed twice, change strategy: shell -> type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
+- Close popups/dialogs before proceeding.
+- For questions use `answer`; for login/captcha use `take_over`.
+- Stay on the current subgoal; do not jump ahead.
 
-Text Related:
-- To input text: first click the input box, make sure keyboard is visible, then use `type` action.
-- To clear text: long press the backspace button in the keyboard.
+#### Sensitive Operations ####
+For payment confirmation, password input, or biometric verification, do not execute directly.
+Add `message` to the action to request confirmation:
+{"action":"click","coordinate":[500,800],"message":"确认支付 ¥100"}
+Do not stop for price displays, payment method selection, cart pages, or normal navigation.
 
-#### Atomic Actions ####
-- click(coordinate): Click at (x, y). Example: {"action": "click", "coordinate": [x, y]}
-- double_tap(coordinate): Double tap at (x, y) for zoom or like. Example: {"action": "double_tap", "coordinate": [x, y]}
-- long_press(coordinate): Long press at (x, y). Example: {"action": "long_press", "coordinate": [x, y]}
-- type(text): Type text into activated input box. Example: {"action": "type", "text": "hello"}
-- swipe(coordinate, coordinate2): Swipe from point1 to point2. Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2]}
-- system_button(button): Press Back/Home/Enter. Example: {"action": "system_button", "button": "Back"}
-- open_app(text): Open an app by name. Example: {"action": "open_app", "text": "设置"}
-- wait(duration): Wait for page loading. Duration in seconds (1-10). Example: {"action": "wait", "duration": 3}
-- take_over(message): Request user to manually complete login/captcha/verification. Example: {"action": "take_over", "message": "请完成登录验证"}
-- answer(text): Answer user's question. Example: {"action": "answer", "text": "The answer is..."}
+#### Actions ####
+Allowed: shell, click, type, set_selection, scroll, key, swipe, system_button, open_app, wait, take_over, answer, terminate.
+Examples:
+{"action":"shell","command":"ls /sdcard/Download"}
+{"action":"click","text":"显示与亮度","coordinate":[316,730]}
+{"action":"type","text":"hello"}
+{"action":"set_selection","start":3,"end":8}
+{"action":"scroll","direction":"down"}
+{"action":"key","key":"ENTER"}
+{"action":"open_app","text":"设置"}  Available apps: {{installedApps}}
+{"action":"terminate","status":"success"}
 
 ### Latest Action History ###
 {{actionHistory}}
 
-IMPORTANT:
-1. Do NOT repeat previously failed actions. Try a different approach.
-2. Prioritize the current subgoal.
-3. Always analyze the screen BEFORE deciding on an action.
-
-Provide your output in the following format:
-
+### Output ###
 ### Thought ###
-1. **Screen**: What app/page is currently shown? Is it the expected page for the current subgoal?
-2. **Blocker**: Any popup, dialog, keyboard, or loading state that needs to be handled first?
-3. **Target**: Is the target element visible? If not, should I scroll or navigate?
-4. **Decision**: Based on the above analysis, what action should I take and why?
-
+1. **Screen**: ...
+2. **Target**: ...
+3. **Decision**: ...
 ### Action ###
-A valid JSON specifying the action. Example: {"action":"click", "coordinate": [500, 800]}
-
+One valid JSON object, no markdown fences.
 ### Description ###
-A brief description of the chosen action."""
+One short sentence."""
 
-        const val DEFAULT_REFLECTOR_PROMPT = """You are an agent verifying whether the last action produced the expected behavior.
+        const val DEFAULT_REFLECTOR_PROMPT = """You are the reflection agent. Compare the BEFORE and AFTER screenshots and the action, and judge whether it succeeded.
 
 ### User Request ###
 {{instruction}}
 
-### Progress Status ###
+### Progress ###
 {{completedPlan}}
 
-The two attached images are phone screenshots taken BEFORE and AFTER your last action.
-
-### Latest Action ###
-Action: {{lastAction}}
+### Last Action ###
+{{lastAction}}
 Expectation: {{lastSummary}}
 
-Carefully examine whether the last action produced the expected behavior.
+### Judging Rules ###
+- A = the screen changed as expected (or the expected state is already reached).
+- B = wrong page / wrong target; explain what went wrong and which cheaper action should have been used.
+- C = no visible change / same page; explain why.
+- If the action used touch/UI where `shell`, `type`, `set_selection`, `scroll`, or `key` would be better, mark B and say so explicitly.
+- If a file operation opened the file manager instead of using shell, mark B: "use shell".
+- If text input tapped the on-screen keyboard instead of `type`/ACTION_SET_TEXT, mark B.
+- Do not mark A just because a UI opened; compare with the expectation.
+- Keep the error description to 1-2 sentences.
 
-Note: For swiping to scroll, if the content before and after is exactly the same, the swipe is considered Failed (C) - the page may have reached the bottom.
-
-Provide your output in the following format:
-
+### Output ###
 ### Outcome ###
-Choose from:
-A: Successful. The result meets the expectation.
-B: Failed. The action resulted in a wrong page. Need to return to previous state.
-C: Failed. The action produced no changes.
-
+A/B/C
 ### Error Description ###
-If failed, describe the error. If successful, put "None"."""
+..."""
 
-        const val DEFAULT_NOTETAKER_PROMPT = """You are a helpful AI assistant for operating mobile phones. Your goal is to take notes of important content relevant to the user's request.
+        const val DEFAULT_NOTETAKER_PROMPT = """You are the note-taking agent. Record only facts that will help future steps: file paths, package names, account names, UI state, errors. Do not describe screenshots. Keep it under 8 lines.
 
 ### User Request ###
 {{instruction}}
 
-### Progress Status ###
+### Progress ###
 {{progressStatus}}
 
-### Existing Important Notes ###
+### Existing Notes ###
 {{importantNotes}}
 
-Examine the current screen to identify any important content that needs to be recorded.
-
-IMPORTANT:
-- Do not take notes on low-level actions
-- Only keep track of significant textual or visual information relevant to the request
-- Do not repeat user request or progress status
-- Do not make up content that you are not sure about
-
-Provide your output in the following format:
-
+### Output ###
 ### Important Notes ###
-The updated important notes, combining old and new ones. If nothing new to record, copy the existing important notes."""
+..."""
 
         const val DEFAULT_TOOL_SEARCH_APPS = "工具: search_apps\n说明: 搜索手机中已安装的应用，匹配应用名称和包名\n参数:\n  - query: string (必填) - 搜索关键词"
         const val DEFAULT_TOOL_OPEN_APP = "工具: open_app\n说明: 通过应用名称打开指定的 App\n参数:\n  - text: string (必填) - 应用名称（如\"微信\"、\"设置\"）"

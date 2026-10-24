@@ -383,9 +383,13 @@ fun CapabilitiesScreen() {
             category = feedbackDraftKind,
             onDismiss = { showAddFeedbackDialog = false },
             onSaveFeedback = { text ->
-                repository.addFeedback(text, feedbackDraftKind)
-                refreshTrigger++
-                showAddFeedbackDialog = false
+                val result = repository.addFeedback(text, feedbackDraftKind)
+                if (result == PromptRepository.FEEDBACK_DUPLICATE) {
+                    Toast.makeText(context, "已存在相同反馈，未重复添加", Toast.LENGTH_SHORT).show()
+                } else {
+                    refreshTrigger++
+                    showAddFeedbackDialog = false
+                }
             }
         )
     }
@@ -396,9 +400,12 @@ fun CapabilitiesScreen() {
             feedback = item,
             onDismiss = { editingFeedback = null },
             onSaveFeedback = { text ->
-                repository.updateFeedback(item.id, text, item.kind)
-                refreshTrigger++
-                editingFeedback = null
+                if (repository.updateFeedback(item.id, text, item.kind)) {
+                    refreshTrigger++
+                    editingFeedback = null
+                } else {
+                    Toast.makeText(context, "已有相同反馈，无法保存", Toast.LENGTH_SHORT).show()
+                }
             }
         )
     }

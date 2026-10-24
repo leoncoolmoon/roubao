@@ -27,6 +27,21 @@ val PROMPT_PLACEHOLDERS = listOf(
         "已打开设置，下一步进入显示与亮度"
     ),
     PlaceholderHelpItem(
+        "{{currentSubgoal}}",
+        "当前正在执行的子目标。",
+        "进入显示与亮度"
+    ),
+    PlaceholderHelpItem(
+        "{{installedApps}}",
+        "当前已安装应用列表，用于 open_app 选择。",
+        "微信, 设置, 高德地图"
+    ),
+    PlaceholderHelpItem(
+        "{{phaseGuidance}}",
+        "Manager 的阶段说明：首次规划或后续更新，由运行时填入。",
+        "### Planning Phase: Initial ###\n制定 3-6 个子目标"
+    ),
+    PlaceholderHelpItem(
         "{{completedPlan}}",
         "已完成步骤/历史计划，没有时显示 No progress yet。",
         "1. 打开设置 ✓"
