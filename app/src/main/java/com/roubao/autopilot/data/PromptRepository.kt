@@ -84,11 +84,8 @@ private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
     )
 )
 
-/** 旧预设反馈：保留给用户查看和开关，不再在迁移中删除。 */
+/** 去重后的旧预设反馈：与吐槽重复的 3 条建议不再保留。 */
 private val LEGACY_PRESET_FEEDBACK = listOf(
-    "suggestion" to "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
-    "suggestion" to "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
-    "suggestion" to "选择文字/移动光标优先用 set_selection，不要长按拖拽。",
     "suggestion" to "翻页优先用 scroll，不要反复 swipe。",
     "suggestion" to "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。",
     "suggestion" to "截图只在需要视觉判断时使用，不要每一步都依赖截图。",
@@ -97,6 +94,13 @@ private val LEGACY_PRESET_FEEDBACK = listOf(
     "complaint" to "不要长按拖拽选字，用 set_selection。",
     "complaint" to "不要反复点同一个位置；失败两次必须换策略。"
 )
+
+/** v7 清理：上一版原样恢复时带回来的 3 条重复建议。 */
+private val LEGACY_DUPLICATE_SUGGESTIONS = setOf(
+    "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
+    "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
+    "选择文字/移动光标优先用 set_selection，不要长按拖拽。"
+).map { normalizeFeedbackText(it) }.toSet()
 
 class PromptRepository private constructor(context: Context) {
 
@@ -709,7 +713,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 6) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 7) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -788,6 +792,9 @@ class PromptRepository private constructor(context: Context) {
             }
             if (oldVersion < 6) {
                 insertPresetFeedback(db)
+            }
+            if (oldVersion < 7) {
+                removeLegacyDuplicateSuggestions(db)
             }
         }
 
@@ -882,6 +889,29 @@ class PromptRepository private constructor(context: Context) {
                         put("enabled", 1)
                         put("kind", kind)
                     })
+                }
+            }
+        }
+
+        /** v7：删除上一版原样恢复时带回来的 3 条重复建议。 */
+        private fun removeLegacyDuplicateSuggestions(db: SQLiteDatabase) {
+            db.query(
+                "user_feedback",
+                arrayOf("id", "text"),
+                null, null, null, null,
+                null
+            ).use { cursor ->
+                val toDelete = mutableListOf<Long>()
+                while (cursor.moveToNext()) {
+                    if (normalizeFeedbackText(cursor.getString(1)) in LEGACY_DUPLICATE_SUGGESTIONS) {
+                        toDelete.add(cursor.getLong(0))
+                    }
+                }
+                for (id in toDelete) {
+                    db.delete("user_feedback", "id = ?", arrayOf(id.toString()))
+                }
+                if (toDelete.isNotEmpty()) {
+                    println("[PromptRepository] removed ${toDelete.size} duplicate suggestion rows")
                 }
             }
         }
