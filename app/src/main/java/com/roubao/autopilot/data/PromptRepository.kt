@@ -91,16 +91,27 @@ private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
     )
 )
 
-/** 去重后的旧预设反馈：与吐槽重复的 3 条建议不再保留。 */
+/** 去重并重写后的预设反馈：一条只覆盖一个操作原则。 */
 private val LEGACY_PRESET_FEEDBACK = listOf(
-    "suggestion" to "翻页优先用 scroll，不要反复 swipe。",
-    "suggestion" to "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。",
-    "suggestion" to "截图只在需要视觉判断时使用，不要每一步都依赖截图。",
-    "complaint" to "不要打开文件管理器做文件操作，任务会因此失败。",
-    "complaint" to "不要点键盘中/英切输入法，type 会直接写入。",
-    "complaint" to "不要长按拖拽选字，用 set_selection。",
-    "complaint" to "不要反复点同一个位置；失败两次必须换策略。"
+    "suggestion" to "列表翻页优先使用 scroll，避免重复 swipe。",
+    "suggestion" to "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
+    "suggestion" to "截图仅用于 UI 树无法覆盖的视觉判断。",
+    "complaint" to "文件与系统操作优先使用 shell，不要打开文件管理器。",
+    "complaint" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
+    "complaint" to "光标与选区使用 set_selection，不要长按拖拽。",
+    "complaint" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。"
 )
+
+/** v10：把旧版随手写的反馈替换成专业、单职责的表述。 */
+private val LEGACY_FEEDBACK_REWRITES = listOf(
+    "翻页优先用 scroll，不要反复 swipe。" to "列表翻页优先使用 scroll，避免重复 swipe。",
+    "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。" to "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
+    "截图只在需要视觉判断时使用，不要每一步都依赖截图。" to "截图仅用于 UI 树无法覆盖的视觉判断。",
+    "不要打开文件管理器做文件操作，任务会因此失败。" to "文件与系统操作优先使用 shell，不要打开文件管理器。",
+    "不要点键盘中/英切输入法，type 会直接写入。" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
+    "不要长按拖拽选字，用 set_selection。" to "光标与选区使用 set_selection，不要长按拖拽。",
+    "不要反复点同一个位置；失败两次必须换策略。" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。"
+).map { normalizeFeedbackText(it.first) to it.second }
 
 /** v7 清理：上一版原样恢复时带回来的 3 条重复建议。 */
 private val LEGACY_DUPLICATE_SUGGESTIONS = setOf(
@@ -767,7 +778,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 9) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 10) {
 
         private val appContext = context.applicationContext
 
@@ -873,6 +884,38 @@ class PromptRepository private constructor(context: Context) {
                 addColumnIfMissing(db, "tool_skill_prompts", "executable", "INTEGER NOT NULL DEFAULT 0")
                 seedBuiltInSkillsFromAssets(db)
             }
+            if (oldVersion < 10) {
+                rewritePresetFeedback(db)
+            }
+        }
+
+        /** v10：更新旧预设反馈的措辞；缺失的用新文案补齐。 */
+        private fun rewritePresetFeedback(db: SQLiteDatabase) {
+            for ((oldNormalized, newText) in LEGACY_FEEDBACK_REWRITES) {
+                var id: Long? = null
+                db.query(
+                    "user_feedback",
+                    arrayOf("id", "text"),
+                    null, null, null, null,
+                    null
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        if (normalizeFeedbackText(cursor.getString(1)) == oldNormalized) {
+                            id = cursor.getLong(0)
+                            break
+                        }
+                    }
+                }
+                id?.let {
+                    db.update(
+                        "user_feedback",
+                        ContentValues().apply { put("text", newText) },
+                        "id = ?",
+                        arrayOf(it.toString())
+                    )
+                }
+            }
+            insertPresetFeedback(db)
         }
 
         /** 将 assets/skills.json 的完整 Skill 定义同步进数据库。 */

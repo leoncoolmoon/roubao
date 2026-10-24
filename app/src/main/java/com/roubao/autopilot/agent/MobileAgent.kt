@@ -66,9 +66,6 @@ class MobileAgent(
         null
     }
 
-    // 最近一帧截图，供 UI 树可用时复用，避免每步重复截屏
-    private var lastScreenshot: Bitmap? = null
-
     // 状态流
     private val _state = MutableStateFlow(AgentState())
     val state: StateFlow<AgentState> = _state
@@ -183,7 +180,7 @@ class MobileAgent(
                 log("\n========== Step ${step + 1} ==========")
                 OverlayService.update("Step ${step + 1}/$maxSteps")
 
-                // 1. 无障碍 UI 树优先；树可用时复用上一帧，避免每步重复截屏
+                // 1. 提取无障碍 UI 树；截图必须实时获取，不能复用旧帧
                 val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
                 if (accessibilityModeEnabled && accessibilityService != null) {
                     infoPool.accessibilityTree = accessibilityService.dumpNodeTree()
@@ -192,28 +189,15 @@ class MobileAgent(
                     infoPool.accessibilityTree = ""
                 }
 
-                var screenshot: Bitmap? = null
-                var screenshotSensitive = false
-                var screenshotFallback = false
-                val canReuseScreenshot = infoPool.accessibilityTree.isNotBlank() && lastScreenshot != null
-
-                if (canReuseScreenshot) {
-                    screenshot = lastScreenshot
-                    log("UI 树可用，复用上一帧截图")
-                } else {
-                    log("截图中...")
-                    OverlayService.setVisible(false)
-                    delay(100) // 等待悬浮窗隐藏
-                    val screenshotResult = controller.screenshotWithFallback()
-                    OverlayService.setVisible(true)
-                    screenshot = screenshotResult.bitmap
-                    lastScreenshot = screenshotResult.bitmap
-                    screenshotSensitive = screenshotResult.isSensitive
-                    screenshotFallback = screenshotResult.isFallback
-                }
+                log("截图中...")
+                OverlayService.setVisible(false)
+                delay(100) // 等待悬浮窗隐藏
+                val screenshotResult = controller.screenshotWithFallback()
+                OverlayService.setVisible(true)
+                val screenshot = screenshotResult.bitmap
 
                 // 处理敏感页面（截图被系统阻止）
-                if (screenshotSensitive) {
+                if (screenshotResult.isSensitive) {
                     log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
                     val confirmed = withContext(Dispatchers.Main) {
                         waitForUserConfirm("检测到敏感页面，是否继续执行？")
@@ -225,7 +209,7 @@ class MobileAgent(
                         return AgentResult(success = false, message = "敏感页面，用户取消")
                     }
                     log("用户确认继续（使用黑屏占位图/无障碍元素树辅助定位）")
-                } else if (screenshotFallback) {
+                } else if (screenshotResult.isFallback) {
                     log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                 }
 
@@ -468,7 +452,6 @@ class MobileAgent(
                 val afterScreenshotResult = controller.screenshotWithFallback()
                 OverlayService.setVisible(true)
                 val afterScreenshot = afterScreenshotResult.bitmap
-                lastScreenshot = afterScreenshot
                 if (afterScreenshotResult.isFallback) {
                     log("动作后截图失败，使用黑屏占位图")
                 }
