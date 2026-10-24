@@ -97,7 +97,7 @@ class Manager {
 
         val phaseGuidance = if (infoPool.plan.isEmpty()) initialPhaseGuidance else updatePhaseGuidance
 
-        return template
+        var result = template
             .replace("{{instruction}}", infoPool.instruction)
             .replace("{{phaseGuidance}}", phaseGuidance)
             .replace("{{completedPlan}}", completedPlanStr)
@@ -109,6 +109,26 @@ class Manager {
             .replace("{{errorDetails}}", errorDetailsStr)
             .replace("{{skillContext}}", skillContextStr)
             .replace("{{additionalKnowledge}}", additionalKnowledgeStr)
+
+        if (infoPool.plan.isEmpty() && infoPool.availableSkills.isNotBlank()) {
+            val selectionBlock = """
+
+                ### Selectable Skills ###
+                ${infoPool.availableSkills}
+
+                ### Skill Selection (MANDATORY) ###
+                Choose at most one skill from the list above.
+                If one clearly matches the request, you MUST output its exact id.
+                If none matches, output "None".
+                Put this section before every other output section:
+                ### Selected Skill ###
+                <skill_id or None>
+            """.trimIndent()
+
+            result = "$selectionBlock\n\n$result"
+        }
+
+        return result
     }
 
     /**
@@ -134,15 +154,28 @@ class Manager {
 
         val plan = response
             .substringAfter("### Plan")
+            .substringBefore("### Selected Skill")
             .replace("###", "")
             .trim()
 
-        return PlanResult(thought, completedSubgoal, plan)
+        val selectedSkill = response
+            .substringAfter("### Selected Skill ###", "")
+            .substringBefore("###")
+            .replace("`", "")
+            .trim()
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.substringBefore(" ")
+            ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+
+        return PlanResult(thought, completedSubgoal, plan, selectedSkill)
     }
 }
 
 data class PlanResult(
     val thought: String,
     val completedSubgoal: String,
-    val plan: String
+    val plan: String,
+    val selectedSkillId: String? = null
 )

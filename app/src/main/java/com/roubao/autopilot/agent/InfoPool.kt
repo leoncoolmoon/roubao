@@ -42,6 +42,14 @@ data class InfoPool(
 
     // Skill 上下文（从 SkillManager 获取的相关技能信息）
     var skillContext: String = "",
+    // Manager 首次规划可见的启用 Skill 短名单
+    var availableSkills: String = "",
+    // Manager 选中的 Skill id
+    var selectedSkillId: String = "",
+    // 选中 Skill 的完整执行上下文，只给 Executor
+    var activeSkillContext: String = "",
+    // 最近一次工具执行结果（如 shell 输出）
+    var lastToolResult: String = "",
 
     // 对话记忆（保存完整对话历史，用于 Executor）
     var executorMemory: ConversationMemory? = null,

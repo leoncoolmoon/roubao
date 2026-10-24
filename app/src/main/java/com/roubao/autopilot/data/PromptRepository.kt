@@ -713,7 +713,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 7) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 8) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -796,6 +796,33 @@ class PromptRepository private constructor(context: Context) {
             if (oldVersion < 7) {
                 removeLegacyDuplicateSuggestions(db)
             }
+            if (oldVersion < 8) {
+                insertShellCalcSkill(db)
+            }
+        }
+
+        /** v8：加入 shell_calc 测试 Skill。 */
+        private fun insertShellCalcSkill(db: SQLiteDatabase) {
+            val exists = db.query(
+                "tool_skill_prompts",
+                arrayOf("id"),
+                "id = ?",
+                arrayOf("shell_calc"),
+                null, null, null
+            ).use { it.moveToFirst() }
+            if (exists) return
+            db.insert("tool_skill_prompts", null, ContentValues().apply {
+                put("id", "shell_calc")
+                put("name", "shell_calc")
+                put("display_name", "Shell 计算")
+                put("category", "skill")
+                put("description", "算术计算必须用 shell 执行 expr，不允许模型自己心算")
+                put("prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
+                put("default_prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
+                put("is_default", 1)
+                put("enabled", 1)
+            })
+            println("[PromptRepository] inserted shell_calc skill")
         }
 
         /**
@@ -1045,7 +1072,8 @@ class PromptRepository private constructor(context: Context) {
                 ToolSkillPromptEntity("social_media", "social_media", "社交发帖", "skill", "在微信/小红书/微博等平台编辑并发布图文动态", DEFAULT_SKILL_SOCIAL_MEDIA, DEFAULT_SKILL_SOCIAL_MEDIA, true),
                 ToolSkillPromptEntity("e_commerce", "e_commerce", "电商购物", "skill", "在淘宝/京东/拼多多中搜索商品并加入购物车", DEFAULT_SKILL_E_COMMERCE, DEFAULT_SKILL_E_COMMERCE, true),
                 ToolSkillPromptEntity("music_player", "music_player", "音乐播放", "skill", "在网易云音乐/QQ音乐中搜索并播放指定歌曲", DEFAULT_SKILL_MUSIC_PLAYER, DEFAULT_SKILL_MUSIC_PLAYER, true),
-                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true)
+                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true),
+                ToolSkillPromptEntity("shell_calc", "shell_calc", "Shell 计算", "skill", "算术计算必须用 shell 执行 expr，不允许模型自己心算", DEFAULT_SKILL_SHELL_CALC, DEFAULT_SKILL_SHELL_CALC, true)
             )
 
             for (item in defaults) {
@@ -1236,5 +1264,6 @@ A/B/C
         const val DEFAULT_SKILL_E_COMMERCE = "技能: e_commerce\n说明: 电商购物服务。搜索商品、对比价格并加入购物车或下单。"
         const val DEFAULT_SKILL_MUSIC_PLAYER = "技能: music_player\n说明: 音乐播放服务。搜索音乐名称、播放指定歌曲或歌单。"
         const val DEFAULT_SKILL_NAVIGATION = "技能: navigation\n说明: 地图导航服务。设置终点并开启语音路线导航。"
+        const val DEFAULT_SKILL_SHELL_CALC = "技能: shell_calc\n说明: 算术计算必须用 shell 执行 expr，不允许模型自己心算。\n步骤:\n1. 将用户表达式转成 shell expr 命令。\n2. 调用 shell 动作执行。\n3. 用 shell 输出作为最终 answer。"
     }
 }

@@ -73,6 +73,14 @@ class Executor {
             prompt = "### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback\n\n$prompt"
         }
 
+        if (infoPool.activeSkillContext.isNotBlank()) {
+            prompt += "\n\n### Active Skill ###\n${infoPool.activeSkillContext}\n"
+        }
+
+        if (infoPool.lastToolResult.isNotBlank()) {
+            prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
+        }
+
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
             prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +

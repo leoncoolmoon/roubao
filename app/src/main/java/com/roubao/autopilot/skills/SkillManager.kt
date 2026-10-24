@@ -9,6 +9,13 @@ import com.roubao.autopilot.tools.ToolManager
 import com.roubao.autopilot.vlm.VLMClient
 import org.json.JSONObject
 
+data class EnabledSkillInfo(
+    val id: String,
+    val name: String,
+    val description: String,
+    val prompt: String
+)
+
 /**
  * Skill 管理器
  *
@@ -42,6 +49,35 @@ class SkillManager private constructor(
     fun initialize() {
         val loadedCount = registry.loadFromAssets("skills.json")
         println("[SkillManager] 已加载 $loadedCount 个 Skills")
+    }
+
+    /**
+     * 运行时 Skill 目录：来自数据库，包含 assets 之外的自定义 Skill。
+     * 只返回启用且有 Prompt 的 Skill，供 Manager 首次规划选择。
+     */
+    fun getEnabledSkillRoster(): List<EnabledSkillInfo> = try {
+        PromptRepository.getInstance().getAllToolSkillPrompts()
+            .filter { it.category == "skill" && it.enabled && it.prompt.isNotBlank() }
+            .map {
+                EnabledSkillInfo(
+                    id = it.id,
+                    name = it.displayName,
+                    description = it.description,
+                    prompt = it.prompt
+                )
+            }
+    } catch (e: Exception) {
+        println("[SkillManager] 读取 Skill 目录失败: ${e.message}")
+        emptyList()
+    }
+
+    /** 按 id 取运行时 Skill 的完整上下文。 */
+    fun getSkillPrompt(id: String): String? = try {
+        PromptRepository.getInstance().getToolSkillPrompt(id)
+            ?.takeIf { it.category == "skill" && it.enabled }
+            ?.prompt
+    } catch (e: Exception) {
+        null
     }
 
     /**

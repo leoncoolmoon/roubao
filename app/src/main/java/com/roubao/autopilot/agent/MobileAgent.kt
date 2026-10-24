@@ -107,6 +107,14 @@ class MobileAgent(
         val skillContext = skillManager?.generateAgentContextWithLLM(instruction)
 
         val infoPool = InfoPool(instruction = instruction)
+        infoPool.availableSkills = try {
+            skillManager?.getEnabledSkillRoster()
+                ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
+                .orEmpty()
+        } catch (e: Exception) {
+            ""
+        }
+        log("可用 Skill 数: ${infoPool.availableSkills.lineSequence().count { it.trimStart().startsWith("- ") }}")
 
         // 初始化 Executor 的对话记忆
         val executorSystemPrompt = buildString {
@@ -250,9 +258,25 @@ class MobileAgent(
                         continue
                     }
 
-                    val planResult = manager.parseResponse(planResponse.getOrThrow())
+                    val rawPlan = planResponse.getOrThrow()
+                    val planResult = manager.parseResponse(rawPlan)
                     infoPool.completedPlan = planResult.completedSubgoal
                     infoPool.plan = planResult.plan
+
+                    planResult.selectedSkillId?.let { selectedId ->
+                        infoPool.selectedSkillId = selectedId
+                        val selectedPrompt = try {
+                            skillManager?.getSkillPrompt(selectedId)
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (!selectedPrompt.isNullOrBlank()) {
+                            infoPool.activeSkillContext = selectedPrompt
+                            log("Manager 选择 Skill: $selectedId")
+                        } else {
+                            log("Manager 选择了未知/不可用 Skill: $selectedId")
+                        }
+                    }
 
                     log("计划: ${planResult.plan.take(100)}...")
 
@@ -393,7 +417,11 @@ class MobileAgent(
                 // 7. 执行动作
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
-                executeAction(action)
+                val toolResult = executeAction(action)
+                if (!toolResult.isNullOrBlank()) {
+                    infoPool.lastToolResult = toolResult.take(4000)
+                    log("工具结果已回填: ${toolResult.take(120)}...")
+                }
                 infoPool.lastAction = action
 
                 // 立即记录执行步骤（outcome 暂时为 "?" 表示进行中）
@@ -976,7 +1004,7 @@ class MobileAgent(
     /**
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
-    private suspend fun executeAction(action: Action) = withContext(Dispatchers.IO) {
+    private suspend fun executeAction(action: Action): String? = withContext(Dispatchers.IO) {
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
@@ -992,7 +1020,7 @@ class MobileAgent(
                     }
                     if (ok) {
                         log("🤖 无障碍索引${action.type}: index=${action.index}")
-                        return@withContext
+                        return@withContext null
                     }
                     log("索引操作失败，回退文本/坐标: index=${action.index}")
                 }
@@ -1017,7 +1045,7 @@ class MobileAgent(
                             log("🎯 无障碍文本校准${action.type}: ($x, $y) [查询: $query]")
                         } else if (action.type == "click" && accessibilityService.performActionByAttribute(query)) {
                             log("🤖 无障碍直接触发节点点击: [查询: $query]")
-                            return@withContext
+                            return@withContext null
                         }
                     }
 
@@ -1064,7 +1092,7 @@ class MobileAgent(
                     if (action.index != null && accessibilityModeEnabled && accessibilityService != null) {
                         if (accessibilityService.setTextByIndex(action.index, text)) {
                             log("🤖 无障碍索引输入成功: index=${action.index}")
-                            return@withContext
+                            return@withContext null
                         }
                         log("索引输入失败，回退焦点输入: index=${action.index}")
                     }
@@ -1086,6 +1114,7 @@ class MobileAgent(
                     log("shell: $command")
                     val output = controller.shell(command)
                     log("shell 输出: ${output.take(800)}")
+                    return@withContext output
                 }
             }
             "key" -> {
@@ -1109,7 +1138,7 @@ class MobileAgent(
                     val forward = direction.lowercase() != "up" && direction.lowercase() != "back"
                     if (accessibilityService.scrollByIndex(action.index, forward)) {
                         log("🤖 无障碍索引滚动: index=${action.index}, direction=$direction")
-                        return@withContext
+                        return@withContext null
                     }
                     log("索引滚动失败，回退页面滚动: index=${action.index}")
                 }
@@ -1170,6 +1199,7 @@ class MobileAgent(
                 log("未知动作类型: ${action.type}")
             }
         }
+        null
     }
 
     /**
