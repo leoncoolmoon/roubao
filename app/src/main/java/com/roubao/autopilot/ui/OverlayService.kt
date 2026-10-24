@@ -52,7 +52,11 @@ class OverlayService : Service() {
     private var askUserInput: EditText? = null
     private var askUserQuestion: TextView? = null
     private var pendingAskAnswer: ((String) -> Unit)? = null
+    private var askUserFromIdle = false
     private var overlayParams: WindowManager.LayoutParams? = null
+    private var overlayRoot: FrameLayout? = null
+    private var idleIconView: ImageView? = null
+    private var isIdleMode = false
     private var divider: View? = null
     private var divider2: View? = null  // 确认模式下第二个分隔线
     private var animator: ValueAnimator? = null
@@ -69,6 +73,32 @@ class OverlayService : Service() {
 
         // 等待 instance 回调队列
         private val pendingCallbacks = mutableListOf<() -> Unit>()
+
+        /** 结束任务后回到桌面肉包图标，不停止服务 */
+        fun idle(context: Context) {
+            stopCallback = null
+            pauseCallback = null
+            continueCallback = null
+            confirmCallback = null
+            isTakeOverMode = false
+            isConfirmMode = false
+            isPaused = false
+            val instance = instance
+            if (instance != null) instance.setIdleMode() else showIdle(context)
+        }
+
+        /** 非工作状态：桌面上只显示一个可点击的肉包图标 */
+        fun showIdle(context: Context) {
+            val instance = instance
+            if (instance != null) {
+                instance.setIdleMode()
+            } else {
+                val intent = Intent(context, OverlayService::class.java).apply {
+                    putExtra("idle", true)
+                }
+                ContextCompat.startForegroundService(context, intent)
+            }
+        }
 
         fun show(context: Context, text: String, onStop: (() -> Unit)? = null) {
             stopCallback = onStop
@@ -258,8 +288,12 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val text = intent?.getStringExtra("text") ?: "AutoPilot"
-        updateText(text)
+        if (intent?.getBooleanExtra("idle", false) == true) {
+            setIdleMode()
+        } else {
+            val text = intent?.getStringExtra("text") ?: "AutoPilot"
+            updateText(text)
+        }
         return START_STICKY
     }
 
@@ -459,6 +493,17 @@ class OverlayService : Service() {
         askUserPanel = askPanel
         container.addView(askPanel)
 
+        // 空闲态只显示肉包图标；点击复用输入面板
+        idleIconView = ImageView(this).apply {
+            setImageResource(R.drawable.roubao_idle_icon)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER)
+            setOnClickListener { showIdleInput() }
+        }
+        container.addView(idleIconView)
+        overlayRoot = container
+
         val params = WindowManager.LayoutParams().apply {
             type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -533,6 +578,45 @@ class OverlayService : Service() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun setIdleMode() {
+        isIdleMode = true
+        overlayView?.post {
+            overlayRoot?.background = null
+            overlayRoot?.alpha = 1f
+            idleIconView?.visibility = View.VISIBLE
+            askUserPanel?.visibility = View.GONE
+            textView?.visibility = View.GONE
+            pauseButton?.visibility = View.GONE
+            progressRing?.visibility = View.GONE
+            actionRowTag?.visibility = View.GONE
+            val params = overlayParams ?: return@post
+            params.width = dp(64)
+            params.height = dp(64)
+            windowManager?.updateViewLayout(overlayView, params)
+        }
+    }
+
+    private fun showIdleInput() {
+        askUserFromIdle = true
+        showAskUserDialog("想让我做什么？") { command ->
+            startOverlayCommand(command)
+        }
+    }
+
+    private fun startOverlayCommand(command: String) {
+        if (command.isBlank()) return
+        setIdleMode()
+        try {
+            startActivity(Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra("overlay_prompt", command)
+                putExtra("hide_after_start", true)
+            })
+        } catch (e: Exception) {
+            println("[OverlayService] 启动悬浮命令失败: ${e.message}")
+        }
+    }
 
     private fun openMainWindow() {
         try {
@@ -618,8 +702,13 @@ class OverlayService : Service() {
 
     /** 等待用户输入补充信息：直接在当前悬浮窗内展开输入区，避免 Service Dialog token 问题 */
     private fun showAskUserDialog(question: String, onAnswer: (String) -> Unit) {
+        askUserFromIdle = isIdleMode
+        isIdleMode = false
         pendingAskAnswer = onAnswer
         overlayView?.post {
+            overlayRoot?.background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
+            overlayRoot?.alpha = 0.86f
+            idleIconView?.visibility = View.GONE
             askUserQuestion?.text = question
             askUserInput?.setText("")
             askUserPanel?.visibility = View.VISIBLE
@@ -629,6 +718,7 @@ class OverlayService : Service() {
             actionRowTag?.visibility = View.GONE
 
             val params = overlayParams ?: return@post
+            params.width = dp(360)
             params.height = dp(190)
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
             windowManager?.updateViewLayout(overlayView, params)
@@ -649,18 +739,24 @@ class OverlayService : Service() {
     }
 
     private fun hideAskUserPanel() {
+        val returnToIdle = askUserFromIdle
+        askUserFromIdle = false
         overlayView?.post {
             askUserPanel?.visibility = View.GONE
-            textView?.visibility = View.VISIBLE
-            pauseButton?.visibility = View.VISIBLE
-            progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
-            actionRowTag?.visibility = View.GONE
             val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
             imm?.hideSoftInputFromWindow(askUserInput?.windowToken, 0)
-            val params = overlayParams ?: return@post
-            params.height = dp(84)
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            windowManager?.updateViewLayout(overlayView, params)
+            if (returnToIdle) {
+                setIdleMode()
+            } else {
+                textView?.visibility = View.VISIBLE
+                pauseButton?.visibility = View.VISIBLE
+                progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
+                actionRowTag?.visibility = View.GONE
+                val params = overlayParams ?: return@post
+                params.height = dp(84)
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                windowManager?.updateViewLayout(overlayView, params)
+            }
         }
     }
 
@@ -684,7 +780,13 @@ class OverlayService : Service() {
     /** 切换到正常模式；普通模式不提供停止按钮 */
     private fun setNormalMode() {
         println("[OverlayService] setNormalMode")
+        isIdleMode = false
         overlayView?.post {
+            overlayRoot?.background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
+            overlayRoot?.alpha = 0.86f
+            idleIconView?.visibility = View.GONE
+            askUserPanel?.visibility = View.GONE
+            textView?.visibility = View.VISIBLE
             actionRowTag?.visibility = View.GONE
             actionButton?.visibility = View.GONE
             actionButton?.text = ""
@@ -693,6 +795,11 @@ class OverlayService : Service() {
             applyPauseState(isPaused)
             divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
+            val params = overlayParams ?: return@post
+            params.width = dp(360)
+            params.height = dp(84)
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            windowManager?.updateViewLayout(overlayView, params)
         }
     }
 

@@ -33,6 +33,7 @@ import com.roubao.autopilot.agent.MobileAgent
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.*
+import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.ui.screens.*
 import com.roubao.autopilot.ui.theme.*
 import androidx.compose.ui.graphics.toArgb
@@ -111,6 +112,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
         scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        applyOverlayIntent(intent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -145,6 +147,11 @@ class MainActivity : ComponentActivity() {
         // 预加载已安装应用
         lifecycleScope.launch(Dispatchers.IO) {
             AppScanner(this@MainActivity).getApps()
+        }
+
+        // 非工作状态：桌面常驻肉包图标
+        if (Settings.canDrawOverlays(this)) {
+            OverlayService.showIdle(this)
         }
 
         setContent {
@@ -682,11 +689,23 @@ class MainActivity : ComponentActivity() {
         return if (instruction.length > 10) instruction.take(10) + "..." else instruction
     }
 
+    private fun applyOverlayIntent(intent: Intent?) {
+        val command = intent?.getStringExtra("overlay_prompt") ?: return
+        if (command.isBlank()) return
+        intent.removeExtra("overlay_prompt")
+        scheduledPrompt.value = command
+        scheduledAutoRun.value = true
+        if (intent.getBooleanExtra("hide_after_start", false)) {
+            window.decorView.postDelayed({ moveTaskToBack(true) }, 1200)
+        }
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
         scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
         scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        applyOverlayIntent(intent)
     }
 
     companion object {

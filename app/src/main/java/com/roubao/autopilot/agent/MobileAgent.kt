@@ -177,7 +177,7 @@ class MobileAgent(
                 // 检查是否被用户停止
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -215,7 +215,7 @@ class MobileAgent(
                         }
                         if (!confirmed) {
                             log("用户取消，任务终止")
-                            OverlayService.hide(context)
+                            OverlayService.idle(context)
                             bringAppToFront()
                             return AgentResult(success = false, message = "敏感页面，用户取消")
                         }
@@ -231,7 +231,7 @@ class MobileAgent(
                 // 再次检查停止状态（截图后）
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -251,7 +251,7 @@ class MobileAgent(
                     // 检查停止状态
                     if (!_state.value.isRunning) {
                         log("用户停止执行")
-                        OverlayService.hide(context)
+                        OverlayService.idle(context)
                         bringAppToFront()
                         return AgentResult(success = false, message = "用户停止")
                     }
@@ -262,7 +262,7 @@ class MobileAgent(
                     // VLM 调用后检查停止状态
                     if (!_state.value.isRunning) {
                         log("用户停止执行")
-                        OverlayService.hide(context)
+                        OverlayService.idle(context)
                         bringAppToFront()
                         return AgentResult(success = false, message = "用户停止")
                     }
@@ -299,7 +299,7 @@ class MobileAgent(
                         log("检测到敏感页面（支付/密码等），已停止执行")
                         OverlayService.update("敏感页面，已停止")
                         delay(2000)
-                        OverlayService.hide(context)
+                        OverlayService.idle(context)
                         updateState { copy(isRunning = false, isCompleted = false) }
                         bringAppToFront()
                         return AgentResult(success = false, message = "检测到敏感页面（支付/密码），已安全停止")
@@ -310,7 +310,7 @@ class MobileAgent(
                         log("任务完成!")
                         OverlayService.update("完成!")
                         delay(1500)
-                        OverlayService.hide(context)
+                        OverlayService.idle(context)
                         updateState { copy(isRunning = false, isCompleted = true) }
                         bringAppToFront()
                         return AgentResult(success = true, message = "任务完成")
@@ -323,7 +323,7 @@ class MobileAgent(
                 // 检查停止状态
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -352,7 +352,7 @@ class MobileAgent(
                 // VLM 调用后检查停止状态
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -409,13 +409,17 @@ class MobileAgent(
 
                 // 特殊处理: answer 动作
                 if (action.type == "answer") {
-                    log("回答: ${action.text}")
-                    OverlayService.update("${action.text?.take(20)}...")
+                    // 模型可能把最终回答放在 message 而不是 text；两者都接受，避免 null
+                    val answerText = action.text?.takeIf { it.isNotBlank() }
+                        ?: action.message?.takeIf { it.isNotBlank() }
+                        ?: "任务完成"
+                    log("回答: $answerText")
+                    OverlayService.update("${answerText.take(20)}...")
                     delay(1500)
-                    OverlayService.hide(context)
-                    updateState { copy(isRunning = false, isCompleted = true, answer = action.text) }
+                    OverlayService.idle(context)
+                    updateState { copy(isRunning = false, isCompleted = true, answer = answerText) }
                     bringAppToFront()
-                    return AgentResult(success = true, message = "回答: ${action.text}")
+                    return AgentResult(success = true, message = "回答: $answerText")
                 }
 
                 // 特殊处理: terminate 动作 (MAI-UI)
@@ -424,7 +428,7 @@ class MobileAgent(
                     log("任务${if (success) "完成" else "失败"}")
                     OverlayService.update(if (success) "完成!" else "失败")
                     delay(1500)
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = success) }
                     bringAppToFront()
                     return AgentResult(success = success, message = if (success) "任务完成" else "任务失败")
@@ -478,7 +482,7 @@ class MobileAgent(
                 // 检查停止状态
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -497,7 +501,7 @@ class MobileAgent(
                 // 检查停止状态
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -543,7 +547,7 @@ class MobileAgent(
                     // 检查停止状态
                     if (!_state.value.isRunning) {
                         log("用户停止执行")
-                        OverlayService.hide(context)
+                        OverlayService.idle(context)
                         bringAppToFront()
                         return AgentResult(success = false, message = "用户停止")
                     }
@@ -557,7 +561,7 @@ class MobileAgent(
             }
         } catch (e: CancellationException) {
             log("任务被取消")
-            OverlayService.hide(context)
+            OverlayService.idle(context)
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
@@ -566,7 +570,7 @@ class MobileAgent(
         log("达到最大步数限制")
         OverlayService.update("达到最大步数")
         delay(1500)
-        OverlayService.hide(context)
+        OverlayService.idle(context)
         updateState { copy(isRunning = false, isCompleted = false) }
         bringAppToFront()
         return AgentResult(success = false, message = "达到最大步数限制")
@@ -605,7 +609,7 @@ class MobileAgent(
 
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -624,7 +628,7 @@ class MobileAgent(
 
                 if (screenshotResult.isSensitive) {
                     log("⚠️ 检测到敏感页面")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "敏感页面，已停止")
                 }
@@ -666,7 +670,7 @@ class MobileAgent(
                     log("任务完成!")
                     OverlayService.update("完成!")
                     delay(1500)
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = true) }
                     bringAppToFront()
                     return AgentResult(success = true, message = "任务完成")
@@ -691,7 +695,7 @@ class MobileAgent(
             }
         } catch (e: CancellationException) {
             log("任务被取消")
-            OverlayService.hide(context)
+            OverlayService.idle(context)
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
@@ -700,7 +704,7 @@ class MobileAgent(
         log("达到最大步数限制")
         OverlayService.update("达到最大步数")
         delay(1500)
-        OverlayService.hide(context)
+        OverlayService.idle(context)
         updateState { copy(isRunning = false, isCompleted = false) }
         bringAppToFront()
         return AgentResult(success = false, message = "达到最大步数限制")
@@ -808,7 +812,7 @@ class MobileAgent(
 
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "用户停止")
                 }
@@ -827,7 +831,7 @@ class MobileAgent(
 
                 if (screenshotResult.isSensitive) {
                     log("⚠️ 检测到敏感页面")
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     bringAppToFront()
                     return AgentResult(success = false, message = "敏感页面，已停止")
                 }
@@ -869,7 +873,7 @@ class MobileAgent(
                     log(if (success) "任务完成!" else "任务失败")
                     OverlayService.update(if (success) "完成!" else "失败")
                     delay(1500)
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = success) }
                     bringAppToFront()
                     return AgentResult(success = success, message = if (success) "任务完成" else "任务失败")
@@ -889,7 +893,7 @@ class MobileAgent(
                     log("回答: ${action.text}")
                     OverlayService.update("答案: ${action.text?.take(30)}")
                     delay(3000)
-                    OverlayService.hide(context)
+                    OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = true) }
                     bringAppToFront()
                     return AgentResult(success = true, message = "回答: ${action.text}")
@@ -914,7 +918,7 @@ class MobileAgent(
             }
         } catch (e: CancellationException) {
             log("任务被取消")
-            OverlayService.hide(context)
+            OverlayService.idle(context)
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
@@ -923,7 +927,7 @@ class MobileAgent(
         log("达到最大步数限制")
         OverlayService.update("达到最大步数")
         delay(1500)
-        OverlayService.hide(context)
+        OverlayService.idle(context)
         updateState { copy(isRunning = false, isCompleted = false) }
         bringAppToFront()
         return AgentResult(success = false, message = "达到最大步数限制")
@@ -1328,7 +1332,7 @@ class MobileAgent(
      * 停止执行
      */
     fun stop() {
-        OverlayService.hide(context)
+        OverlayService.idle(context)
         updateState { copy(isRunning = false, isPaused = false) }
         // 通知 MainActivity 取消协程
         onStopRequested?.invoke()
