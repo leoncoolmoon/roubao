@@ -188,6 +188,11 @@ fun CapabilitiesScreen() {
     // 顶层分区：能力（Agents/Tools/Skills）与 反馈（建议/吐槽）分开
     var mainSection by remember { mutableStateOf("能力") }
     var selectedFilter by remember { mutableStateOf("全部") }
+    var searchQuery by remember { mutableStateOf("") }
+    fun matchesSearch(vararg fields: String): Boolean {
+        val q = searchQuery.trim()
+        return q.isEmpty() || fields.any { it.contains(q, ignoreCase = true) }
+    }
     val filters = if (mainSection == "能力") {
         listOf("全部", "Agents", "Tools", "Skills")
     } else {
@@ -207,18 +212,26 @@ fun CapabilitiesScreen() {
     var deleteConfirmTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
     val visibleAgents = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Agents")) {
-        agentsList
+        agentsList.filter {
+            matchesSearch(it.name, it.role, it.description, it.prompt)
+        }
     } else emptyList()
     val visibleTools = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Tools")) {
-        toolSkillList.filter { it.category == "tool" }
+        toolSkillList.filter {
+            it.category == "tool" &&
+                matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
+        }
     } else emptyList()
     val visibleSkills = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Skills")) {
-        toolSkillList.filter { it.category == "skill" }
+        toolSkillList.filter {
+            it.category == "skill" &&
+                matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
+        }
     } else emptyList()
     val visibleFeedback = if (mainSection == "反馈") {
         when (selectedFilter) {
-            "建议" -> feedbackList.filter { it.kind == "suggestion" }
-            else -> feedbackList.filter { it.kind != "suggestion" }
+            "建议" -> feedbackList.filter { it.kind == "suggestion" && matchesSearch(it.text) }
+            else -> feedbackList.filter { it.kind != "suggestion" && matchesSearch(it.text) }
         }
     } else emptyList()
 
@@ -330,6 +343,17 @@ fun CapabilitiesScreen() {
                 text = { Text("💬 建议 / 吐槽") }
             )
         }
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            singleLine = true,
+            placeholder = { Text("搜索名称、描述、关键词、Prompt…", fontSize = 13.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+        )
 
         // 分区内过滤标签
         Row(

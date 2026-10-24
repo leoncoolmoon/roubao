@@ -41,6 +41,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
 import com.roubao.autopilot.data.ApiProvider
@@ -81,6 +84,16 @@ fun SettingsScreen(
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
         mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityServiceRunning = AutoPilotAccessibilityService.isServiceRunning()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LazyColumn(
@@ -218,15 +231,15 @@ fun SettingsScreen(
                                 ) {
                                     Text("去开启", fontSize = 11.sp)
                                 }
-                                TextButton(
-                                    onClick = {
-                                        accessibilityServiceRunning =
-                                            AutoPilotAccessibilityService.isServiceRunning()
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 6.dp)
-                                ) {
-                                    Text("刷新", fontSize = 11.sp)
-                                }
+                            }
+                            TextButton(
+                                onClick = {
+                                    accessibilityServiceRunning =
+                                        AutoPilotAccessibilityService.isServiceRunning()
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp)
+                            ) {
+                                Text("刷新", fontSize = 11.sp)
                             }
                         }
                     }
