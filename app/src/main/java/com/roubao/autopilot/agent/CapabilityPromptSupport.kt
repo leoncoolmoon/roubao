@@ -18,10 +18,17 @@ fun toolPolicySection(): String {
 
     val enabled = tools.filter { it.enabled }.map { it.id }
     val disabled = tools.filterNot { it.enabled }.map { it.id }
+    val usage = mapOf(
+        "shell" to "shell: {\"action\":\"shell\",\"command\":\"ls /sdcard/Download\"} for file/system tasks",
+        "open_app" to "open_app: {\"action\":\"open_app\",\"text\":\"设置\"} to open an app by name"
+    )
     return buildString {
         append("\n\n### Tool Policy (AUTHORITATIVE) ###\n")
         if (enabled.isNotEmpty()) {
-            append("Enabled tools: ").append(enabled.joinToString(", ")).append('\n')
+            append("Enabled tools:\n")
+            enabled.forEach { id ->
+                usage[id]?.let { append("- ").append(it).append('\n') }
+            }
         }
         if (disabled.isNotEmpty()) {
             append("Disabled tools: ").append(disabled.joinToString(", ")).append('\n')

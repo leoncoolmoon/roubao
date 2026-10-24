@@ -778,7 +778,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 10) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 11) {
 
         private val appContext = context.applicationContext
 
@@ -886,6 +886,41 @@ class PromptRepository private constructor(context: Context) {
             }
             if (oldVersion < 10) {
                 rewritePresetFeedback(db)
+            }
+            if (oldVersion < 11) {
+                refreshToolAgnosticPrompts(db)
+            }
+        }
+
+        /** v11：移除内置 Prompt 中静态写死的 shell/open_app 推荐。 */
+        private fun refreshToolAgnosticPrompts(db: SQLiteDatabase) {
+            val defaults = mapOf(
+                "manager" to PromptRepository.DEFAULT_MANAGER_PROMPT,
+                "executor" to PromptRepository.DEFAULT_EXECUTOR_PROMPT,
+                "reflector" to PromptRepository.DEFAULT_REFLECTOR_PROMPT
+            )
+            for ((id, newDefault) in defaults) {
+                val row = db.query(
+                    "agent_prompts",
+                    arrayOf("prompt", "default_prompt"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null
+                } ?: continue
+                if (row.first == row.second) {
+                    db.update(
+                        "agent_prompts",
+                        ContentValues().apply {
+                            put("prompt", newDefault)
+                            put("default_prompt", newDefault)
+                        },
+                        "id = ?",
+                        arrayOf(id)
+                    )
+                    println("[PromptRepository] refreshed tool-agnostic prompt: $id")
+                }
             }
         }
 
@@ -1326,7 +1361,7 @@ class PromptRepository private constructor(context: Context) {
             return instance ?: throw IllegalStateException("PromptRepository 未初始化，请先调用 init()")
         }
 
-        const val DEFAULT_MANAGER_PROMPT = """You are the planning agent for an Android automation app. Keep the plan short, concrete, and tool-first.
+        const val DEFAULT_MANAGER_PROMPT = """You are the planning agent for an Android automation app. Keep the plan short, concrete, and grounded in the current screen.
 
 ### User Request ###
 {{instruction}}
@@ -1334,8 +1369,7 @@ class PromptRepository private constructor(context: Context) {
 {{completedPlan}}{{planSection}}{{lastActionSection}}{{lastSummarySection}}{{recentOutcomes}}{{importantNotes}}{{errorDetails}}{{skillContext}}{{additionalKnowledge}}
 
 ### Planning Rules ###
-1. Prefer the cheapest reliable action:
-   - File/system tasks -> `shell` (ls/find/grep/cp/mv/mkdir/rm/stat/du/pm/dumpsys/content). Never plan to open the file manager UI for file operations.
+1. Choose the cheapest reliable action available in this run's Tool Policy.
    - Text input -> `type` (writes directly via ACTION_SET_TEXT; no keyboard switching).
    - Cursor/selection -> `set_selection`; page -> `scroll`; focus/navigation -> `key`.
    - Visible element with text -> `click` with exact `text`; coordinate only as fallback.
@@ -1372,17 +1406,16 @@ The Accessibility UI Tree is authoritative; the screenshot is only a fallback fo
 {{progressStatus}}
 
 ### Action Priority (cheapest reliable first) ###
-1. FILE / SYSTEM -> `shell`: files, packages, settings, content (ls/find/grep/cat/cp/mv/mkdir/rm/stat/du/pm/dumpsys/content query). Never open File Manager for file operations.
-2. TEXT INPUT -> `type`: click the input, then type exact text via ACTION_SET_TEXT. Do not click keyboard keys or switch `中`/`英`.
-3. TEXT EDITING -> `set_selection`: start/end indices on the focused input; no long-press drag.
-4. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
-5. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
-6. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
-7. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
+1. TEXT INPUT -> `type`: click the input, then type exact text via ACTION_SET_TEXT. Do not click keyboard keys or switch `中`/`英`.
+2. TEXT EDITING -> `set_selection`: start/end indices on the focused input; no long-press drag.
+3. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
+4. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
+5. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
+6. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
 
 ### Hard Rules ###
 - Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
-- If the same action failed twice, change strategy: shell -> type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
+- If the same action failed twice, change strategy: type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
 - Close popups/dialogs before proceeding.
 - For questions use `answer`; for login/captcha use `take_over`.
 - Stay on the current subgoal; do not jump ahead.
@@ -1394,15 +1427,13 @@ Add `message` to the action to request confirmation:
 Do not stop for price displays, payment method selection, cart pages, or normal navigation.
 
 #### Actions ####
-Allowed: shell, click, type, set_selection, scroll, key, swipe, system_button, open_app, wait, take_over, answer, terminate.
+Allowed: click, type, set_selection, scroll, key, swipe, system_button, wait, take_over, answer, terminate.
 Examples:
-{"action":"shell","command":"ls /sdcard/Download"}
 {"action":"click","text":"显示与亮度","coordinate":[316,730]}
 {"action":"type","text":"hello"}
 {"action":"set_selection","start":3,"end":8}
 {"action":"scroll","direction":"down"}
 {"action":"key","key":"ENTER"}
-{"action":"open_app","text":"设置"}  Available apps: {{installedApps}}
 {"action":"terminate","status":"success"}
 
 ### Latest Action History ###
@@ -1434,8 +1465,7 @@ Expectation: {{lastSummary}}
 - A = the screen changed as expected (or the expected state is already reached).
 - B = wrong page / wrong target; explain what went wrong and which cheaper action should have been used.
 - C = no visible change / same page; explain why.
-- If the action used touch/UI where `shell`, `type`, `set_selection`, `scroll`, or `key` would be better, mark B and say so explicitly.
-- If a file operation opened the file manager instead of using shell, mark B: "use shell".
+- If the action used touch/UI where a cheaper available action would be better, mark B and say so explicitly.
 - If text input tapped the on-screen keyboard instead of `type`/ACTION_SET_TEXT, mark B.
 - Do not mark A just because a UI opened; compare with the expectation.
 - Keep the error description to 1-2 sentences.

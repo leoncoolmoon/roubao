@@ -188,6 +188,29 @@ class MainActivity : ComponentActivity() {
         val colors = BaoziTheme.colors
         val agent = mobileAgent.value
         val agentState by agent?.state?.collectAsState() ?: remember { mutableStateOf(null) }
+        var pausedModelApplied by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(
+            settings.currentProviderId,
+            settings.model,
+            settings.baseUrl,
+            settings.apiKey,
+            agentState?.isPaused
+        ) {
+            if (agentState?.isPaused == true) {
+                val key = "${settings.currentProviderId}|${settings.baseUrl}|${settings.apiKey}|${settings.model}"
+                if (pausedModelApplied != key && !settings.currentProvider.isGUIAgent && settings.currentProviderId != "mai_ui") {
+                    val client = VLMClient(
+                        apiKey = settings.apiKey,
+                        baseUrl = settings.baseUrl,
+                        model = settings.model
+                    )
+                    mobileAgent.value?.updateVlmClient(client)
+                    pausedModelApplied = key
+                }
+            } else {
+                pausedModelApplied = null
+            }
+        }
         val logs by agent?.logs?.collectAsState() ?: remember { mutableStateOf(emptyList<String>()) }
         val records by remember { executionRecords }
         val isShizukuAvailable = shizukuAvailable.value && checkShizukuPermission()
@@ -341,6 +364,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 } else "NONE",
                                 isExecuting = executing,
+                                isPaused = agentState?.isPaused == true,
                                 onFetchModels = { onSuccess, onError ->
                                     lifecycleScope.launch {
                                         val result = VLMClient.fetchModels(settings.baseUrl, settings.apiKey)

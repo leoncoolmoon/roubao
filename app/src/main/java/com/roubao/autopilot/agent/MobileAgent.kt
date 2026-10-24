@@ -38,7 +38,7 @@ import kotlin.coroutines.resume
  * - MAI-UI 模式：使用 MAIUIClient (专用 prompt 和对话历史)
  */
 class MobileAgent(
-    private val vlmClient: VLMClient?,
+    private var vlmClient: VLMClient?,
     private val controller: DeviceController,
     private val context: Context,
     private val guiOwlClient: GUIOwlClient? = null,  // GUI-Owl 专用客户端
@@ -74,6 +74,13 @@ class MobileAgent(
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs
+
+    /** 暂停时切换模型：保留 ConversationMemory，仅替换 HTTP 客户端。 */
+    fun updateVlmClient(client: VLMClient) {
+        vlmClient = client
+        skillManager?.setVLMClient(client)
+        log("已切换模型客户端: ${client.modelName()}")
+    }
 
     /**
      * 执行指令
@@ -221,6 +228,9 @@ class MobileAgent(
                     }
                 }
 
+                val modelClient = vlmClient
+                    ?: return AgentResult(success = false, message = "VLMClient 未初始化")
+
                 // 再次检查停止状态（截图后）
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
@@ -250,7 +260,7 @@ class MobileAgent(
                     }
 
                     val planPrompt = manager.getPrompt(infoPool)
-                    val planResponse = vlmClient.predict(planPrompt, screenshot?.let { listOf(it) } ?: emptyList())
+                    val planResponse = modelClient.predict(planPrompt, screenshot?.let { listOf(it) } ?: emptyList())
 
                     // VLM 调用后检查停止状态
                     if (!_state.value.isRunning) {
@@ -331,7 +341,7 @@ class MobileAgent(
                     log("记忆消息数: ${memory.size()}, 估算 token: ${memory.estimateTokens()}")
 
                     // 调用 VLM
-                    val response = vlmClient.predictWithContext(memory.toMessagesJson())
+                    val response = modelClient.predictWithContext(memory.toMessagesJson())
 
                     // 删除图片节省 token
                     memory.stripLastUserImage()
@@ -339,7 +349,7 @@ class MobileAgent(
                     response
                 } else {
                     // 降级：使用普通方式
-                    vlmClient.predict(actionPrompt, screenshot?.let { listOf(it) } ?: emptyList())
+                    modelClient.predict(actionPrompt, screenshot?.let { listOf(it) } ?: emptyList())
                 }
 
                 // VLM 调用后检查停止状态
@@ -501,7 +511,7 @@ class MobileAgent(
                 } else {
                     log("Reflector 反思中...")
                     val reflectPrompt = reflector.getPrompt(infoPool)
-                    val reflectResponse = vlmClient.predict(reflectPrompt, listOfNotNull(screenshot, afterScreenshot))
+                    val reflectResponse = modelClient.predict(reflectPrompt, listOfNotNull(screenshot, afterScreenshot))
                     if (reflectResponse.isSuccess) {
                         reflector.parseResponse(reflectResponse.getOrThrow())
                     } else {
@@ -542,7 +552,7 @@ class MobileAgent(
                     }
 
                     val notePrompt = notetaker.getPrompt(infoPool)
-                    val noteResponse = vlmClient.predict(notePrompt, listOf(afterScreenshot))
+                    val noteResponse = modelClient.predict(notePrompt, listOf(afterScreenshot))
                     if (noteResponse.isSuccess) {
                         infoPool.importantNotes = notetaker.parseResponse(noteResponse.getOrThrow())
                     }

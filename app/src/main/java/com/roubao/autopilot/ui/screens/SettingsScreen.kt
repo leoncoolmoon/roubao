@@ -70,6 +70,7 @@ fun SettingsScreen(
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
     isExecuting: Boolean = false,
+    isPaused: Boolean = false,
     onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
@@ -490,7 +491,11 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = colors.error.copy(alpha = 0.08f))
                 ) {
                     Text(
-                        text = "任务执行中，模型/服务商切换将在本次任务结束后生效。",
+                        text = if (isPaused) {
+                            "任务已暂停：模型可切换并立即生效；服务商和 API Key 需停止任务后修改。"
+                        } else {
+                            "任务执行中：先暂停才能切换模型；服务商和 API Key 需停止任务后修改。"
+                        },
                         fontSize = 12.sp,
                         color = colors.error,
                         modifier = Modifier.padding(12.dp)
@@ -528,7 +533,7 @@ fun SettingsScreen(
                 title = "模型",
                 subtitle = settings.model,
                 onClick = { showModelDialog = true },
-                enabled = !isExecuting
+                enabled = !isExecuting || isPaused
             )
         }
 
