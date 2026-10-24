@@ -50,6 +50,10 @@ data class InfoPool(
     var activeSkillContext: String = "",
     // 最近一次工具执行结果（如 shell 输出）
     var lastToolResult: String = "",
+    // 是否向模型发送截图；UI 树足够时可由模型关闭
+    var visionEnabled: Boolean = true,
+    // ask_user 的用户补充内容
+    var userReply: String = "",
 
     // 对话记忆（保存完整对话历史，用于 Executor）
     var executorMemory: ConversationMemory? = null,
@@ -91,7 +95,8 @@ data class Action(
     val key: String? = null,         // key 动作: ENTER / TAB / DPAD_DOWN / ...
     val start: Int? = null,          // set_selection 起始字符下标
     val end: Int? = null,            // set_selection 结束字符下标
-    val command: String? = null      // shell 动作的命令
+    val command: String? = null,     // shell 动作的命令
+    val enabled: Boolean? = null     // set_screenshot 开关
 ) {
     companion object {
         private const val SCALE_FACTOR = 999  // MAI-UI 坐标缩放因子
@@ -141,7 +146,8 @@ data class Action(
                     key = obj.optString("key", null),
                     start = if (obj.has("start")) obj.optInt("start") else null,
                     end = if (obj.has("end")) obj.optInt("end") else null,
-                    command = obj.optString("command", null)
+                    command = obj.optString("command", null),
+                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null
                 )
             } catch (e: Exception) {
                 null

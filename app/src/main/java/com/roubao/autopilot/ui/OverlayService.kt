@@ -2,6 +2,7 @@ package com.roubao.autopilot.ui
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -16,6 +17,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -35,6 +37,7 @@ class OverlayService : Service() {
     private var actionButton: TextView? = null
     private var pauseButton: TextView? = null
     private var cancelButton: TextView? = null  // 确认模式下的取消按钮
+    private var askUserDialog: AlertDialog? = null
     private var divider: View? = null
     private var divider2: View? = null  // 确认模式下第二个分隔线
     private var animator: ValueAnimator? = null
@@ -140,6 +143,24 @@ class OverlayService : Service() {
                 println("[OverlayService] showConfirm: instance is null, queuing...")
                 pendingCallbacks.add(action)
             }
+        }
+
+        /** 显示可输入文字的用户补充信息弹窗 */
+        fun showAskUser(question: String, onAnswer: (String) -> Unit) {
+            val action: () -> Unit = {
+                instance?.showAskUserDialog(question, onAnswer)
+                Unit
+            }
+            if (instance != null) {
+                action()
+            } else {
+                pendingCallbacks.add(action)
+            }
+        }
+
+        /** 超时或取消时关闭补充信息弹窗 */
+        fun dismissAskUser() {
+            instance?.dismissAskUserDialog()
         }
 
         /** 当 instance 可用时执行等待中的回调 */
@@ -486,6 +507,44 @@ class OverlayService : Service() {
     private fun updateText(text: String) {
         textView?.post {
             textView?.text = text
+        }
+    }
+
+    fun dismissAskUserDialog() {
+        askUserDialog?.dismiss()
+        askUserDialog = null
+    }
+
+    /** 等待用户输入补充信息 */
+    private fun showAskUserDialog(question: String, onAnswer: (String) -> Unit) {
+        overlayView?.post {
+            val input = EditText(this).apply {
+                hint = "请输入补充信息"
+                setSingleLine(false)
+            }
+            val dialog = AlertDialog.Builder(this)
+                .setTitle("需要补充信息")
+                .setMessage(question)
+                .setView(input)
+                .setCancelable(false)
+                .setPositiveButton("提交") { _, _ ->
+                    askUserDialog = null
+                    onAnswer(input.text.toString())
+                }
+                .setNegativeButton("跳过") { _, _ ->
+                    askUserDialog = null
+                    onAnswer("")
+                }
+                .create()
+            askUserDialog = dialog
+            dialog.setOnDismissListener { askUserDialog = null }
+            dialog.window?.setType(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else
+                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+            )
+            dialog.show()
         }
     }
 

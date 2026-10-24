@@ -110,6 +110,14 @@ class Manager {
             .replace("{{skillContext}}", skillContextStr)
             .replace("{{additionalKnowledge}}", additionalKnowledgeStr)
 
+        if (infoPool.userReply.isNotBlank()) {
+            result = "### User Reply ###\n${infoPool.userReply}\n\n$result"
+        }
+
+        if (infoPool.accessibilityTree.isNotBlank()) {
+            result = "### Current UI Tree ###\n${infoPool.accessibilityTree.take(12000)}\n\n$result"
+        }
+
         if (infoPool.plan.isEmpty() && infoPool.availableSkills.isNotBlank()) {
             val selectionBlock = """
 

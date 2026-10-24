@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
@@ -189,28 +190,34 @@ class MobileAgent(
                     infoPool.accessibilityTree = ""
                 }
 
-                log("截图中...")
-                OverlayService.setVisible(false)
-                delay(100) // 等待悬浮窗隐藏
-                val screenshotResult = controller.screenshotWithFallback()
-                OverlayService.setVisible(true)
-                val screenshot = screenshotResult.bitmap
+                val treeOnly = !infoPool.visionEnabled && infoPool.accessibilityTree.isNotBlank()
+                var screenshot: Bitmap? = null
+                if (treeOnly) {
+                    log("视觉输入已关闭，使用实时 UI 树")
+                } else {
+                    log("截图中...")
+                    OverlayService.setVisible(false)
+                    delay(100) // 等待悬浮窗隐藏
+                    val screenshotResult = controller.screenshotWithFallback()
+                    OverlayService.setVisible(true)
+                    screenshot = screenshotResult.bitmap
 
-                // 处理敏感页面（截图被系统阻止）
-                if (screenshotResult.isSensitive) {
-                    log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
-                    val confirmed = withContext(Dispatchers.Main) {
-                        waitForUserConfirm("检测到敏感页面，是否继续执行？")
+                    // 处理敏感页面（截图被系统阻止）
+                    if (screenshotResult.isSensitive) {
+                        log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
+                        val confirmed = withContext(Dispatchers.Main) {
+                            waitForUserConfirm("检测到敏感页面，是否继续执行？")
+                        }
+                        if (!confirmed) {
+                            log("用户取消，任务终止")
+                            OverlayService.hide(context)
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "敏感页面，用户取消")
+                        }
+                        log("用户确认继续（使用黑屏占位图/无障碍元素树辅助定位）")
+                    } else if (screenshotResult.isFallback) {
+                        log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                     }
-                    if (!confirmed) {
-                        log("用户取消，任务终止")
-                        OverlayService.hide(context)
-                        bringAppToFront()
-                        return AgentResult(success = false, message = "敏感页面，用户取消")
-                    }
-                    log("用户确认继续（使用黑屏占位图/无障碍元素树辅助定位）")
-                } else if (screenshotResult.isFallback) {
-                    log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                 }
 
                 // 再次检查停止状态（截图后）
@@ -370,6 +377,28 @@ class MobileAgent(
                     continue
                 }
 
+                // 特殊处理: 需要用户补充信息
+                if (action.type == "ask_user") {
+                    val question = action.message ?: action.text ?: "请补充完成任务所需的信息"
+                    log("需要用户补充: $question")
+                    OverlayService.update("等待用户输入: ${question.take(30)}")
+                    val reply = withTimeoutOrNull(5 * 60 * 1000L) {
+                        waitForUserInput(question)
+                    }
+                    if (reply == null) {
+                        OverlayService.dismissAskUser()
+                        infoPool.userReply = "用户未在 5 分钟内回复，请根据现有信息继续。"
+                        log("用户未回复，按超时策略继续")
+                    } else {
+                        infoPool.userReply = reply.ifBlank { "用户跳过了补充。" }
+                        log("用户补充: ${infoPool.userReply.take(200)}")
+                    }
+                    infoPool.actionHistory.add(action)
+                    infoPool.summaryHistory.add("等待用户补充")
+                    infoPool.actionOutcomes.add("A")
+                    continue
+                }
+
                 // 特殊处理: answer 动作
                 if (action.type == "answer") {
                     log("回答: ${action.text}")
@@ -416,7 +445,7 @@ class MobileAgent(
                 // 7. 执行动作
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
-                val toolResult = executeAction(action)
+                val toolResult = executeAction(action, infoPool)
                 if (!toolResult.isNullOrBlank()) {
                     infoPool.lastToolResult = toolResult.take(4000)
                     log("工具结果已回填: ${toolResult.take(120)}...")
@@ -1003,7 +1032,7 @@ class MobileAgent(
     /**
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
-    private suspend fun executeAction(action: Action): String? = withContext(Dispatchers.IO) {
+    private suspend fun executeAction(action: Action, infoPool: InfoPool): String? = withContext(Dispatchers.IO) {
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
@@ -1107,6 +1136,16 @@ class MobileAgent(
                     }
                 }
             }
+            "set_screenshot" -> {
+                val enable = action.enabled ?: true
+                if (!enable && infoPool.accessibilityTree.isBlank()) {
+                    log("无法关闭视觉输入：当前 UI 树为空")
+                    infoPool.visionEnabled = true
+                } else {
+                    infoPool.visionEnabled = enable
+                    log(if (enable) "视觉输入已开启" else "视觉输入已关闭（使用 UI 树）")
+                }
+            }
             "shell" -> {
                 val command = action.command
                 if (!command.isNullOrBlank()) {
@@ -1204,6 +1243,16 @@ class MobileAgent(
     /**
      * 等待用户完成手动操作（人机协作）
      */
+    private suspend fun waitForUserInput(question: String): String {
+        val answer = kotlinx.coroutines.CompletableDeferred<String>()
+        withContext(Dispatchers.Main) {
+            com.roubao.autopilot.ui.OverlayService.showAskUser(question) { text ->
+                if (!answer.isCompleted) answer.complete(text)
+            }
+        }
+        return answer.await()
+    }
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private suspend fun waitForUserTakeOver(message: String) = suspendCancellableCoroutine<Unit> { continuation ->
         com.roubao.autopilot.ui.OverlayService.showTakeOver(message) {

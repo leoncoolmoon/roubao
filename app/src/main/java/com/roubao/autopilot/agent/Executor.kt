@@ -81,6 +81,18 @@ class Executor {
             prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
         }
 
+        if (infoPool.userReply.isNotBlank()) {
+            prompt += "\n\n### User Reply ###\n${infoPool.userReply}\n"
+        }
+
+        prompt += "\n\n### Visual Input ###\n" +
+            "Screenshots are currently ${if (infoPool.visionEnabled) "ON" else "OFF"}. " +
+            "If the UI tree is sufficient and you do not need pixels, disable screenshots with " +
+            "{\"action\":\"set_screenshot\",\"enabled\":false}. " +
+            "Re-enable with true when visual confirmation is required.\n" +
+            "If required details are missing, ask the user with " +
+            "{\"action\":\"ask_user\",\"message\":\"your question\"} instead of guessing.\n"
+
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
             prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +
