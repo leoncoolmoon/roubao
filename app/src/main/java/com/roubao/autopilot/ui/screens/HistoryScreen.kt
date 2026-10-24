@@ -524,7 +524,7 @@ fun HistoryDetailScreen(
                                     .padding(vertical = 2.dp)
                                     .pointerInput(log) {
                                         detectTapGestures(onLongPress = {
-                                            copyToClipboard(context, "执行日志", log)
+                                            copyToClipboard(context, "执行日志", record.logs.joinToString("\n"))
                                         })
                                     }
                             )

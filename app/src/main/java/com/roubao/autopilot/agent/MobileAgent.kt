@@ -92,6 +92,16 @@ class MobileAgent(
     ): AgentResult {
         log("开始执行: $instruction")
 
+        // 立即显示悬浮窗，不等意图分析/应用扫描完成
+        OverlayService.show(context, "准备执行...") {
+            updateState { copy(isRunning = false) }
+            stop()
+        }
+        OverlayService.setPauseCallback {
+            togglePause()
+            OverlayService.updatePauseState(_state.value.isPaused)
+        }
+
         // 根据模式选择执行路径
         if (useGUIOwlMode && guiOwlClient != null) {
             log("使用 GUI-Owl 模式")
@@ -155,19 +165,6 @@ class MobileAgent(
             .map { it.appName }
         infoPool.installedApps = apps.joinToString(", ")
         log("已加载 ${apps.size} 个应用")
-
-        // 显示悬浮窗 (带停止按钮)
-        OverlayService.show(context, "开始执行...") {
-            // 停止回调 - 设置状态为停止
-            // 注意：协程取消需要在 MainActivity 中处理
-            updateState { copy(isRunning = false) }
-            // 调用 stop() 方法确保清理
-            stop()
-        }
-        OverlayService.setPauseCallback {
-            togglePause()
-            OverlayService.updatePauseState(_state.value.isPaused)
-        }
 
         updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 

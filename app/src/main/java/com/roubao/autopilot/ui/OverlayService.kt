@@ -15,6 +15,8 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
@@ -41,10 +43,16 @@ class OverlayService : Service() {
     private var overlayView: View? = null
     private var textView: TextView? = null
     private var actionButton: TextView? = null
+    private var actionRowTag: LinearLayout? = null
     private var pauseButton: TextView? = null
     private var progressRing: ProgressBar? = null
     private var cancelButton: TextView? = null  // 确认模式下的取消按钮
     private var askUserDialog: AlertDialog? = null
+    private var askUserPanel: LinearLayout? = null
+    private var askUserInput: EditText? = null
+    private var askUserQuestion: TextView? = null
+    private var pendingAskAnswer: ((String) -> Unit)? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var divider: View? = null
     private var divider2: View? = null  // 确认模式下第二个分隔线
     private var animator: ValueAnimator? = null
@@ -264,87 +272,84 @@ class OverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createOverlayView() {
-        // 容器：紧凑横向布局，背景只比图标略高
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(6), dp(12), dp(6))
+        // 使用用户提供的 9-patch：左侧包子，右侧橙色内容区；不再额外画图标
+        val container = FrameLayout(this).apply {
+            background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
+            alpha = 0.86f
         }
 
-        // 七彩渐变背景：比预览更透，降低亮色刺激
-        val gradientDrawable = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(28).toFloat()
-            setStroke(1, Color.argb(120, 255, 255, 255))
-            alpha = 165
-        }
-        container.background = gradientDrawable
-
-        // 左侧肉包图标 + 进度环 + 居中暂停/继续按钮
-        val frameSize = dp(56)
-        val iconFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(frameSize, frameSize)
-        }
+        val frameSize = dp(60)
         progressRing = ProgressBar(this).apply {
             isIndeterminate = true
             indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-            layoutParams = FrameLayout.LayoutParams(frameSize, frameSize, Gravity.CENTER)
-        }
-        val iconView = ImageView(this).apply {
-            setImageResource(R.mipmap.ic_launcher_round)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            layoutParams = FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER)
+            layoutParams = FrameLayout.LayoutParams(frameSize, frameSize, Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                leftMargin = dp(4)
+            }
         }
         pauseButton = TextView(this).apply {
             text = "Ⅱ"
-            textSize = 15f
+            textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.argb(150, 18, 20, 28))
-                setStroke(1, Color.argb(190, 255, 255, 255))
+                setColor(Color.argb(105, 18, 20, 28))
+                setStroke(1, Color.argb(130, 255, 255, 255))
             }
-            layoutParams = FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER)
+            layoutParams = FrameLayout.LayoutParams(dp(32), dp(32), Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                leftMargin = dp(20)
+            }
             setOnClickListener {
                 if (!isTakeOverMode && !isConfirmMode) pauseCallback?.invoke()
             }
             setOnLongClickListener {
-                // 长按图标：未暂停时先暂停，再呼出肉包窗口
                 if (!isTakeOverMode && !isConfirmMode && !isPaused) pauseCallback?.invoke()
                 openMainWindow()
                 true
             }
         }
-        iconFrame.addView(progressRing)
-        iconFrame.addView(iconView)
-        iconFrame.addView(pauseButton)
-        container.addView(iconFrame)
+        container.addView(progressRing)
+        container.addView(pauseButton)
 
-        // 右侧步骤文字
+        // 文字叠在 9-patch 右侧橙色区域
         textView = TextView(this).apply {
             text = "准备中..."
             textSize = 13f
-            setTextColor(Color.WHITE)
+            setTextColor(Color.parseColor("#3B1A00"))
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), 0, 0, 0)
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            setPadding(dp(8), 0, dp(8), 0)
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_VERTICAL
+            ).apply {
+                leftMargin = dp(94)
+                rightMargin = dp(12)
+            }
         }
         container.addView(textView)
 
-        // 确认 / 人机协作模式按钮；普通模式隐藏，不再提供停止
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.END or Gravity.CENTER_VERTICAL
+            ).apply { rightMargin = dp(8) }
+        }
         actionButton = TextView(this).apply {
             text = ""
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(dp(10), dp(4), dp(10), dp(4))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             typeface = Typeface.DEFAULT_BOLD
-            visibility = View.GONE
             setOnClickListener {
                 when {
                     isConfirmMode -> {
@@ -362,17 +367,6 @@ class OverlayService : Service() {
                 }
             }
         }
-        container.addView(actionButton)
-
-        // 确认模式的分隔线和取消按钮
-        divider2 = View(this).apply {
-            setBackgroundColor(Color.WHITE)
-            alpha = 0.35f
-            visibility = View.GONE
-        }
-        container.addView(divider2, LinearLayout.LayoutParams(dp(1), dp(24)).apply {
-            setMargins(dp(8), 0, dp(8), 0)
-        })
         cancelButton = TextView(this).apply {
             text = "取消"
             textSize = 12f
@@ -390,10 +384,80 @@ class OverlayService : Service() {
                 }
             }
         }
-        container.addView(cancelButton)
+        actionRow.addView(actionButton)
+        actionRow.addView(cancelButton)
+        actionRowTag = actionRow
+        container.addView(actionRow)
 
-        // 动画：七彩渐变流动效果
-        startRainbowAnimation(gradientDrawable)
+        // ask_user：直接显示在悬浮窗内部，避免 Service 弹 Dialog 的 token 问题
+        val askPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(14), dp(10), dp(14), dp(8))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(12).toFloat()
+                setColor(Color.argb(242, 24, 26, 34))
+            }
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        askUserQuestion = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        askUserInput = EditText(this).apply {
+            hint = "输入补充信息"
+            textSize = 13f
+            setSingleLine(true)
+            setImeOptions(EditorInfo.IME_ACTION_DONE)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.argb(150, 255, 255, 255))
+            setPadding(dp(6), dp(4), dp(6), dp(4))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.argb(60, 255, 255, 255))
+            }
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) {
+                    submitAskUser()
+                    true
+                } else false
+            }
+        }
+        val askSubmit = TextView(this).apply {
+            text = "提交"
+            textSize = 12f
+            setTextColor(Color.parseColor("#3B1A00"))
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(8).toFloat()
+                setColor(Color.parseColor("#FFA94D"))
+            }
+            setOnClickListener { submitAskUser() }
+        }
+        askPanel.addView(askUserQuestion)
+        askPanel.addView(askUserInput, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(34)
+        ).apply { topMargin = dp(4) })
+        askPanel.addView(askSubmit, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            dp(30)
+        ).apply {
+            topMargin = dp(6)
+            gravity = Gravity.END
+        })
+        askUserPanel = askPanel
+        container.addView(askPanel)
 
         val params = WindowManager.LayoutParams().apply {
             type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -407,12 +471,13 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON  // 保持屏幕常亮
             format = PixelFormat.TRANSLUCENT
-            width = WindowManager.LayoutParams.WRAP_CONTENT
-            height = WindowManager.LayoutParams.WRAP_CONTENT
+            width = dp(360)
+            height = dp(84)
             gravity = Gravity.TOP or Gravity.START
             x = 100
             y = 200
         }
+        overlayParams = params
 
         // 添加拖动功能（只拦截文字区域，不影响按钮点击）
         var initialX = 0
@@ -547,40 +612,55 @@ class OverlayService : Service() {
     }
 
     fun dismissAskUserDialog() {
-        askUserDialog?.dismiss()
-        askUserDialog = null
+        pendingAskAnswer = null
+        hideAskUserPanel()
     }
 
-    /** 等待用户输入补充信息 */
+    /** 等待用户输入补充信息：直接在当前悬浮窗内展开输入区，避免 Service Dialog token 问题 */
     private fun showAskUserDialog(question: String, onAnswer: (String) -> Unit) {
+        pendingAskAnswer = onAnswer
         overlayView?.post {
-            val input = EditText(this).apply {
-                hint = "请输入补充信息"
-                setSingleLine(false)
-            }
-            val dialog = AlertDialog.Builder(this)
-                .setTitle("需要补充信息")
-                .setMessage(question)
-                .setView(input)
-                .setCancelable(false)
-                .setPositiveButton("提交") { _, _ ->
-                    askUserDialog = null
-                    onAnswer(input.text.toString())
-                }
-                .setNegativeButton("跳过") { _, _ ->
-                    askUserDialog = null
-                    onAnswer("")
-                }
-                .create()
-            askUserDialog = dialog
-            dialog.setOnDismissListener { askUserDialog = null }
-            dialog.window?.setType(
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                else
-                    @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
-            )
-            dialog.show()
+            askUserQuestion?.text = question
+            askUserInput?.setText("")
+            askUserPanel?.visibility = View.VISIBLE
+            textView?.visibility = View.GONE
+            pauseButton?.visibility = View.GONE
+            progressRing?.visibility = View.GONE
+            actionRowTag?.visibility = View.GONE
+
+            val params = overlayParams ?: return@post
+            params.height = dp(190)
+            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            windowManager?.updateViewLayout(overlayView, params)
+            askUserInput?.requestFocus()
+            askUserInput?.postDelayed({
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(askUserInput, InputMethodManager.SHOW_IMPLICIT)
+            }, 200)
+        }
+    }
+
+    private fun submitAskUser() {
+        val answer = askUserInput?.text?.toString().orEmpty()
+        val callback = pendingAskAnswer
+        pendingAskAnswer = null
+        hideAskUserPanel()
+        callback?.invoke(answer)
+    }
+
+    private fun hideAskUserPanel() {
+        overlayView?.post {
+            askUserPanel?.visibility = View.GONE
+            textView?.visibility = View.VISIBLE
+            pauseButton?.visibility = View.VISIBLE
+            progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
+            actionRowTag?.visibility = View.GONE
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.hideSoftInputFromWindow(askUserInput?.windowToken, 0)
+            val params = overlayParams ?: return@post
+            params.height = dp(84)
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            windowManager?.updateViewLayout(overlayView, params)
         }
     }
 
@@ -590,6 +670,7 @@ class OverlayService : Service() {
         overlayView?.post {
             overlayView?.visibility = View.VISIBLE
             textView?.text = "🖐 $message"
+            actionRowTag?.visibility = View.VISIBLE
             actionButton?.visibility = View.VISIBLE
             actionButton?.text = "继续"
             actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
@@ -604,6 +685,7 @@ class OverlayService : Service() {
     private fun setNormalMode() {
         println("[OverlayService] setNormalMode")
         overlayView?.post {
+            actionRowTag?.visibility = View.GONE
             actionButton?.visibility = View.GONE
             actionButton?.text = ""
             pauseButton?.visibility = View.VISIBLE
@@ -629,6 +711,7 @@ class OverlayService : Service() {
             // 确保悬浮窗可见
             overlayView?.visibility = View.VISIBLE
             textView?.text = "⚠️ $message"
+            actionRowTag?.visibility = View.VISIBLE
             actionButton?.visibility = View.VISIBLE
             actionButton?.text = "确认"
             actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
