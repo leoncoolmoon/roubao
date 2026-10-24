@@ -778,7 +778,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 11) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 12) {
 
         private val appContext = context.applicationContext
 
@@ -888,6 +888,9 @@ class PromptRepository private constructor(context: Context) {
                 rewritePresetFeedback(db)
             }
             if (oldVersion < 11) {
+                refreshToolAgnosticPrompts(db)
+            }
+            if (oldVersion < 12) {
                 refreshToolAgnosticPrompts(db)
             }
         }
@@ -1377,7 +1380,7 @@ class PromptRepository private constructor(context: Context) {
 3. Do NOT plan screenshots or visual inspection unless the UI tree cannot answer the question.
 4. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
 5. If the same action failed twice, switch strategy instead of retrying.
-6. For questions use `answer`; for login/captcha use `take_over`.
+6. Use `answer` only for the final response when the task is complete. If required details are missing, use `ask_user` instead of guessing; for login/captcha use `take_over`.
 
 {{phaseGuidance}}
 
@@ -1417,7 +1420,7 @@ The Accessibility UI Tree is authoritative; the screenshot is only a fallback fo
 - Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
 - If the same action failed twice, change strategy: type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
 - Close popups/dialogs before proceeding.
-- For questions use `answer`; for login/captcha use `take_over`.
+- Use `answer` only for the final response. If required details are missing, use `ask_user` instead of guessing; for login/captcha use `take_over`.
 - Stay on the current subgoal; do not jump ahead.
 
 #### Sensitive Operations ####
@@ -1427,8 +1430,9 @@ Add `message` to the action to request confirmation:
 Do not stop for price displays, payment method selection, cart pages, or normal navigation.
 
 #### Actions ####
-Allowed: click, type, set_selection, scroll, key, swipe, system_button, wait, take_over, answer, terminate.
+Allowed: click, type, set_selection, scroll, key, swipe, system_button, wait, take_over, ask_user, answer, terminate.
 Examples:
+{"action":"ask_user","message":"请问是哪个城市的潮汐？"}
 {"action":"click","text":"显示与亮度","coordinate":[316,730]}
 {"action":"type","text":"hello"}
 {"action":"set_selection","start":3,"end":8}

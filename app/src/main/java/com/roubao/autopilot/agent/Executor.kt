@@ -90,8 +90,10 @@ class Executor {
             "If the UI tree is sufficient and you do not need pixels, disable screenshots with " +
             "{\"action\":\"set_screenshot\",\"enabled\":false}. " +
             "Re-enable with true when visual confirmation is required.\n" +
-            "If required details are missing, ask the user with " +
-            "{\"action\":\"ask_user\",\"message\":\"your question\"} instead of guessing.\n"
+            "If required details are missing, use " +
+            "{\"action\":\"ask_user\",\"message\":\"your question\"} instead of guessing. " +
+            "Use `answer` only for the final response after the task is complete. " +
+            "This overrides any other rule that says to use `answer` for questions.\n"
 
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"

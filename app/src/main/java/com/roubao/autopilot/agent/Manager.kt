@@ -136,6 +136,9 @@ class Manager {
             result = "$selectionBlock\n\n$result"
         }
 
+        result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
+            "Use `ask_user` when required details are missing. Use `answer` only for the final response after the task is complete. This rule overrides any other wording that says to use `answer` for questions.\n"
+
         val policy = toolPolicySection()
         if (policy.isNotBlank()) result += policy
 
