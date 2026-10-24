@@ -84,19 +84,19 @@ private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
     )
 )
 
-/** 旧预设中与默认 Prompt 重复的反馈，v5 迁移时一次性删除。 */
-private val LEGACY_REDUNDANT_FEEDBACK_TEXTS = setOf(
-    "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
-    "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
-    "选择文字/移动光标优先用 set_selection，不要长按拖拽。",
-    "翻页优先用 scroll，不要反复 swipe。",
-    "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。",
-    "截图只在需要视觉判断时使用，不要每一步都依赖截图。",
-    "不要打开文件管理器做文件操作，任务会因此失败。",
-    "不要点键盘中/英切输入法，type 会直接写入。",
-    "不要长按拖拽选字，用 set_selection。",
-    "不要反复点同一个位置；失败两次必须换策略。"
-).map { normalizeFeedbackText(it) }.toSet()
+/** 旧预设反馈：保留给用户查看和开关，不再在迁移中删除。 */
+private val LEGACY_PRESET_FEEDBACK = listOf(
+    "suggestion" to "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
+    "suggestion" to "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
+    "suggestion" to "选择文字/移动光标优先用 set_selection，不要长按拖拽。",
+    "suggestion" to "翻页优先用 scroll，不要反复 swipe。",
+    "suggestion" to "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。",
+    "suggestion" to "截图只在需要视觉判断时使用，不要每一步都依赖截图。",
+    "complaint" to "不要打开文件管理器做文件操作，任务会因此失败。",
+    "complaint" to "不要点键盘中/英切输入法，type 会直接写入。",
+    "complaint" to "不要长按拖拽选字，用 set_selection。",
+    "complaint" to "不要反复点同一个位置；失败两次必须换策略。"
+)
 
 class PromptRepository private constructor(context: Context) {
 
@@ -484,34 +484,13 @@ class PromptRepository private constructor(context: Context) {
 
         val agents = JSONArray()
         getAllAgentPrompts().forEach { agent ->
-            agents.put(JSONObject().apply {
-                put("id", agent.id)
-                put("name", agent.name)
-                put("icon", agent.icon)
-                put("role", agent.role)
-                put("description", agent.description)
-                put("responsibilities", JSONArray(agent.responsibilities))
-                put("prompt", agent.prompt)
-                put("default_prompt", agent.defaultPrompt)
-                put("is_default", agent.isDefault)
-                put("enabled", agent.enabled)
-            })
+            agents.put(agentToJson(agent))
         }
         root.put("agents", agents)
 
         val tools = JSONArray()
         getAllToolSkillPrompts().forEach { item ->
-            tools.put(JSONObject().apply {
-                put("id", item.id)
-                put("name", item.name)
-                put("display_name", item.displayName)
-                put("category", item.category)
-                put("description", item.description)
-                put("prompt", item.prompt)
-                put("default_prompt", item.defaultPrompt)
-                put("is_default", item.isDefault)
-                put("enabled", item.enabled)
-            })
+            tools.put(toolSkillToJson(item))
         }
         root.put("tools", tools)
 
@@ -524,6 +503,73 @@ class PromptRepository private constructor(context: Context) {
         }
         root.put("feedback", feedback)
         return root.toString(2)
+    }
+
+    private fun agentToJson(agent: AgentPromptEntity): JSONObject = JSONObject().apply {
+        put("id", agent.id)
+        put("name", agent.name)
+        put("icon", agent.icon)
+        put("role", agent.role)
+        put("description", agent.description)
+        put("responsibilities", JSONArray(agent.responsibilities))
+        put("prompt", agent.prompt)
+        put("default_prompt", agent.defaultPrompt)
+        put("is_default", agent.isDefault)
+        put("enabled", agent.enabled)
+    }
+
+    private fun toolSkillToJson(item: ToolSkillPromptEntity): JSONObject = JSONObject().apply {
+        put("id", item.id)
+        put("name", item.name)
+        put("display_name", item.displayName)
+        put("category", item.category)
+        put("description", item.description)
+        put("prompt", item.prompt)
+        put("default_prompt", item.defaultPrompt)
+        put("is_default", item.isDefault)
+        put("enabled", item.enabled)
+    }
+
+    /** 单条 Agent 导出，格式与完整导出兼容。 */
+    fun exportAgentJson(agent: AgentPromptEntity): String = JSONObject().apply {
+        put("format", "roubao-prompts")
+        put("version", 1)
+        put("exported_at", System.currentTimeMillis())
+        put("agents", JSONArray().put(agentToJson(agent)))
+    }.toString(2)
+
+    /** 单条 Tool/Skill 导出，格式与完整导出兼容。 */
+    fun exportToolSkillJson(item: ToolSkillPromptEntity): String = JSONObject().apply {
+        put("format", "roubao-prompts")
+        put("version", 1)
+        put("exported_at", System.currentTimeMillis())
+        put("tools", JSONArray().put(toolSkillToJson(item)))
+    }.toString(2)
+
+    /** 单条导入：只接受与目标卡片类型匹配的 JSON。 */
+    fun importSinglePromptJson(json: String, category: String): PromptImportResult {
+        val root = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return PromptImportResult(0, 0, 0, listOf("JSON 解析失败: ${e.message}"))
+        }
+        val agentsArr = root.optJSONArray("agents")
+        val toolsArr = root.optJSONArray("tools")
+        val hasAgents = agentsArr != null && agentsArr.length() > 0
+        val hasTools = toolsArr != null && toolsArr.length() > 0
+
+        val valid = when (category) {
+            "agent" -> hasAgents && !hasTools
+            "tool", "skill" -> {
+                val firstCategory = toolsArr?.optJSONObject(0)?.optString("category")
+                hasTools && !hasAgents && firstCategory == category
+            }
+            else -> false
+        }
+        if (!valid) {
+            return PromptImportResult(0, 0, 0, listOf("文件类型与目标不匹配，未导入"))
+        }
+        return importPromptsJson(json)
     }
 
     fun importPromptsJson(json: String): PromptImportResult {
@@ -663,7 +709,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 5) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 6) {
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -713,6 +759,7 @@ class PromptRepository private constructor(context: Context) {
 
             insertDefaultAgents(db)
             insertDefaultToolsAndSkills(db)
+            insertPresetFeedback(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -737,7 +784,10 @@ class PromptRepository private constructor(context: Context) {
             }
             if (oldVersion < 5) {
                 migrateBuiltInAgentPrompts(db)
-                cleanupRedundantAndDuplicateFeedback(db)
+                dedupeFeedback(db)
+            }
+            if (oldVersion < 6) {
+                insertPresetFeedback(db)
             }
         }
 
@@ -779,8 +829,8 @@ class PromptRepository private constructor(context: Context) {
             }
         }
 
-        /** v5 一次性清理：旧预设中与默认 Prompt 重复的反馈 + 归一化后的完全重复反馈。 */
-        private fun cleanupRedundantAndDuplicateFeedback(db: SQLiteDatabase) {
+        /** v5：只删除归一化后的完全重复反馈。 */
+        private fun dedupeFeedback(db: SQLiteDatabase) {
             val seen = mutableSetOf<String>()
             val toDelete = mutableListOf<Long>()
             db.query(
@@ -792,7 +842,7 @@ class PromptRepository private constructor(context: Context) {
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(0)
                     val normalized = normalizeFeedbackText(cursor.getString(1))
-                    if (normalized in LEGACY_REDUNDANT_FEEDBACK_TEXTS || !seen.add(normalized)) {
+                    if (!seen.add(normalized)) {
                         toDelete.add(id)
                     }
                 }
@@ -801,7 +851,38 @@ class PromptRepository private constructor(context: Context) {
                 db.delete("user_feedback", "id = ?", arrayOf(id.toString()))
             }
             if (toDelete.isNotEmpty()) {
-                println("[PromptRepository] removed ${toDelete.size} redundant feedback rows")
+                println("[PromptRepository] removed ${toDelete.size} duplicate feedback rows")
+            }
+        }
+
+        /** v6 / 新安装：恢复旧预设反馈，已存在的按归一化文本跳过。 */
+        private fun insertPresetFeedback(db: SQLiteDatabase) {
+            val now = System.currentTimeMillis()
+            LEGACY_PRESET_FEEDBACK.forEachIndexed { index, (kind, text) ->
+                val normalized = normalizeFeedbackText(text)
+                val exists = db.query(
+                    "user_feedback",
+                    arrayOf("id", "text"),
+                    null, null, null, null,
+                    null
+                ).use { cursor ->
+                    var found = false
+                    while (cursor.moveToNext()) {
+                        if (normalizeFeedbackText(cursor.getString(1)) == normalized) {
+                            found = true
+                            break
+                        }
+                    }
+                    found
+                }
+                if (!exists) {
+                    db.insert("user_feedback", null, ContentValues().apply {
+                        put("text", text)
+                        put("created_at", now + index)
+                        put("enabled", 1)
+                        put("kind", kind)
+                    })
+                }
             }
         }
 

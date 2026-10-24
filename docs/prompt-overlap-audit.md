@@ -7,7 +7,7 @@
 
 ## 审计对象
 
-- 设备实际数据库 `prompts.db`，版本 4。
+- 设备实际数据库 `prompts.db`，审计时版本 4；迁移后版本 6。
 - 4 个内置 Agent Prompt。
 - 10 条建议/吐槽反馈。
 - 原始版本参考：`Turbo1123/roubao` `main` `c8a6d7f`。
@@ -36,12 +36,13 @@
 | 不要长按拖拽选字，用 set_selection | 吐槽 | 与第 3 条同义，且 Prompt 已覆盖 | 重复 |
 | 不要反复点同一个位置；失败两次必须换策略 | 吐槽 | Manager 规则 5；Executor Hard Rules | 重复 |
 
-结论：**旧预设的 10 条反馈全部是默认 Prompt 的复述**，没有独立的用户信息。
+结论：**旧预设的 10 条反馈全部与默认 Prompt 重叠**，没有独立的用户信息。
+但它们是用户可见、可开关、可编辑的历史条目，不能因为“重复”就直接清空。
 
 ## 修改策略
 
-1. 旧预设反馈在 v5 迁移时一次性删除。
-2. 新增/导入反馈时按归一化文本精确去重；跨建议/吐槽也去重。
+1. 旧预设反馈保留，并在 v6 迁移中恢复缺失项；不再自动删除。
+2. 新增/导入/编辑反馈时按归一化文本精确去重；跨建议/吐槽也去重。
 3. 保留 Prompt 里的通用规则，不把安全底线交给可删除的反馈。
 4. Manager 增加 `{{phaseGuidance}}`，按首次规划/后续更新注入不同阶段规则。
 5. Executor 补回：
@@ -49,6 +50,7 @@
    - `#### Sensitive Operations ####`
    - `Available apps: {{installedApps}}`
 6. 删除未使用的 `Executor.GUIDELINES`。
+7. Agent / Tool / Skill 卡片增加“导入本条 / 导出本条”。
 
 ## Prompt 变化
 
@@ -59,11 +61,18 @@
 | Reflector | 1,019 | 1,019 | 保持现有调优版本 |
 | Notetaker | 351 | 351 | 保持现有调优版本 |
 
-## v5 迁移规则
+## v5 / v6 迁移规则
 
-- 只对 `manager / executor / reflector / notetaker` 四个内置 id 生效。
+- v5：只对 `manager / executor / reflector / notetaker` 四个内置 id 替换 Prompt。
 - 只有旧 Prompt 的 SHA-256 命中已知旧预设/旧代码默认值时才替换。
 - 指纹不匹配的自定义 Prompt 原样保留。
-- 旧预设反馈按已知文案一次性删除。
-- 其余反馈按归一化文本去重，保留最新一条。
+- v5：反馈只做归一化后的**完全重复**去重，不再按“与 Prompt 重叠”删除。
+- v6：恢复 10 条旧预设反馈；已存在同文本的跳过，不覆盖用户修改。
 - 自定义 Agent / Tool / Skill 不变。
+
+## 单条导入 / 导出
+
+- 每个 Agent / Tool / Skill 卡片下方有“导入本条 / 导出本条”。
+- 单条文件仍是 `roubao-prompts` 格式，只含一个 `agents` 或 `tools` 元素。
+- 单条导入会校验目标类型：Agent 卡片不能导入 Tool/Skill 文件，反之亦然。
+- 完整 JSON 导入 / 导出仍保留在右上角菜单。

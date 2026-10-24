@@ -75,6 +75,9 @@ fun CapabilitiesScreen() {
     var toolSkillList by remember { mutableStateOf<List<ToolSkillPromptEntity>>(emptyList()) }
     var feedbackList by remember { mutableStateOf<List<UserFeedbackEntity>>(emptyList()) }
 
+    var singleExportTarget by remember { mutableStateOf<PromptTarget?>(null) }
+    var singleImportTarget by remember { mutableStateOf<PromptTarget?>(null) }
+
     fun showToast(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
     }
@@ -116,6 +119,59 @@ fun CapabilitiesScreen() {
                     withContext(Dispatchers.Main) { showToast("Prompt JSON 已导出") }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { showToast("导出失败: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    val singleExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val target = singleExportTarget
+        singleExportTarget = null
+        if (uri != null && target != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = when (target) {
+                        is PromptTarget.AgentTarget -> repository.exportAgentJson(target.agent)
+                        is PromptTarget.ToolSkillTarget -> repository.exportToolSkillJson(target.item)
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use {
+                        it.write(json.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) { showToast("单条 Prompt 已导出") }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导出失败: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    val singleImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val target = singleImportTarget
+        singleImportTarget = null
+        if (uri != null && target != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                    val category = when (target) {
+                        is PromptTarget.AgentTarget -> "agent"
+                        is PromptTarget.ToolSkillTarget -> target.item.category
+                    }
+                    val result = repository.importSinglePromptJson(json, category)
+                    withContext(Dispatchers.Main) {
+                        refreshTrigger++
+                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill"
+                        showToast(
+                            if (result.errors.isEmpty()) summary
+                            else summary + "\n" + result.errors.take(3).joinToString("\n")
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导入失败: ${e.message}") }
                 }
             }
         }
@@ -320,6 +376,22 @@ fun CapabilitiesScreen() {
                 onToggleTool = { item, enabled ->
                     repository.updateToolSkillEnabled(item.id, enabled)
                     refreshTrigger++
+                },
+                onExportAgent = { agent ->
+                    singleExportTarget = PromptTarget.AgentTarget(agent)
+                    singleExportLauncher.launch("agent_${agent.id}.json")
+                },
+                onImportAgent = { agent ->
+                    singleImportTarget = PromptTarget.AgentTarget(agent)
+                    singleImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                },
+                onExportTool = { item ->
+                    singleExportTarget = PromptTarget.ToolSkillTarget(item)
+                    singleExportLauncher.launch("${item.category}_${item.id}.json")
+                },
+                onImportTool = { item ->
+                    singleImportTarget = PromptTarget.ToolSkillTarget(item)
+                    singleImportLauncher.launch(arrayOf("application/json", "text/plain"))
                 }
             )
         }
@@ -454,7 +526,11 @@ fun UnifiedCapabilitiesList(
     onToggleAgent: (AgentPromptEntity, Boolean) -> Unit,
     onEditTool: (ToolSkillPromptEntity) -> Unit,
     onDeleteTool: (ToolSkillPromptEntity) -> Unit,
-    onToggleTool: (ToolSkillPromptEntity, Boolean) -> Unit
+    onToggleTool: (ToolSkillPromptEntity, Boolean) -> Unit,
+    onExportAgent: (AgentPromptEntity) -> Unit = {},
+    onImportAgent: (AgentPromptEntity) -> Unit = {},
+    onExportTool: (ToolSkillPromptEntity) -> Unit = {},
+    onImportTool: (ToolSkillPromptEntity) -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
     LazyColumn(
@@ -497,7 +573,9 @@ fun UnifiedCapabilitiesList(
                     agent = agent,
                     onEditPrompt = { onEditAgent(agent) },
                     onDelete = { onDeleteAgent(agent) },
-                    onToggleEnabled = { onToggleAgent(agent, it) }
+                    onToggleEnabled = { onToggleAgent(agent, it) },
+                    onExport = { onExportAgent(agent) },
+                    onImport = { onImportAgent(agent) }
                 )
             }
         }
@@ -509,7 +587,9 @@ fun UnifiedCapabilitiesList(
                     item = item,
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
-                    onToggleEnabled = { onToggleTool(item, it) }
+                    onToggleEnabled = { onToggleTool(item, it) },
+                    onExport = { onExportTool(item) },
+                    onImport = { onImportTool(item) }
                 )
             }
         }
@@ -521,7 +601,9 @@ fun UnifiedCapabilitiesList(
                     item = item,
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
-                    onToggleEnabled = { onToggleTool(item, it) }
+                    onToggleEnabled = { onToggleTool(item, it) },
+                    onExport = { onExportTool(item) },
+                    onImport = { onImportTool(item) }
                 )
             }
         }
@@ -752,7 +834,9 @@ fun AgentCard(
     agent: AgentPromptEntity,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
-    onToggleEnabled: (Boolean) -> Unit
+    onToggleEnabled: (Boolean) -> Unit,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
     var expanded by remember { mutableStateOf(false) }
@@ -887,6 +971,15 @@ fun AgentCard(
                 prompt = agent.prompt,
                 onLongPress = onEditPrompt
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onImport) { Text("导入本条") }
+                TextButton(onClick = onExport) { Text("导出本条") }
+            }
         }
     }
 }
@@ -944,7 +1037,9 @@ fun ToolSkillCard(
     item: ToolSkillPromptEntity,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
-    onToggleEnabled: (Boolean) -> Unit
+    onToggleEnabled: (Boolean) -> Unit,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
 
@@ -1048,6 +1143,15 @@ fun ToolSkillCard(
                 prompt = item.prompt,
                 onLongPress = onEditPrompt
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onImport) { Text("导入本条") }
+                TextButton(onClick = onExport) { Text("导出本条") }
+            }
         }
     }
 }
