@@ -9,16 +9,22 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -36,6 +42,7 @@ class OverlayService : Service() {
     private var textView: TextView? = null
     private var actionButton: TextView? = null
     private var pauseButton: TextView? = null
+    private var progressRing: ProgressBar? = null
     private var cancelButton: TextView? = null  // 确认模式下的取消按钮
     private var askUserDialog: AlertDialog? = null
     private var divider: View? = null
@@ -257,114 +264,121 @@ class OverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createOverlayView() {
-        // 容器
+        // 容器：紧凑横向布局，背景只比图标略高
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(16, 12, 16, 12)
+            setPadding(dp(8), dp(6), dp(12), dp(6))
         }
 
-        // 七彩渐变背景
+        // 七彩渐变背景：比预览更透，降低亮色刺激
         val gradientDrawable = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = 30f
-            setStroke(2, Color.WHITE)
+            cornerRadius = dp(28).toFloat()
+            setStroke(1, Color.argb(120, 255, 255, 255))
+            alpha = 165
         }
         container.background = gradientDrawable
 
-        // 状态文字
-        textView = TextView(this).apply {
-            text = "肉包"
-            textSize = 13f
+        // 左侧肉包图标 + 进度环 + 居中暂停/继续按钮
+        val frameSize = dp(56)
+        val iconFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(frameSize, frameSize)
+        }
+        progressRing = ProgressBar(this).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            layoutParams = FrameLayout.LayoutParams(frameSize, frameSize, Gravity.CENTER)
+        }
+        val iconView = ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher_round)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER)
+        }
+        pauseButton = TextView(this).apply {
+            text = "Ⅱ"
+            textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(16, 4, 16, 4)
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
             typeface = Typeface.DEFAULT_BOLD
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(150, 18, 20, 28))
+                setStroke(1, Color.argb(190, 255, 255, 255))
+            }
+            layoutParams = FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER)
+            setOnClickListener {
+                if (!isTakeOverMode && !isConfirmMode) pauseCallback?.invoke()
+            }
+            setOnLongClickListener {
+                // 长按图标：未暂停时先暂停，再呼出肉包窗口
+                if (!isTakeOverMode && !isConfirmMode && !isPaused) pauseCallback?.invoke()
+                openMainWindow()
+                true
+            }
+        }
+        iconFrame.addView(progressRing)
+        iconFrame.addView(iconView)
+        iconFrame.addView(pauseButton)
+        container.addView(iconFrame)
+
+        // 右侧步骤文字
+        textView = TextView(this).apply {
+            text = "准备中..."
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, 0, 0)
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         container.addView(textView)
 
-        // 分隔线
-        divider = View(this).apply {
-            setBackgroundColor(Color.WHITE)
-            alpha = 0.5f
-        }
-        val dividerParams = LinearLayout.LayoutParams(2, 36).apply {
-            setMargins(12, 0, 12, 0)
-        }
-        container.addView(divider, dividerParams)
-
-        // 动作按钮（停止/继续/确认）
+        // 确认 / 人机协作模式按钮；普通模式隐藏，不再提供停止
         actionButton = TextView(this).apply {
-            text = "⏹ 停止"
+            text = ""
             textSize = 13f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(16, 4, 16, 4)
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
             typeface = Typeface.DEFAULT_BOLD
+            visibility = View.GONE
             setOnClickListener {
                 when {
                     isConfirmMode -> {
-                        // 确认模式：点击确认
                         confirmCallback?.invoke(true)
                         confirmCallback = null
                         isConfirmMode = false
                         setNormalMode()
                     }
                     isTakeOverMode -> {
-                        // 人机协作模式：点击继续
                         continueCallback?.invoke()
                         continueCallback = null
                         isTakeOverMode = false
                         setNormalMode()
-                    }
-                    else -> {
-                        // 正常模式：点击停止
-                        stopCallback?.invoke()
-                        hide(this@OverlayService)
                     }
                 }
             }
         }
         container.addView(actionButton)
 
-        // 暂停/继续按钮（正常模式可见）
-        pauseButton = TextView(this).apply {
-            text = "⏸ 暂停"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(16, 4, 16, 4)
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
-            typeface = Typeface.DEFAULT_BOLD
-            setOnClickListener {
-                if (!isTakeOverMode && !isConfirmMode) {
-                    pauseCallback?.invoke()
-                }
-            }
-        }
-        container.addView(pauseButton)
-
-        // 第二个分隔线（确认模式用）
+        // 确认模式的分隔线和取消按钮
         divider2 = View(this).apply {
             setBackgroundColor(Color.WHITE)
-            alpha = 0.5f
+            alpha = 0.35f
             visibility = View.GONE
         }
-        val divider2Params = LinearLayout.LayoutParams(2, 36).apply {
-            setMargins(12, 0, 12, 0)
-        }
-        container.addView(divider2, divider2Params)
-
-        // 取消按钮（确认模式用）
+        container.addView(divider2, LinearLayout.LayoutParams(dp(1), dp(24)).apply {
+            setMargins(dp(8), 0, dp(8), 0)
+        })
         cancelButton = TextView(this).apply {
-            text = "❌ 取消"
-            textSize = 13f
-            setTextColor(Color.parseColor("#FF6B6B"))  // 红色
+            text = "取消"
+            textSize = 12f
+            setTextColor(Color.parseColor("#FFD1D1"))
             gravity = Gravity.CENTER
-            setPadding(16, 4, 16, 4)
-            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             typeface = Typeface.DEFAULT_BOLD
             visibility = View.GONE
             setOnClickListener {
@@ -406,9 +420,16 @@ class OverlayService : Service() {
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
-        val dragThreshold = 20f  // 增大阈值，避免误触
+        val dragThreshold = dp(8).toFloat()
+        val longPressHandler = Handler(Looper.getMainLooper())
+        val longPressRunnable = Runnable {
+            if (!isDragging) {
+                // 长按右侧文字：只打开窗口，不暂停任务
+                openMainWindow()
+            }
+        }
 
-        // 只在文字区域启用拖动，按钮区域不拦截
+        // 文字区域：拖动移动悬浮窗；长按打开肉包窗口
         textView?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -417,6 +438,7 @@ class OverlayService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    longPressHandler.postDelayed(longPressRunnable, 500)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -424,6 +446,7 @@ class OverlayService : Service() {
                     val deltaY = event.rawY - initialTouchY
                     if (kotlin.math.abs(deltaX) > dragThreshold || kotlin.math.abs(deltaY) > dragThreshold) {
                         isDragging = true
+                        longPressHandler.removeCallbacks(longPressRunnable)
                     }
                     if (isDragging) {
                         params.x = initialX + deltaX.toInt()
@@ -432,7 +455,8 @@ class OverlayService : Service() {
                     }
                     true
                 }
-                MotionEvent.ACTION_UP -> {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressHandler.removeCallbacks(longPressRunnable)
                     isDragging
                 }
                 else -> false
@@ -441,6 +465,18 @@ class OverlayService : Service() {
 
         overlayView = container
         windowManager?.addView(overlayView, params)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun openMainWindow() {
+        try {
+            startActivity(Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            })
+        } catch (e: Exception) {
+            println("[OverlayService] 打开主窗口失败: ${e.message}")
+        }
     }
 
     private fun startRainbowAnimation(drawable: GradientDrawable) {
@@ -552,28 +588,27 @@ class OverlayService : Service() {
     private fun setTakeOverMode(message: String) {
         println("[OverlayService] setTakeOverMode: $message")
         overlayView?.post {
-            // 确保悬浮窗可见
             overlayView?.visibility = View.VISIBLE
             textView?.text = "🖐 $message"
-            actionButton?.text = "✅ 继续"
-            actionButton?.setTextColor(Color.parseColor("#90EE90")) // 浅绿色
-            // 隐藏取消按钮（人机协作只有继续按钮）
+            actionButton?.visibility = View.VISIBLE
+            actionButton?.text = "继续"
+            actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
             divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
             pauseButton?.visibility = View.GONE
+            progressRing?.visibility = View.GONE
         }
     }
 
-    /** 切换到正常模式 */
+    /** 切换到正常模式；普通模式不提供停止按钮 */
     private fun setNormalMode() {
         println("[OverlayService] setNormalMode")
         overlayView?.post {
-            actionButton?.text = "⏹ 停止"
-            actionButton?.setTextColor(Color.WHITE)
+            actionButton?.visibility = View.GONE
+            actionButton?.text = ""
             pauseButton?.visibility = View.VISIBLE
-            pauseButton?.text = if (isPaused) "▶ 继续" else "⏸ 暂停"
-            pauseButton?.setTextColor(if (isPaused) Color.parseColor("#90EE90") else Color.WHITE)
-            // 隐藏取消按钮和第二分隔线
+            progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
+            applyPauseState(isPaused)
             divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
         }
@@ -581,8 +616,9 @@ class OverlayService : Service() {
 
     private fun applyPauseState(paused: Boolean) {
         overlayView?.post {
-            pauseButton?.text = if (paused) "▶ 继续" else "⏸ 暂停"
-            pauseButton?.setTextColor(if (paused) Color.parseColor("#90EE90") else Color.WHITE)
+            pauseButton?.text = if (paused) "▶" else "Ⅱ"
+            pauseButton?.setTextColor(if (paused) Color.parseColor("#B8F5C0") else Color.WHITE)
+            progressRing?.visibility = if (paused) View.GONE else View.VISIBLE
         }
     }
 
@@ -593,12 +629,14 @@ class OverlayService : Service() {
             // 确保悬浮窗可见
             overlayView?.visibility = View.VISIBLE
             textView?.text = "⚠️ $message"
-            actionButton?.text = "✅ 确认"
-            actionButton?.setTextColor(Color.parseColor("#90EE90"))  // 浅绿色
+            actionButton?.visibility = View.VISIBLE
+            actionButton?.text = "确认"
+            actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
             // 显示取消按钮和第二分隔线
             divider2?.visibility = View.VISIBLE
             cancelButton?.visibility = View.VISIBLE
             pauseButton?.visibility = View.GONE
+            progressRing?.visibility = View.GONE
         }
     }
 }
