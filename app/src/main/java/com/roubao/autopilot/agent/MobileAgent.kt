@@ -66,6 +66,9 @@ class MobileAgent(
         null
     }
 
+    // 最近一帧截图，供 UI 树可用时复用，避免每步重复截屏
+    private var lastScreenshot: Bitmap? = null
+
     // 状态流
     private val _state = MutableStateFlow(AgentState())
     val state: StateFlow<AgentState> = _state
@@ -180,15 +183,7 @@ class MobileAgent(
                 log("\n========== Step ${step + 1} ==========")
                 OverlayService.update("Step ${step + 1}/$maxSteps")
 
-                // 1. 截图 (先隐藏悬浮窗避免被识别)
-                log("截图中...")
-                OverlayService.setVisible(false)
-                delay(100) // 等待悬浮窗隐藏
-                val screenshotResult = controller.screenshotWithFallback()
-                OverlayService.setVisible(true)
-                val screenshot = screenshotResult.bitmap
-
-                // 无障碍 UI 元素树提取 (仅在无障碍设置开启且服务连接时)
+                // 1. 无障碍 UI 树优先；树可用时复用上一帧，避免每步重复截屏
                 val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
                 if (accessibilityModeEnabled && accessibilityService != null) {
                     infoPool.accessibilityTree = accessibilityService.dumpNodeTree()
@@ -197,8 +192,28 @@ class MobileAgent(
                     infoPool.accessibilityTree = ""
                 }
 
+                var screenshot: Bitmap? = null
+                var screenshotSensitive = false
+                var screenshotFallback = false
+                val canReuseScreenshot = infoPool.accessibilityTree.isNotBlank() && lastScreenshot != null
+
+                if (canReuseScreenshot) {
+                    screenshot = lastScreenshot
+                    log("UI 树可用，复用上一帧截图")
+                } else {
+                    log("截图中...")
+                    OverlayService.setVisible(false)
+                    delay(100) // 等待悬浮窗隐藏
+                    val screenshotResult = controller.screenshotWithFallback()
+                    OverlayService.setVisible(true)
+                    screenshot = screenshotResult.bitmap
+                    lastScreenshot = screenshotResult.bitmap
+                    screenshotSensitive = screenshotResult.isSensitive
+                    screenshotFallback = screenshotResult.isFallback
+                }
+
                 // 处理敏感页面（截图被系统阻止）
-                if (screenshotResult.isSensitive) {
+                if (screenshotSensitive) {
                     log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
                     val confirmed = withContext(Dispatchers.Main) {
                         waitForUserConfirm("检测到敏感页面，是否继续执行？")
@@ -210,7 +225,7 @@ class MobileAgent(
                         return AgentResult(success = false, message = "敏感页面，用户取消")
                     }
                     log("用户确认继续（使用黑屏占位图/无障碍元素树辅助定位）")
-                } else if (screenshotResult.isFallback) {
+                } else if (screenshotFallback) {
                     log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                 }
 
@@ -243,7 +258,7 @@ class MobileAgent(
                     }
 
                     val planPrompt = manager.getPrompt(infoPool)
-                    val planResponse = vlmClient.predict(planPrompt, listOf(screenshot))
+                    val planResponse = vlmClient.predict(planPrompt, screenshot?.let { listOf(it) } ?: emptyList())
 
                     // VLM 调用后检查停止状态
                     if (!_state.value.isRunning) {
@@ -332,7 +347,7 @@ class MobileAgent(
                     response
                 } else {
                     // 降级：使用普通方式
-                    vlmClient.predict(actionPrompt, listOf(screenshot))
+                    vlmClient.predict(actionPrompt, screenshot?.let { listOf(it) } ?: emptyList())
                 }
 
                 // VLM 调用后检查停止状态
@@ -453,6 +468,7 @@ class MobileAgent(
                 val afterScreenshotResult = controller.screenshotWithFallback()
                 OverlayService.setVisible(true)
                 val afterScreenshot = afterScreenshotResult.bitmap
+                lastScreenshot = afterScreenshot
                 if (afterScreenshotResult.isFallback) {
                     log("动作后截图失败，使用黑屏占位图")
                 }
@@ -472,7 +488,7 @@ class MobileAgent(
                 } else {
                     log("Reflector 反思中...")
                     val reflectPrompt = reflector.getPrompt(infoPool)
-                    val reflectResponse = vlmClient.predict(reflectPrompt, listOf(screenshot, afterScreenshot))
+                    val reflectResponse = vlmClient.predict(reflectPrompt, listOfNotNull(screenshot, afterScreenshot))
                     if (reflectResponse.isSuccess) {
                         reflector.parseResponse(reflectResponse.getOrThrow())
                     } else {

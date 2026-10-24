@@ -31,7 +31,14 @@ data class ToolSkillPromptEntity(
     val prompt: String,
     val defaultPrompt: String,
     val isDefault: Boolean,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val keywordsJson: String = "[]",
+    val paramsJson: String = "[]",
+    val relatedAppsJson: String = "[]",
+    val promptHint: String = "",
+    val domain: String = "",
+    val source: String = "custom",
+    val executable: Boolean = false
 )
 
 data class UserFeedbackEntity(
@@ -260,7 +267,14 @@ class PromptRepository private constructor(context: Context) {
                         prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                         defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
                         isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
-                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1
+                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
+                        keywordsJson = it.getString(it.getColumnIndexOrThrow("keywords_json")),
+                        paramsJson = it.getString(it.getColumnIndexOrThrow("params_json")),
+                        relatedAppsJson = it.getString(it.getColumnIndexOrThrow("related_apps_json")),
+                        promptHint = it.getString(it.getColumnIndexOrThrow("prompt_hint")),
+                        domain = it.getString(it.getColumnIndexOrThrow("domain")),
+                        source = it.getString(it.getColumnIndexOrThrow("source")),
+                        executable = it.getInt(it.getColumnIndexOrThrow("executable")) == 1
                     )
                 )
             }
@@ -284,7 +298,15 @@ class PromptRepository private constructor(context: Context) {
                     description = it.getString(it.getColumnIndexOrThrow("description")),
                     prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                     defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
-                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1
+                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
+                    enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
+                    keywordsJson = it.getString(it.getColumnIndexOrThrow("keywords_json")),
+                    paramsJson = it.getString(it.getColumnIndexOrThrow("params_json")),
+                    relatedAppsJson = it.getString(it.getColumnIndexOrThrow("related_apps_json")),
+                    promptHint = it.getString(it.getColumnIndexOrThrow("prompt_hint")),
+                    domain = it.getString(it.getColumnIndexOrThrow("domain")),
+                    source = it.getString(it.getColumnIndexOrThrow("source")),
+                    executable = it.getInt(it.getColumnIndexOrThrow("executable")) == 1
                 )
             }
         }
@@ -306,6 +328,13 @@ class PromptRepository private constructor(context: Context) {
             put("display_name", item.displayName)
             put("description", item.description)
             put("prompt", item.prompt)
+            put("keywords_json", item.keywordsJson)
+            put("params_json", item.paramsJson)
+            put("related_apps_json", item.relatedAppsJson)
+            put("prompt_hint", item.promptHint)
+            put("domain", item.domain)
+            put("source", item.source)
+            put("executable", if (item.executable) 1 else 0)
         }
         db.update("tool_skill_prompts", cv, "id = ?", arrayOf(item.id))
     }
@@ -344,6 +373,13 @@ class PromptRepository private constructor(context: Context) {
             put("default_prompt", item.defaultPrompt)
             put("is_default", if (item.isDefault) 1 else 0)
             put("enabled", if (item.enabled) 1 else 0)
+            put("keywords_json", item.keywordsJson)
+            put("params_json", item.paramsJson)
+            put("related_apps_json", item.relatedAppsJson)
+            put("prompt_hint", item.promptHint)
+            put("domain", item.domain)
+            put("source", item.source)
+            put("executable", if (item.executable) 1 else 0)
         }
         db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -483,7 +519,7 @@ class PromptRepository private constructor(context: Context) {
     fun exportPromptsJson(): String {
         val root = JSONObject()
         root.put("format", "roubao-prompts")
-        root.put("version", 1)
+        root.put("version", 2)
         root.put("exported_at", System.currentTimeMillis())
 
         val agents = JSONArray()
@@ -532,12 +568,25 @@ class PromptRepository private constructor(context: Context) {
         put("default_prompt", item.defaultPrompt)
         put("is_default", item.isDefault)
         put("enabled", item.enabled)
+        put("keywords", parseJsonArray(item.keywordsJson))
+        put("params", parseJsonArray(item.paramsJson))
+        put("related_apps", parseJsonArray(item.relatedAppsJson))
+        put("prompt_hint", item.promptHint)
+        put("domain", item.domain)
+        put("source", item.source)
+        put("executable", item.executable)
+    }
+
+    private fun parseJsonArray(value: String): JSONArray = try {
+        JSONArray(value.ifBlank { "[]" })
+    } catch (e: Exception) {
+        JSONArray()
     }
 
     /** 单条 Agent 导出，格式与完整导出兼容。 */
     fun exportAgentJson(agent: AgentPromptEntity): String = JSONObject().apply {
         put("format", "roubao-prompts")
-        put("version", 1)
+        put("version", 2)
         put("exported_at", System.currentTimeMillis())
         put("agents", JSONArray().put(agentToJson(agent)))
     }.toString(2)
@@ -545,7 +594,7 @@ class PromptRepository private constructor(context: Context) {
     /** 单条 Tool/Skill 导出，格式与完整导出兼容。 */
     fun exportToolSkillJson(item: ToolSkillPromptEntity): String = JSONObject().apply {
         put("format", "roubao-prompts")
-        put("version", 1)
+        put("version", 2)
         put("exported_at", System.currentTimeMillis())
         put("tools", JSONArray().put(toolSkillToJson(item)))
     }.toString(2)
@@ -651,26 +700,31 @@ class PromptRepository private constructor(context: Context) {
                         errors.add("tools[$i] 缺少 id")
                         continue
                     }
-                    val prompt = obj.optString("prompt")
-                    if (prompt.isBlank()) {
-                        errors.add("tool $id 缺少 prompt")
-                        continue
-                    }
-                    val category = obj.optString("category", "tool")
-                    if (category != "tool" && category != "skill") {
-                        errors.add("tool $id 的 category 必须是 tool 或 skill")
-                        continue
+                    val rawCategory = obj.optString("category", "tool")
+                    val category = if (rawCategory == "tool" || rawCategory == "skill") rawCategory else "skill"
+                    val domain = obj.optString("domain", rawCategory.takeIf { it != "tool" && it != "skill" }.orEmpty())
+                    val description = obj.optString("description", "")
+                    val prompt = obj.optString("prompt").ifBlank {
+                        if (category == "skill") "技能: $id\n说明: $description"
+                        else "工具: $id\n说明: $description"
                     }
                     val cv = ContentValues().apply {
                         put("id", id)
                         put("name", obj.optString("name", id))
                         put("display_name", obj.optString("display_name", obj.optString("name", id)))
                         put("category", category)
-                        put("description", obj.optString("description", ""))
+                        put("description", description)
                         put("prompt", prompt)
                         put("default_prompt", obj.optString("default_prompt", prompt))
                         put("is_default", if (obj.optBoolean("is_default", false)) 1 else 0)
                         put("enabled", if (obj.optBoolean("enabled", true)) 1 else 0)
+                        put("keywords_json", obj.optJSONArray("keywords")?.toString() ?: "[]")
+                        put("params_json", obj.optJSONArray("params")?.toString() ?: "[]")
+                        put("related_apps_json", obj.optJSONArray("related_apps")?.toString() ?: "[]")
+                        put("prompt_hint", obj.optString("prompt_hint", ""))
+                        put("domain", domain)
+                        put("source", obj.optString("source", "custom"))
+                        put("executable", if (obj.optBoolean("executable", false)) 1 else 0)
                     }
                     db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
                     toolCount++
@@ -713,7 +767,9 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 8) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 9) {
+
+        private val appContext = context.applicationContext
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -744,7 +800,14 @@ class PromptRepository private constructor(context: Context) {
                     prompt TEXT NOT NULL,
                     default_prompt TEXT NOT NULL,
                     is_default INTEGER NOT NULL DEFAULT 1,
-                    enabled INTEGER NOT NULL DEFAULT 1
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    keywords_json TEXT NOT NULL DEFAULT '[]',
+                    params_json TEXT NOT NULL DEFAULT '[]',
+                    related_apps_json TEXT NOT NULL DEFAULT '[]',
+                    prompt_hint TEXT NOT NULL DEFAULT '',
+                    domain TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT 'custom',
+                    executable INTEGER NOT NULL DEFAULT 0
                 )
                 """.trimIndent()
             )
@@ -763,6 +826,7 @@ class PromptRepository private constructor(context: Context) {
 
             insertDefaultAgents(db)
             insertDefaultToolsAndSkills(db)
+            seedBuiltInSkillsFromAssets(db)
             insertPresetFeedback(db)
         }
 
@@ -799,6 +863,103 @@ class PromptRepository private constructor(context: Context) {
             if (oldVersion < 8) {
                 insertShellCalcSkill(db)
             }
+            if (oldVersion < 9) {
+                addColumnIfMissing(db, "tool_skill_prompts", "keywords_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "params_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "related_apps_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "prompt_hint", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tool_skill_prompts", "domain", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tool_skill_prompts", "source", "TEXT NOT NULL DEFAULT 'custom'")
+                addColumnIfMissing(db, "tool_skill_prompts", "executable", "INTEGER NOT NULL DEFAULT 0")
+                seedBuiltInSkillsFromAssets(db)
+            }
+        }
+
+        /** 将 assets/skills.json 的完整 Skill 定义同步进数据库。 */
+        private fun seedBuiltInSkillsFromAssets(db: SQLiteDatabase) {
+            val jsonText = try {
+                appContext.assets.open("skills.json").bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                println("[PromptRepository] 读取 skills.json 失败: ${e.message}")
+                return
+            }
+            val array = try {
+                JSONArray(jsonText)
+            } catch (e: Exception) {
+                println("[PromptRepository] 解析 skills.json 失败: ${e.message}")
+                return
+            }
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val id = obj.optString("id").trim()
+                if (id.isEmpty()) continue
+                val displayName = obj.optString("name", id)
+                val description = obj.optString("description", "")
+                val domain = obj.optString("category", "")
+                val keywords = obj.optJSONArray("keywords")?.toString() ?: "[]"
+                val params = obj.optJSONArray("params")?.toString() ?: "[]"
+                val relatedApps = obj.optJSONArray("related_apps")?.toString() ?: "[]"
+                val promptHint = obj.optString("prompt_hint", "")
+                val prompt = buildAssetSkillPrompt(id, description, promptHint, obj.optJSONArray("related_apps"))
+
+                val exists = db.query(
+                    "tool_skill_prompts",
+                    arrayOf("id"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { it.moveToFirst() }
+
+                val values = ContentValues().apply {
+                    put("name", id)
+                    put("display_name", displayName)
+                    put("category", "skill")
+                    put("description", description)
+                    put("prompt", prompt)
+                    put("default_prompt", prompt)
+                    put("is_default", 1)
+                    put("enabled", 1)
+                    put("keywords_json", keywords)
+                    put("params_json", params)
+                    put("related_apps_json", relatedApps)
+                    put("prompt_hint", promptHint)
+                    put("domain", domain)
+                    put("source", "builtin")
+                    put("executable", 1)
+                }
+                if (exists) {
+                    db.update("tool_skill_prompts", values, "id = ?", arrayOf(id))
+                } else {
+                    values.put("id", id)
+                    db.insert("tool_skill_prompts", null, values)
+                }
+            }
+            println("[PromptRepository] seeded ${array.length()} built-in skills from assets")
+        }
+
+        private fun buildAssetSkillPrompt(
+            id: String,
+            description: String,
+            promptHint: String,
+            relatedApps: JSONArray?
+        ): String = buildString {
+            append("技能: ").append(id).append('\n')
+            append("说明: ").append(description)
+            if (promptHint.isNotBlank()) {
+                append("\n约束: ").append(promptHint)
+            }
+            if (relatedApps != null && relatedApps.length() > 0) {
+                append("\n关联应用:")
+                for (i in 0 until relatedApps.length()) {
+                    val app = relatedApps.optJSONObject(i) ?: continue
+                    append("\n- ").append(app.optString("name", app.optString("package")))
+                    val steps = app.optJSONArray("steps")
+                    if (steps != null && steps.length() > 0) {
+                        append(": ")
+                        append((0 until steps.length()).joinToString(" -> ") { steps.optString(it) })
+                    }
+                }
+            }
         }
 
         /** v8：加入 shell_calc 测试 Skill。 */
@@ -821,6 +982,9 @@ class PromptRepository private constructor(context: Context) {
                 put("default_prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
                 put("is_default", 1)
                 put("enabled", 1)
+                put("domain", "计算")
+                put("source", "builtin")
+                put("executable", 1)
             })
             println("[PromptRepository] inserted shell_calc skill")
         }
@@ -1073,7 +1237,7 @@ class PromptRepository private constructor(context: Context) {
                 ToolSkillPromptEntity("e_commerce", "e_commerce", "电商购物", "skill", "在淘宝/京东/拼多多中搜索商品并加入购物车", DEFAULT_SKILL_E_COMMERCE, DEFAULT_SKILL_E_COMMERCE, true),
                 ToolSkillPromptEntity("music_player", "music_player", "音乐播放", "skill", "在网易云音乐/QQ音乐中搜索并播放指定歌曲", DEFAULT_SKILL_MUSIC_PLAYER, DEFAULT_SKILL_MUSIC_PLAYER, true),
                 ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true),
-                ToolSkillPromptEntity("shell_calc", "shell_calc", "Shell 计算", "skill", "算术计算必须用 shell 执行 expr，不允许模型自己心算", DEFAULT_SKILL_SHELL_CALC, DEFAULT_SKILL_SHELL_CALC, true)
+                ToolSkillPromptEntity("shell_calc", "shell_calc", "Shell 计算", "skill", "算术计算必须用 shell 执行 expr，不允许模型自己心算", DEFAULT_SKILL_SHELL_CALC, DEFAULT_SKILL_SHELL_CALC, true, domain = "计算", source = "builtin", executable = true)
             )
 
             for (item in defaults) {
@@ -1086,6 +1250,14 @@ class PromptRepository private constructor(context: Context) {
                     put("prompt", item.prompt)
                     put("default_prompt", item.defaultPrompt)
                     put("is_default", 1)
+                    put("enabled", if (item.enabled) 1 else 0)
+                    put("keywords_json", item.keywordsJson)
+                    put("params_json", item.paramsJson)
+                    put("related_apps_json", item.relatedAppsJson)
+                    put("prompt_hint", item.promptHint)
+                    put("domain", item.domain)
+                    put("source", item.source)
+                    put("executable", if (item.executable) 1 else 0)
                 }
                 db.insert("tool_skill_prompts", null, cv)
             }
