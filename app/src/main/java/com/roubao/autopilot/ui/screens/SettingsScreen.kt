@@ -69,6 +69,7 @@ fun SettingsScreen(
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
+    isExecuting: Boolean = false,
     onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
@@ -479,13 +480,33 @@ fun SettingsScreen(
             SettingsSection(title = "API 配置")
         }
 
+        if (isExecuting) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.error.copy(alpha = 0.08f))
+                ) {
+                    Text(
+                        text = "任务执行中，模型/服务商切换将在本次任务结束后生效。",
+                        fontSize = 12.sp,
+                        color = colors.error,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+
         // Base URL 设置
         item {
             SettingsItem(
                 icon = Icons.Default.Settings,
                 title = "API 服务商",
                 subtitle = settings.currentProvider.name,
-                onClick = { showBaseUrlDialog = true }
+                onClick = { showBaseUrlDialog = true },
+                enabled = !isExecuting
             )
         }
 
@@ -495,7 +516,8 @@ fun SettingsScreen(
                 icon = Icons.Default.Lock,
                 title = "API Key",
                 subtitle = if (settings.apiKey.isNotEmpty()) "已设置 (${maskApiKey(settings.apiKey)})" else "未设置",
-                onClick = { showApiKeyDialog = true }
+                onClick = { showApiKeyDialog = true },
+                enabled = !isExecuting
             )
         }
 
@@ -505,7 +527,8 @@ fun SettingsScreen(
                 icon = Icons.Default.Build,
                 title = "模型",
                 subtitle = settings.model,
-                onClick = { showModelDialog = true }
+                onClick = { showModelDialog = true },
+                enabled = !isExecuting
             )
         }
 
@@ -834,14 +857,15 @@ fun SettingsItem(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    trailing: @Composable (() -> Unit)? = null
+    trailing: @Composable (() -> Unit)? = null,
+    enabled: Boolean = true
 ) {
     val colors = BaoziTheme.colors
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
     ) {

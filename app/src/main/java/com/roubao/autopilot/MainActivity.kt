@@ -340,6 +340,7 @@ class MainActivity : ComponentActivity() {
                                         else -> "NONE"
                                     }
                                 } else "NONE",
+                                isExecuting = executing,
                                 onFetchModels = { onSuccess, onError ->
                                     lifecycleScope.launch {
                                         val result = VLMClient.fetchModels(settings.baseUrl, settings.apiKey)

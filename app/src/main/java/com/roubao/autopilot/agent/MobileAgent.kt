@@ -7,6 +7,7 @@ import com.roubao.autopilot.App
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
+import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
@@ -1147,6 +1148,10 @@ class MobileAgent(
                 }
             }
             "shell" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("shell")) {
+                    log("shell 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
                 val command = action.command
                 if (!command.isNullOrBlank()) {
                     log("shell: $command")
@@ -1206,6 +1211,10 @@ class MobileAgent(
                 }
             }
             "open_app" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("open_app")) {
+                    log("open_app 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
                 action.text?.let { appName ->
                     // 智能匹配包名 (客户端模糊搜索，省 token)
                     val packageName = appScanner.findPackage(appName)

@@ -108,6 +108,9 @@ class Executor {
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
+        val policy = toolPolicySection()
+        if (policy.isNotBlank()) prompt += policy
+
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")
 
         return prompt

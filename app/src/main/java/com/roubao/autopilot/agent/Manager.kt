@@ -136,6 +136,9 @@ class Manager {
             result = "$selectionBlock\n\n$result"
         }
 
+        val policy = toolPolicySection()
+        if (policy.isNotBlank()) result += policy
+
         return result
     }
 
