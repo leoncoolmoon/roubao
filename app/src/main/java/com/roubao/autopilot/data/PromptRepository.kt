@@ -73,7 +73,9 @@ data class PromptImportResult(
     val agents: Int,
     val tools: Int,
     val feedback: Int,
-    val errors: List<String>
+    val errors: List<String>,
+    val packs: Int = 0,
+    val overlays: Int = 0
 )
 
 /** 归一化反馈文本：仅用于判重，不改变落库原文。 */
@@ -244,6 +246,78 @@ class PromptRepository private constructor(context: Context) {
         }
         return base.copy(prompt = resolved)
     }
+
+    /**
+     * 编辑用 prompt：
+     * - replace overlay（basic）显示 overlay 本身，避免用户编辑 base 却改了不生效；
+     * - append/prepend（advanced）仍显示 base，overlay 保持独立；
+     * - 无 overlay（standard）显示 base。
+     */
+    fun getAgentPromptForEditing(id: String, packId: String): AgentPromptEntity? {
+        val base = getAgentPrompt(id) ?: return null
+        if (packId.isBlank()) return base
+        val db = dbHelper.readableDatabase
+        var mode = ""
+        var overlay = ""
+        db.query(
+            "agent_pack_overlays",
+            arrayOf("mode", "prompt"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                mode = cursor.getString(0) ?: ""
+                overlay = cursor.getString(1) ?: ""
+            }
+        }
+        return if (mode == "replace" && overlay.isNotBlank()) {
+            base.copy(prompt = overlay)
+        } else {
+            base
+        }
+    }
+
+    /**
+     * 保存 Agent：
+     * - 当前包是 replace overlay 时，提示词写到 overlay，base 只更新展示信息；
+     * - 否则更新 base 提示词。
+     */
+    fun updateAgentDetailsForPack(agent: AgentPromptEntity, packId: String) {
+        val db = dbHelper.writableDatabase
+        var mode = ""
+        db.query(
+            "agent_pack_overlays",
+            arrayOf("mode"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(agent.id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) mode = cursor.getString(0) ?: ""
+        }
+
+        val cv = ContentValues().apply {
+            put("name", agent.name)
+            put("icon", agent.icon)
+            put("role", agent.role)
+            put("description", agent.description)
+            put("responsibilities", JSONArray(agent.responsibilities).toString())
+            if (mode != "replace") {
+                put("prompt", agent.prompt)
+            }
+        }
+        db.update("agent_prompts", cv, "id = ?", arrayOf(agent.id))
+
+        if (mode == "replace") {
+            db.update(
+                "agent_pack_overlays",
+                ContentValues().apply { put("prompt", agent.prompt) },
+                "agent_id = ? AND pack_id = ?",
+                arrayOf(agent.id, packId)
+            )
+        }
+    }
+
 
     fun getAllPacks(): List<PromptPackEntity> {
         val list = mutableListOf<PromptPackEntity>()
@@ -623,11 +697,13 @@ class PromptRepository private constructor(context: Context) {
     // 批量 JSON 导入 / 导出
     // ---------------------------------------------------------------------
 
-    fun exportPromptsJson(): String {
+    fun exportPromptsJson(activePackId: String = ""): String {
         val root = JSONObject()
         root.put("format", "roubao-prompts")
-        root.put("version", 2)
+        root.put("version", 3)
         root.put("exported_at", System.currentTimeMillis())
+        root.put("replace_overlays", true)
+        if (activePackId.isNotBlank()) root.put("active_pack", activePackId)
 
         val agents = JSONArray()
         getAllAgentPrompts().forEach { agent ->
@@ -646,9 +722,42 @@ class PromptRepository private constructor(context: Context) {
             feedback.put(JSONObject().apply {
                 put("text", it.text)
                 put("kind", it.kind)
+                put("enabled", it.enabled)
+                put("dependence", parseJsonArray(it.dependenceJson))
             })
         }
         root.put("feedback", feedback)
+
+        val packs = JSONArray()
+        getAllPacks().forEach { pack ->
+            packs.put(JSONObject().apply {
+                put("id", pack.id)
+                put("display_name", pack.displayName)
+                put("level", pack.level)
+                put("description", pack.description)
+                put("sort_order", pack.sortOrder)
+                put("is_builtin", pack.isBuiltin)
+            })
+        }
+        root.put("packs", packs)
+
+        val overlays = JSONArray()
+        dbHelper.readableDatabase.query(
+            "agent_pack_overlays",
+            arrayOf("agent_id", "pack_id", "mode", "prompt"),
+            null, null, null, null,
+            "pack_id ASC, agent_id ASC"
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                overlays.put(JSONObject().apply {
+                    put("agent_id", cursor.getString(0))
+                    put("pack_id", cursor.getString(1))
+                    put("mode", cursor.getString(2))
+                    put("prompt", cursor.getString(3))
+                })
+            }
+        }
+        root.put("overlays", overlays)
         return root.toString(2)
     }
 
@@ -682,6 +791,7 @@ class PromptRepository private constructor(context: Context) {
         put("domain", item.domain)
         put("source", item.source)
         put("executable", item.executable)
+        put("dependence", parseJsonArray(item.dependenceJson))
     }
 
     private fun parseJsonArray(value: String): JSONArray = try {
@@ -691,17 +801,40 @@ class PromptRepository private constructor(context: Context) {
     }
 
     /** 单条 Agent 导出，格式与完整导出兼容。 */
-    fun exportAgentJson(agent: AgentPromptEntity): String = JSONObject().apply {
+    fun exportAgentJson(agent: AgentPromptEntity, activePackId: String = ""): String = JSONObject().apply {
         put("format", "roubao-prompts")
-        put("version", 2)
+        put("version", 3)
         put("exported_at", System.currentTimeMillis())
-        put("agents", JSONArray().put(agentToJson(agent)))
+        // 单条导出也保持 base + overlay 分离，避免把 basic overlay 写回 base。
+        val base = getAgentPrompt(agent.id) ?: agent
+        put("agents", JSONArray().put(agentToJson(base)))
+        if (activePackId.isNotBlank()) {
+            val overlays = JSONArray()
+            dbHelper.readableDatabase.query(
+                "agent_pack_overlays",
+                arrayOf("agent_id", "pack_id", "mode", "prompt"),
+                "agent_id = ? AND pack_id = ?",
+                arrayOf(agent.id, activePackId),
+                null, null, null
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    overlays.put(JSONObject().apply {
+                        put("agent_id", cursor.getString(0))
+                        put("pack_id", cursor.getString(1))
+                        put("mode", cursor.getString(2))
+                        put("prompt", cursor.getString(3))
+                    })
+                }
+            }
+            put("active_pack", activePackId)
+            put("overlays", overlays)
+        }
     }.toString(2)
 
     /** 单条 Tool/Skill 导出，格式与完整导出兼容。 */
     fun exportToolSkillJson(item: ToolSkillPromptEntity): String = JSONObject().apply {
         put("format", "roubao-prompts")
-        put("version", 2)
+        put("version", 3)
         put("exported_at", System.currentTimeMillis())
         put("tools", JSONArray().put(toolSkillToJson(item)))
     }.toString(2)
@@ -732,6 +865,18 @@ class PromptRepository private constructor(context: Context) {
         return importPromptsJson(json)
     }
 
+    private fun readDependenceJson(obj: JSONObject): String {
+        val arr = obj.optJSONArray("dependence")
+        if (arr != null) return arr.toString()
+        val raw = obj.optString("dependence_json", "")
+        if (raw.isBlank()) return "[]"
+        return try {
+            JSONArray(raw).toString()
+        } catch (e: Exception) {
+            "[]"
+        }
+    }
+
     fun importPromptsJson(json: String): PromptImportResult {
         val errors = mutableListOf<String>()
         val root = try {
@@ -747,9 +892,58 @@ class PromptRepository private constructor(context: Context) {
         var agentCount = 0
         var toolCount = 0
         var feedbackCount = 0
+        var packCount = 0
+        var overlayCount = 0
         val db = dbHelper.writableDatabase
         db.beginTransaction()
         try {
+            val packsArr = root.optJSONArray("packs")
+            if (packsArr != null) {
+                for (i in 0 until packsArr.length()) {
+                    val obj = packsArr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id").trim()
+                    if (id.isEmpty()) {
+                        errors.add("packs[$i] 缺少 id")
+                        continue
+                    }
+                    val cv = ContentValues().apply {
+                        put("id", id)
+                        put("display_name", obj.optString("display_name", id))
+                        put("level", obj.optString("level", "user"))
+                        put("description", obj.optString("description", ""))
+                        put("sort_order", obj.optInt("sort_order", 0))
+                        put("is_builtin", if (obj.optBoolean("is_builtin", false)) 1 else 0)
+                    }
+                    db.insertWithOnConflict("prompt_packs", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    packCount++
+                }
+            }
+
+            val overlaysArr = root.optJSONArray("overlays")
+            if (overlaysArr != null) {
+                // 完整导出（replace_overlays=true）整体替换；单条导出只 upsert。
+                if (root.optBoolean("replace_overlays", false)) {
+                    db.delete("agent_pack_overlays", null, null)
+                }
+                for (i in 0 until overlaysArr.length()) {
+                    val obj = overlaysArr.optJSONObject(i) ?: continue
+                    val agentId = obj.optString("agent_id").trim()
+                    val packId = obj.optString("pack_id").trim()
+                    if (agentId.isEmpty() || packId.isEmpty()) {
+                        errors.add("overlays[$i] 缺少 agent_id/pack_id")
+                        continue
+                    }
+                    val cv = ContentValues().apply {
+                        put("agent_id", agentId)
+                        put("pack_id", packId)
+                        put("mode", obj.optString("mode", "append"))
+                        put("prompt", obj.optString("prompt", ""))
+                    }
+                    db.insertWithOnConflict("agent_pack_overlays", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    overlayCount++
+                }
+            }
+
             if (root.optBoolean("replace_feedback", false)) {
                 db.delete("user_feedback", null, null)
             }
@@ -815,6 +1009,21 @@ class PromptRepository private constructor(context: Context) {
                         if (category == "skill") "技能: $id\n说明: $description"
                         else "工具: $id\n说明: $description"
                     }
+                    // v2 导出没有 dependence；导入时不要把它重置成 []，
+                    // 否则 shell/open_app 会重新出现在 basic。
+                    val dependenceJson = if (obj.has("dependence") || obj.has("dependence_json")) {
+                        readDependenceJson(obj)
+                    } else {
+                        db.query(
+                            "tool_skill_prompts",
+                            arrayOf("dependence_json"),
+                            "id = ?",
+                            arrayOf(id),
+                            null, null, null
+                        ).use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) ?: "[]" else "[]"
+                        }
+                    }
                     val cv = ContentValues().apply {
                         put("id", id)
                         put("name", obj.optString("name", id))
@@ -832,6 +1041,7 @@ class PromptRepository private constructor(context: Context) {
                         put("domain", domain)
                         put("source", obj.optString("source", "custom"))
                         put("executable", if (obj.optBoolean("executable", false)) 1 else 0)
+                        put("dependence_json", dependenceJson)
                     }
                     db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
                     toolCount++
@@ -842,10 +1052,14 @@ class PromptRepository private constructor(context: Context) {
             if (feedbackArr != null) {
                 for (i in 0 until feedbackArr.length()) {
                     var kind = "complaint"
+                    var enabled = true
+                    var dependenceJson = "[]"
                     val text = when (val value = feedbackArr.opt(i)) {
                         is String -> value
                         is JSONObject -> {
                             kind = if (value.optString("kind") == "suggestion") "suggestion" else "complaint"
+                            enabled = value.optBoolean("enabled", true)
+                            dependenceJson = readDependenceJson(value)
                             value.optString("text")
                         }
                         else -> ""
@@ -856,8 +1070,9 @@ class PromptRepository private constructor(context: Context) {
                         db.insert("user_feedback", null, ContentValues().apply {
                             put("text", text)
                             put("created_at", System.currentTimeMillis())
-                            put("enabled", 1)
+                            put("enabled", if (enabled) 1 else 0)
                             put("kind", kind)
+                            put("dependence_json", dependenceJson)
                         })
                         feedbackCount++
                     }
@@ -871,7 +1086,7 @@ class PromptRepository private constructor(context: Context) {
             db.endTransaction()
         }
 
-        return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
+        return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
     private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 16) {

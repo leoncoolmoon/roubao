@@ -39,8 +39,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.roubao.autopilot.App
 import com.roubao.autopilot.agent.AccessLevel
 import com.roubao.autopilot.agent.AccessLevelManager
+import com.roubao.autopilot.agent.PromptPackResolver
 import com.roubao.autopilot.data.AgentPromptEntity
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.data.ToolSkillPromptEntity
@@ -73,6 +75,8 @@ fun CapabilitiesScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val currentLevel by AccessLevelManager.level.collectAsState()
+    val settings by App.getInstance().settingsManager.settings.collectAsState()
+    val activePackId = PromptPackResolver.resolve(currentLevel, settings.promptPackMode)?.id ?: "standard"
 
     var refreshTrigger by remember { mutableStateOf(0) }
 
@@ -98,7 +102,10 @@ fun CapabilitiesScreen() {
                     val result = repository.importPromptsJson(json)
                     withContext(Dispatchers.Main) {
                         refreshTrigger++
-                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill, ${result.feedback} 反馈"
+                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill, ${result.feedback} 反馈" +
+                            if (result.packs > 0 || result.overlays > 0) {
+                                "，${result.packs} Pack，${result.overlays} Overlay"
+                            } else ""
                         showToast(
                             if (result.errors.isEmpty()) summary
                             else summary + "\n" + result.errors.take(3).joinToString("\n")
@@ -117,7 +124,7 @@ fun CapabilitiesScreen() {
         if (uri != null) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val json = repository.exportPromptsJson()
+                    val json = repository.exportPromptsJson(activePackId)
                     context.contentResolver.openOutputStream(uri)?.use {
                         it.write(json.toByteArray(Charsets.UTF_8))
                     }
@@ -138,7 +145,7 @@ fun CapabilitiesScreen() {
             scope.launch(Dispatchers.IO) {
                 try {
                     val json = when (target) {
-                        is PromptTarget.AgentTarget -> repository.exportAgentJson(target.agent)
+                        is PromptTarget.AgentTarget -> repository.exportAgentJson(target.agent, activePackId)
                         is PromptTarget.ToolSkillTarget -> repository.exportToolSkillJson(target.item)
                     }
                     context.contentResolver.openOutputStream(uri)?.use {
@@ -182,8 +189,10 @@ fun CapabilitiesScreen() {
         }
     }
 
-    LaunchedEffect(refreshTrigger) {
-        agentsList = repository.getAllAgentPrompts()
+    LaunchedEffect(refreshTrigger, activePackId) {
+        agentsList = repository.getAllAgentPrompts().map { base ->
+            repository.getAgentPromptForEditing(base.id, activePackId) ?: base
+        }
         toolSkillList = repository.getAllToolSkillPrompts()
         feedbackList = repository.getAllFeedback()
     }
@@ -267,7 +276,7 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${availableToolSkills.size}/${toolSkillList.size} 个 Tool/Skill 可用 · 当前等级 ${currentLevel.label}",
+                    text = "${agentsList.size} 个 Agent，${availableToolSkills.size}/${toolSkillList.size} 个 Tool/Skill 可用 · 等级 ${currentLevel.label} · 包 $activePackId",
                     fontSize = 13.sp,
                     color = colors.textSecondary
                 )
@@ -439,9 +448,10 @@ fun CapabilitiesScreen() {
         UnifiedPromptDialog(
             category = "agent",
             agent = target.agent,
+            activePackId = activePackId,
             onDismiss = { activePromptTarget = null },
             onSaveAgent = { updated ->
-                repository.updateAgentDetails(updated)
+                repository.updateAgentDetailsForPack(updated, activePackId)
                 refreshTrigger++
                 activePromptTarget = null
             }
@@ -453,6 +463,7 @@ fun CapabilitiesScreen() {
         UnifiedPromptDialog(
             category = target.item.category,
             toolSkill = target.item,
+            activePackId = activePackId,
             onDismiss = { activePromptTarget = null },
             onSaveToolSkill = { updated ->
                 repository.updateToolSkillDetails(updated)
@@ -1797,6 +1808,7 @@ fun UnifiedPromptDialog(
     agent: AgentPromptEntity? = null,
     toolSkill: ToolSkillPromptEntity? = null,
     feedback: UserFeedbackEntity? = null,
+    activePackId: String = "",
     onDismiss: () -> Unit,
     onSaveAgent: ((AgentPromptEntity) -> Unit)? = null,
     onSaveToolSkill: ((ToolSkillPromptEntity) -> Unit)? = null,
@@ -2000,6 +2012,13 @@ Provide step by step actions."""
                         text = "类型：$typeLabel（由入口决定，不在表单内切换）",
                         fontSize = 11.sp,
                         color = colors.textSecondary
+                    )
+                }
+                if (activePackId.isNotBlank()) {
+                    Text(
+                        text = "当前包: $activePackId；Agent 提示词按当前包覆盖保存",
+                        fontSize = 11.sp,
+                        color = colors.primary
                     )
                 }
             }
