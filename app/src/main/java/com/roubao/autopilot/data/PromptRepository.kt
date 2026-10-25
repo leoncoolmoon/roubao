@@ -1089,7 +1089,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 19) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 20) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1118,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 19) {
+                if (version < 20) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1304,6 +1304,34 @@ class PromptRepository private constructor(context: Context) {
                     },
                     "id = ?",
                     arrayOf("play_music")
+                )
+            }
+            if (oldVersion < 20) {
+                // 自带安装 skill，默认关闭；用户开启才表示允许走应用商店安装流程。
+                val cv = ContentValues().apply {
+                    put("id", "install_app")
+                    put("name", "install_app")
+                    put("display_name", "安装应用")
+                    put("category", "skill")
+                    put("description", "当任务需要的应用未安装时，列出候选并让用户用数字选择，再打开应用商店。")
+                    put("prompt", INSTALL_APP_PROMPT)
+                    put("default_prompt", INSTALL_APP_PROMPT)
+                    put("is_default", 1)
+                    put("enabled", 0)
+                    put("keywords_json", "[]")
+                    put("params_json", "[]")
+                    put("related_apps_json", "[]")
+                    put("prompt_hint", "")
+                    put("domain", "")
+                    put("source", "builtin")
+                    put("executable", 0)
+                    put("dependence_json", "[]")
+                }
+                db.insertWithOnConflict(
+                    "tool_skill_prompts",
+                    null,
+                    cv,
+                    SQLiteDatabase.CONFLICT_IGNORE
                 )
             }
         }
@@ -1556,6 +1584,17 @@ One short sentence."""
 1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
 2. 只对已安装的播放器使用 open_app。
 3. 若没有已安装播放器，再 ask_user 或去应用列表查找。"""
+
+        private val INSTALL_APP_PROMPT = """技能: install_app
+说明: 当任务需要但设备未安装某个应用时，先给用户 2-3 个候选并让用户输入数字选择；用户确认后打开应用商店搜索并进入安装页。只有本 skill 开启时才允许安装流程。
+步骤:
+1. 若无已安装可用应用，列出编号候选：
+   1. 应用 A
+   2. 应用 B
+   3. 应用 C
+   用 ask_user 发送: "请输入数字选择要安装的应用，回复 0 取消"
+2. 用户选择数字后，open_app 打开设备自带应用商店，搜索对应应用名。
+3. 进入详情页后让用户手动确认安装；不要代替用户点击安装或支付。"""
 
         private val ADVANCED_OVERLAY = """### Advanced Mode (Root) ###
 Root-level tools may be available in this pack.

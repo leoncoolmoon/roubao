@@ -133,11 +133,6 @@ fun SettingsScreen(
             }
         }
 
-        // 连接状态卡片
-        item {
-            StatusCard(shizukuAvailable = shizukuAvailable)
-        }
-
         // 外观设置分组
         item {
             SettingsSection(title = "外观")
@@ -170,6 +165,11 @@ fun SettingsScreen(
                 subtitle = "${settings.maxSteps} 步",
                 onClick = { showMaxStepsDialog = true }
             )
+        }
+
+        // 权限与服务：无障碍 / Shizuku / Root 相邻
+        item {
+            SettingsSection(title = "权限与服务")
         }
 
         // 无障碍支持开关
@@ -267,22 +267,7 @@ fun SettingsScreen(
             }
         }
 
-        // 提示词包选择
-        item {
-            SettingsItem(
-                icon = Icons.Default.Star,
-                title = "提示词包",
-                subtitle = when (settings.promptPackMode) {
-                    "basic" -> "基础包（仅无障碍）"
-                    "standard" -> "标准包（Shizuku / su-user）"
-                    "advanced" -> "高级包（Root）"
-                    else -> "自动（当前等级：${currentLevel.label}）"
-                },
-                onClick = { showPackDialog = true }
-            )
-        }
-
-        // 手动连接/授权 Shizuku：不在启动时自动弹授权框，basic 模式可完全跳过
+        // Shizuku 连接 / 授权
         item {
             SettingsItem(
                 icon = Icons.Default.Build,
@@ -292,10 +277,10 @@ fun SettingsScreen(
             )
         }
 
-        // Shizuku 高级设置分组（仅在 Shizuku 可用时显示）
-        if (shizukuAvailable) {
+        // Root / 高级权限（无条件显示，未连接时开关禁用）
+        run {
             item {
-                SettingsSection(title = "Shizuku 高级选项")
+                SettingsSection(title = "Root / 高级权限")
             }
 
             // 显示当前权限级别
@@ -507,6 +492,21 @@ fun SettingsScreen(
                     }
                 }
             }
+        }
+
+        // 提示词包选择
+        item {
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "提示词包",
+                subtitle = when (settings.promptPackMode) {
+                    "basic" -> "基础包（仅无障碍）"
+                    "standard" -> "标准包（Shizuku / su-user）"
+                    "advanced" -> "高级包（Root）"
+                    else -> "自动（当前等级：${currentLevel.label}）"
+                },
+                onClick = { showPackDialog = true }
+            )
         }
 
         // API 设置分组

@@ -55,6 +55,11 @@ class Executor {
 
         val currentSubgoal = resolveCurrentSubgoal(infoPool)
         val installedApps = infoPool.installedApps.ifBlank { "Unknown" }
+        val installAllowed = try {
+            PromptRepository.getInstance().isToolSkillEnabled("install_app")
+        } catch (e: Exception) {
+            false
+        }
 
         var prompt = rawPrompt
             .replace("{{instruction}}", infoPool.instruction)
@@ -80,7 +85,8 @@ class Executor {
         prompt += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
             "Only open or operate apps from Installed apps: $installedApps\n" +
             "If the current skill's preferred app is not installed, do not open it. " +
-            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n"
+            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n" +
+            "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n"
 
         if (infoPool.lastToolResult.isNotBlank()) {
             prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
