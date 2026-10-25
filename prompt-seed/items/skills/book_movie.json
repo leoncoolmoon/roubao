@@ -1,0 +1,52 @@
+{
+  "id": "book_movie",
+  "kind": "skill",
+  "name": "book_movie",
+  "display_name": "买电影票",
+  "description": "购买电影票",
+  "prompt": "技能: book_movie\n说明: 购买电影票\n关联应用:\n- 小美\n- 淘票票: 打开淘票票 -> 选择电影 -> 选择场次 -> 购票",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "keyword",
+      "type": "string",
+      "description": "电影名",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "买电影票",
+    "看电影",
+    "电影票",
+    "订电影票",
+    "电影院"
+  ],
+  "related_apps": [
+    {
+      "package": "com.meituan.android.beam",
+      "name": "小美",
+      "type": "delegation",
+      "deep_link": "beam://www.meituan.com/home",
+      "priority": 100,
+      "description": "美团 AI 助手，查电影、买票"
+    },
+    {
+      "package": "com.taobao.movie.android",
+      "name": "淘票票",
+      "type": "gui_automation",
+      "priority": 70,
+      "steps": [
+        "打开淘票票",
+        "选择电影",
+        "选择场次",
+        "购票"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "生活"
+}

@@ -1,0 +1,63 @@
+{
+  "id": "send_message",
+  "kind": "skill",
+  "name": "send_message",
+  "display_name": "发消息",
+  "description": "给好友发消息",
+  "prompt": "技能: send_message\n说明: 给好友发消息\n关联应用:\n- 微信: 打开微信 -> 搜索联系人 -> 进入聊天 -> 输入消息 -> 发送\n- QQ: 打开QQ -> 搜索联系人 -> 进入聊天 -> 输入消息 -> 发送",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "contact",
+      "type": "string",
+      "description": "联系人",
+      "required": false
+    },
+    {
+      "name": "message",
+      "type": "string",
+      "description": "消息内容",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "发消息",
+    "发微信",
+    "聊天",
+    "给谁说"
+  ],
+  "related_apps": [
+    {
+      "package": "com.tencent.mm",
+      "name": "微信",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开微信",
+        "搜索联系人",
+        "进入聊天",
+        "输入消息",
+        "发送"
+      ]
+    },
+    {
+      "package": "com.tencent.mobileqq",
+      "name": "QQ",
+      "type": "gui_automation",
+      "priority": 80,
+      "steps": [
+        "打开QQ",
+        "搜索联系人",
+        "进入聊天",
+        "输入消息",
+        "发送"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "社交"
+}

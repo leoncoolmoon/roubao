@@ -1,0 +1,33 @@
+{
+  "id": "take_photo",
+  "kind": "skill",
+  "name": "take_photo",
+  "display_name": "拍照",
+  "description": "打开相机拍照",
+  "prompt": "技能: take_photo\n说明: 打开相机拍照\n关联应用:\n- 相机: 打开相机",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [
+    "拍照",
+    "照相",
+    "自拍",
+    "拍摄"
+  ],
+  "related_apps": [
+    {
+      "package": "com.android.camera",
+      "name": "相机",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开相机"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "工具"
+}

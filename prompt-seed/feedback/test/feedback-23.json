@@ -1,0 +1,6 @@
+{
+  "text": "列表翻页优先使用 scroll，避免重复 swipe。",
+  "kind": "suggestion",
+  "enabled": true,
+  "dependence": []
+}

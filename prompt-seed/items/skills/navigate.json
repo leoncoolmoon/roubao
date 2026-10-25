@@ -1,0 +1,54 @@
+{
+  "id": "navigate",
+  "kind": "skill",
+  "name": "navigate",
+  "display_name": "导航",
+  "description": "导航到目的地",
+  "prompt": "技能: navigate\n说明: 导航到目的地\n关联应用:\n- 高德地图\n- 百度地图\n- 腾讯地图",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "destination",
+      "type": "string",
+      "description": "目的地",
+      "required": true
+    }
+  ],
+  "keywords": [
+    "导航",
+    "去",
+    "怎么走",
+    "路线",
+    "地图",
+    "到"
+  ],
+  "related_apps": [
+    {
+      "package": "com.autonavi.minimap",
+      "name": "高德地图",
+      "type": "delegation",
+      "deep_link": "amap://search?keyword={destination}&sourceApplication=roubao",
+      "priority": 100
+    },
+    {
+      "package": "com.baidu.BaiduMap",
+      "name": "百度地图",
+      "type": "delegation",
+      "deep_link": "baidumap://map/direction?destination={destination}&mode=driving&src=roubao",
+      "priority": 90
+    },
+    {
+      "package": "com.tencent.map",
+      "name": "腾讯地图",
+      "type": "delegation",
+      "deep_link": "qqmap://map/search?keyword={destination}",
+      "priority": 80
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "出行"
+}

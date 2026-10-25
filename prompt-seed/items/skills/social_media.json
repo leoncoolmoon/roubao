@@ -1,0 +1,18 @@
+{
+  "id": "social_media",
+  "kind": "skill",
+  "name": "social_media",
+  "display_name": "社交发帖",
+  "description": "在微信/小红书/微博等平台编辑并发布图文动态",
+  "prompt": "技能: social_media\n说明: 发帖。open_app 目标 App；正文用 type；图片/按钮用 click(text)；不要用截图猜按钮。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

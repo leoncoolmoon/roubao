@@ -1,0 +1,18 @@
+{
+  "id": "press_key",
+  "kind": "tool",
+  "name": "press_key",
+  "display_name": "按键操作",
+  "description": "按下系统按键（Home、Back、Enter 等）",
+  "prompt": "工具: press_key\n说明: 发送按键：ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END；用于焦点/导航，不用于输入文字。\n参数:\n  - button: string (必填) - 按键名",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

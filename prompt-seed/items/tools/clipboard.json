@@ -1,0 +1,18 @@
+{
+  "id": "clipboard",
+  "kind": "tool",
+  "name": "clipboard",
+  "display_name": "剪贴板操作",
+  "description": "读取或写入系统剪贴板内容",
+  "prompt": "工具: clipboard\n说明: 读写剪贴板；需要把长文本粘到输入框时用。\n参数:\n  - action: string (必填) - read/write\n  - text: string (可选) - 要写入的文本",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

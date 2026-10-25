@@ -1,0 +1,41 @@
+{
+  "id": "pay",
+  "kind": "skill",
+  "name": "pay",
+  "display_name": "付款",
+  "description": "付款/扫码支付",
+  "prompt": "技能: pay\n说明: 付款/扫码支付\n关联应用:\n- 支付宝\n- 微信",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [
+    "付款",
+    "支付",
+    "付钱",
+    "扫码付款",
+    "买单"
+  ],
+  "related_apps": [
+    {
+      "package": "com.eg.android.AlipayGphone",
+      "name": "支付宝",
+      "type": "delegation",
+      "deep_link": "alipays://platformapi/startapp?appId=20000056",
+      "priority": 100,
+      "description": "支付宝付款码"
+    },
+    {
+      "package": "com.tencent.mm",
+      "name": "微信",
+      "type": "delegation",
+      "deep_link": "weixin://pay",
+      "priority": 90,
+      "description": "微信付款码"
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "支付"
+}

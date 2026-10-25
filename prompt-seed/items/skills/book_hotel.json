@@ -1,0 +1,66 @@
+{
+  "id": "book_hotel",
+  "kind": "skill",
+  "name": "book_hotel",
+  "display_name": "订酒店",
+  "description": "预订酒店、民宿",
+  "prompt": "技能: book_hotel\n说明: 预订酒店、民宿\n关联应用:\n- 小美\n- 去哪儿: 打开去哪儿 -> 搜索酒店 -> 选择日期 -> 预订\n- 携程: 打开携程 -> 搜索酒店 -> 选择日期 -> 预订",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "keyword",
+      "type": "string",
+      "description": "地点或酒店名",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "订酒店",
+    "住酒店",
+    "订房",
+    "找酒店",
+    "住宿",
+    "民宿",
+    "开房"
+  ],
+  "related_apps": [
+    {
+      "package": "com.meituan.android.beam",
+      "name": "小美",
+      "type": "delegation",
+      "deep_link": "beam://www.meituan.com/home",
+      "priority": 100,
+      "description": "美团 AI 助手，智能推荐酒店"
+    },
+    {
+      "package": "com.Qunar",
+      "name": "去哪儿",
+      "type": "gui_automation",
+      "priority": 70,
+      "steps": [
+        "打开去哪儿",
+        "搜索酒店",
+        "选择日期",
+        "预订"
+      ]
+    },
+    {
+      "package": "ctrip.android.view",
+      "name": "携程",
+      "type": "gui_automation",
+      "priority": 60,
+      "steps": [
+        "打开携程",
+        "搜索酒店",
+        "选择日期",
+        "预订"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "生活"
+}

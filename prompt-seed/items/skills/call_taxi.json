@@ -1,0 +1,66 @@
+{
+  "id": "call_taxi",
+  "kind": "skill",
+  "name": "call_taxi",
+  "display_name": "打车",
+  "description": "叫车出行",
+  "prompt": "技能: call_taxi\n说明: 叫车出行\n关联应用:\n- 滴滴出行\n- 高德地图: 打开高德 -> 点击打车 -> 输入目的地 -> 叫车\n- 曹操出行\n- T3出行",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "destination",
+      "type": "string",
+      "description": "目的地",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "打车",
+    "叫车",
+    "出租车",
+    "网约车",
+    "叫个车"
+  ],
+  "related_apps": [
+    {
+      "package": "com.sdu.didi.psnger",
+      "name": "滴滴出行",
+      "type": "delegation",
+      "deep_link": "diditaxi://",
+      "priority": 100
+    },
+    {
+      "package": "com.autonavi.minimap",
+      "name": "高德地图",
+      "type": "gui_automation",
+      "priority": 80,
+      "description": "高德打车",
+      "steps": [
+        "打开高德",
+        "点击打车",
+        "输入目的地",
+        "叫车"
+      ]
+    },
+    {
+      "package": "com.dache.caocao",
+      "name": "曹操出行",
+      "type": "delegation",
+      "deep_link": "caocao://",
+      "priority": 70
+    },
+    {
+      "package": "com.t3go.passenger",
+      "name": "T3出行",
+      "type": "delegation",
+      "deep_link": "t3go://",
+      "priority": 70
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "出行"
+}

@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.roubao.autopilot.agent.AccessLevel
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -876,6 +877,49 @@ class PromptRepository private constructor(context: Context) {
     private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 13) {
 
         private val appContext = context.applicationContext
+
+        init {
+            copySeedIfMissing()
+        }
+
+        /**
+         * 首次安装：优先复制 assets/prompts_seed.db（完整种子库）。
+         * 已有用户 DB 时不覆盖；复制失败则回退到 onCreate 的代码 seed。
+         */
+        private fun copySeedIfMissing() {
+            val dbFile = appContext.getDatabasePath("prompts.db")
+            if (dbFile.exists() && dbFile.length() > 0) return
+            val parent = dbFile.parentFile ?: return
+            parent.mkdirs()
+            val tmp = File(parent, "prompts_seed_tmp.db")
+            try {
+                appContext.assets.open("prompts_seed.db").use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                val check = SQLiteDatabase.openDatabase(
+                    tmp.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY
+                )
+                val version = check.version
+                check.close()
+                if (version < 13) {
+                    println("[PromptRepository] seed db version too old: $version")
+                    tmp.delete()
+                    return
+                }
+                if (dbFile.exists()) dbFile.delete()
+                val moved = tmp.renameTo(dbFile)
+                if (!moved) {
+                    tmp.copyTo(dbFile, overwrite = true)
+                    tmp.delete()
+                }
+                println("[PromptRepository] copied seed db v$version")
+            } catch (e: Exception) {
+                println("[PromptRepository] seed copy failed: ${e.message}")
+                tmp.delete()
+            }
+        }
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(

@@ -1,0 +1,20 @@
+{
+  "id": "shell",
+  "kind": "tool",
+  "name": "shell",
+  "display_name": "Shell 命令",
+  "description": "执行 shell 命令（需要 Shizuku 权限）",
+  "prompt": "工具: shell\n说明: 通过 Shizuku 执行 shell 命令。文件操作优先用它：ls, find, grep, cat, cp, mv, mkdir -p, rm, stat, du；也可用 pm/dumpsys/content query。不要打开文件管理器 UI。\n参数:\n  - command: string (必填) - 要执行的 shell 命令",
+  "usage": "",
+  "dependence": [
+    "adb"
+  ],
+  "risk_level": "medium",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

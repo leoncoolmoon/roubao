@@ -1,0 +1,18 @@
+{
+  "id": "e_commerce",
+  "kind": "skill",
+  "name": "e_commerce",
+  "display_name": "电商购物",
+  "description": "在淘宝/京东/拼多多中搜索商品并加入购物车",
+  "prompt": "技能: e_commerce\n说明: 购物。搜索用 type；筛选/加购用 click(text)；价格对比可用 shell/http 辅助。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

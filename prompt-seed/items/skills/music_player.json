@@ -1,0 +1,18 @@
+{
+  "id": "music_player",
+  "kind": "skill",
+  "name": "music_player",
+  "display_name": "音乐播放",
+  "description": "在网易云音乐/QQ音乐中搜索并播放指定歌曲",
+  "prompt": "技能: music_player\n说明: 音乐。open_app 网易云/QQ音乐；搜索用 type；播放用 click(text)。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}
