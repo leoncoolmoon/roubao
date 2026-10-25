@@ -22,7 +22,6 @@ object ActionGate {
         "type" to "type",
         "swipe" to "swipe",
         "key" to "press_key",
-        "system_button" to "press_key",
         "open_app" to "open_app",
         "shell" to "shell",
         "root_shell" to "root_shell"

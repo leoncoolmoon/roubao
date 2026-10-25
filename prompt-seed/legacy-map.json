@@ -93,10 +93,14 @@
     "dependence": []
   },
   "open_app": {
-    "dependence": []
+    "dependence": [
+      "adb"
+    ]
   },
   "press_key": {
-    "dependence": []
+    "dependence": [
+      "adb"
+    ]
   },
   "screenshot": {
     "dependence": []

@@ -1134,10 +1134,22 @@ class MobileAgent(
                 }
 
                 log("${action.type}: ($x, $y) [模型原始: ($modelX, $modelY), 已校准: $calibrated]")
-                when (action.type) {
-                    "click" -> controller.tap(x, y)
-                    "double_tap" -> controller.doubleTap(x, y)
-                    "long_press" -> controller.longPress(x, y)
+                val gestureHandled = if (accessibilityModeEnabled && accessibilityService != null) {
+                    when (action.type) {
+                        "click" -> accessibilityService.tapAt(x, y)
+                        "double_tap" -> accessibilityService.doubleTapAt(x, y)
+                        "long_press" -> accessibilityService.longPressAt(x, y)
+                        else -> false
+                    }
+                } else false
+                if (gestureHandled) {
+                    log("🤖 无障碍手势 ${action.type}: ($x, $y)")
+                } else {
+                    when (action.type) {
+                        "click" -> controller.tap(x, y)
+                        "double_tap" -> controller.doubleTap(x, y)
+                        "long_press" -> controller.longPress(x, y)
+                    }
                 }
             }
             "swipe" -> {
@@ -1150,10 +1162,10 @@ class MobileAgent(
                     val centerY = action.y?.let { mapCoordinate(it, screenHeight) } ?: (screenHeight / 2)
                     val distance = 400  // 滑动距离
                     when (action.direction.lowercase()) {
-                        "up" -> controller.swipe(centerX, centerY + distance, centerX, centerY - distance)
-                        "down" -> controller.swipe(centerX, centerY - distance, centerX, centerY + distance)
-                        "left" -> controller.swipe(centerX + distance, centerY, centerX - distance, centerY)
-                        "right" -> controller.swipe(centerX - distance, centerY, centerX + distance, centerY)
+                        "up" -> swipeOrGesture(centerX, centerY + distance, centerX, centerY - distance)
+                        "down" -> swipeOrGesture(centerX, centerY - distance, centerX, centerY + distance)
+                        "left" -> swipeOrGesture(centerX + distance, centerY, centerX - distance, centerY)
+                        "right" -> swipeOrGesture(centerX - distance, centerY, centerX + distance, centerY)
                         else -> log("未知滑动方向: ${action.direction}")
                     }
                 } else {
@@ -1162,7 +1174,7 @@ class MobileAgent(
                     val y1 = mapCoordinate(action.y ?: 0, screenHeight)
                     val x2 = mapCoordinate(action.x2 ?: 0, screenWidth)
                     val y2 = mapCoordinate(action.y2 ?: 0, screenHeight)
-                    controller.swipe(x1, y1, x2, y2)
+                    swipeOrGesture(x1, y1, x2, y2)
                 }
             }
             "type" -> {
@@ -1254,9 +1266,27 @@ class MobileAgent(
             }
             "system_button" -> {
                 when (action.button) {
-                    "Back", "back" -> controller.back()
-                    "Home", "home" -> controller.home()
-                    "Enter", "enter" -> controller.enter()
+                    "Back", "back" -> {
+                        if (accessibilityModeEnabled && accessibilityService?.pressBack() == true) {
+                            log("🤖 无障碍 BACK")
+                        } else {
+                            controller.back()
+                        }
+                    }
+                    "Home", "home" -> {
+                        if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
+                            log("🤖 无障碍 HOME")
+                        } else {
+                            controller.home()
+                        }
+                    }
+                    "Enter", "enter" -> {
+                        if (infoPool.effectiveLevel() >= AccessLevel.ADB) {
+                            controller.enter()
+                        } else {
+                            log("Enter 键需要 ADB；basic 请点击 UI 的搜索/确认按钮")
+                        }
+                    }
                     else -> log("未知系统按钮: ${action.button}")
                 }
             }
@@ -1344,6 +1374,17 @@ class MobileAgent(
      * @param value 模型输出的坐标值
      * @param screenMax 屏幕实际尺寸
      */
+    private fun swipeOrGesture(x1: Int, y1: Int, x2: Int, y2: Int) {
+        val service = if (accessibilityModeEnabled) {
+            com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
+        } else null
+        if (service != null && service.swipeAt(x1, y1, x2, y2)) {
+            log("🤖 无障碍手势 swipe: ($x1,$y1) -> ($x2,$y2)")
+        } else {
+            controller.swipe(x1, y1, x2, y2)
+        }
+    }
+
     private fun mapCoordinate(value: Int, screenMax: Int): Int {
         return value.coerceIn(0, (screenMax - 1).coerceAtLeast(0))
     }

@@ -3,7 +3,9 @@ package com.roubao.autopilot.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityService.ScreenshotResult
 import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
+import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
+import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.view.Display
@@ -54,6 +56,57 @@ class AutoPilotAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         println("[AccessibilityService] 无障碍服务中断")
+    }
+
+    // ==================== 无障碍手势 ====================
+
+    /** 单击坐标；basic 模式不依赖 shell input tap。 */
+    fun tapAt(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        return dispatchPath(path, 60L)
+    }
+
+    /** 长按坐标。 */
+    fun longPressAt(x: Int, y: Int, durationMs: Long = 600L): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        return dispatchPath(path, durationMs)
+    }
+
+    /** 双击坐标。 */
+    fun doubleTapAt(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val first = GestureDescription.StrokeDescription(path, 0L, 50L)
+        val second = GestureDescription.StrokeDescription(path, 120L, 50L)
+        return try {
+            dispatchGesture(GestureDescription.Builder().addStroke(first).addStroke(second).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 滑动；basic 模式不依赖 shell input swipe。 */
+    fun swipeAt(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 500L): Boolean {
+        val path = Path().apply {
+            moveTo(x1.toFloat(), y1.toFloat())
+            lineTo(x2.toFloat(), y2.toFloat())
+        }
+        return dispatchPath(path, durationMs)
+    }
+
+    /** 无障碍全局动作：BACK / HOME / RECENTS。 */
+    fun pressBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
+
+    fun pressHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+
+    fun pressRecents(): Boolean = performGlobalAction(GLOBAL_ACTION_RECENTS)
+
+    private fun dispatchPath(path: Path, durationMs: Long): Boolean {
+        return try {
+            val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+            dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**

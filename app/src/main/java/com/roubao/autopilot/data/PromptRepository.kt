@@ -874,7 +874,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 13) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 16) {
 
         private val appContext = context.applicationContext
 
@@ -903,7 +903,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 13) {
+                if (version < 16) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1044,6 +1044,28 @@ class PromptRepository private constructor(context: Context) {
                 applyDependenceV13(db)
                 enableBuiltinToolsV13(db)
             }
+            if (oldVersion < 14) {
+                // open_app/press_key 目前仍走 shell；basic 必须隐藏，而不是混进提示词。
+                db.execSQL(
+                    "UPDATE tool_skill_prompts SET dependence_json = '[\"adb\"]' " +
+                        "WHERE id IN ('open_app', 'press_key')"
+                )
+            }
+            if (oldVersion < 16) {
+                // basic prompt 清掉 open_app/key 的痕迹，只保留 UI 动作与 system_button。
+                db.update(
+                    "agent_pack_overlays",
+                    ContentValues().apply { put("prompt", BASIC_MANAGER_PROMPT) },
+                    "agent_id = ? AND pack_id = ?",
+                    arrayOf("manager", "basic")
+                )
+                db.update(
+                    "agent_pack_overlays",
+                    ContentValues().apply { put("prompt", BASIC_EXECUTOR_PROMPT) },
+                    "agent_id = ? AND pack_id = ?",
+                    arrayOf("executor", "basic")
+                )
+            }
         }
 
         /** v11：移除内置 Prompt 中静态写死的 shell/open_app 推荐。 */
@@ -1165,7 +1187,7 @@ class PromptRepository private constructor(context: Context) {
         }
 
         private fun applyDependenceV13(db: SQLiteDatabase) {
-            val adbIds = listOf("shell", "shell_calc")
+            val adbIds = listOf("shell", "shell_calc", "open_app", "press_key")
             adbIds.forEach { id ->
                 db.update(
                     "tool_skill_prompts",
@@ -1218,12 +1240,13 @@ class PromptRepository private constructor(context: Context) {
 {{instruction}}
 
 ### Planning Rules ###
-1. Only plan UI actions: type, set_selection, scroll, key, click(text), click(coordinate), open_app, wait.
-2. shell/root are unavailable in BASIC. If the task requires file/system operations, use ask_user to tell the user to enable Shizuku for the standard pack; do not try shell.
-3. Use the Accessibility UI Tree to find element text and center coordinates. The screenshot is for understanding page content; the tree is for precise targets.
-4. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
-5. If the same action failed twice, switch strategy.
-6. Use ask_user when required details are missing; use answer only for the final response.
+1. Only plan UI actions: type, set_selection, scroll, click(text), click(coordinate), system_button(BACK/HOME), wait.
+2. To launch an app, go Home and tap the app icon or use the app drawer/search; do not use shell commands.
+3. shell/root are unavailable in BASIC. If the task requires file/system operations, use ask_user to tell the user to enable Shizuku for the standard pack; do not try shell.
+4. Use the Accessibility UI Tree to find element text and center coordinates. The screenshot is for understanding page content; the tree is for precise targets.
+5. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
+6. If the same action failed twice, switch strategy.
+7. Use ask_user when required details are missing; use answer only for the final response.
 
 {{phaseGuidance}}
 
@@ -1252,12 +1275,13 @@ Choose exactly ONE next action. Use the Accessibility UI Tree for element text/c
 {{progressStatus}}
 
 ### Action Priority ###
-1. TEXT INPUT -> type: click the input, then type exact text via ACTION_SET_TEXT. Do not tap keyboard keys.
+1. TEXT INPUT -> type: click the input, then type exact text via ACTION_SET_TEXT. Do not tap the on-screen keyboard.
 2. TEXT EDITING -> set_selection: start/end indices on the focused input.
 3. PAGE / LIST -> scroll.
-4. FOCUS / NAV -> key.
-5. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
-6. VISUAL-ONLY -> click with absolute pixel coordinates.
+4. BACK / HOME -> system_button (accessibility performGlobalAction).
+5. APP LAUNCH -> go Home, tap the app icon, or open the app drawer/search and tap the app.
+6. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
+7. VISUAL-ONLY -> click with absolute pixel coordinates.
 
 ### Hard Rules ###
 - Never use shell or root actions in BASIC mode.

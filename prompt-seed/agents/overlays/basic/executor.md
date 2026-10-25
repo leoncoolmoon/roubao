@@ -14,12 +14,13 @@ Choose exactly ONE next action. Use the Accessibility UI Tree for element text/c
 {{progressStatus}}
 
 ### Action Priority ###
-1. TEXT INPUT -> type: click the input, then type exact text via ACTION_SET_TEXT. Do not tap keyboard keys.
+1. TEXT INPUT -> type: click the input, then type exact text via ACTION_SET_TEXT. Do not tap the on-screen keyboard.
 2. TEXT EDITING -> set_selection: start/end indices on the focused input.
 3. PAGE / LIST -> scroll.
-4. FOCUS / NAV -> key.
-5. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
-6. VISUAL-ONLY -> click with absolute pixel coordinates.
+4. BACK / HOME -> system_button (accessibility performGlobalAction).
+5. APP LAUNCH -> go Home, tap the app icon, or open the app drawer/search and tap the app.
+6. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
+7. VISUAL-ONLY -> click with absolute pixel coordinates.
 
 ### Hard Rules ###
 - Never use shell or root actions in BASIC mode.

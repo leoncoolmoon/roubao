@@ -56,5 +56,8 @@ fun toolPolicySection(
         if (items.none { it.id == "shell" }) {
             append("shell/root are NOT available in this pack; use UI actions or ask the user to enable Shizuku.\n")
         }
+        if (effective.rank < AccessLevel.ADB.rank) {
+            append("Only UI actions are available: click, type, swipe, scroll, set_selection, system_button(BACK/HOME). Launch apps from Home/app drawer.\n")
+        }
     }.trimEnd()
 }

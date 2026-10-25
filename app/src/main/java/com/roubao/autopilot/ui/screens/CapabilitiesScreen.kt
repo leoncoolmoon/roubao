@@ -1790,6 +1790,7 @@ private fun buildSkillEditorJson(item: ToolSkillPromptEntity?): String {
     return root.toString(2)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnifiedPromptDialog(
     category: String,
@@ -1818,6 +1819,11 @@ fun UnifiedPromptDialog(
     var icon by remember { mutableStateOf(agent?.icon ?: "🤖") }
     var role by remember { mutableStateOf(agent?.role ?: "自定义助手") }
     var description by remember { mutableStateOf(agent?.description ?: toolSkill?.description ?: "") }
+    var dependence by remember {
+        mutableStateOf(
+            AccessLevel.parse(toolSkill?.dependenceJson ?: "[]").firstOrNull() ?: "none"
+        )
+    }
     var responsibilitiesStr by remember {
         mutableStateOf(agent?.responsibilities?.joinToString("，") ?: "")
     }
@@ -1903,7 +1909,8 @@ Provide step by step actions."""
                     promptHint = json.optString("prompt_hint", ""),
                     domain = json.optString("domain", ""),
                     source = json.optString("source", toolSkill?.source ?: "custom"),
-                    executable = json.optBoolean("executable", toolSkill?.executable ?: false)
+                    executable = json.optBoolean("executable", toolSkill?.executable ?: false),
+                    dependenceJson = if (dependence == "none") "[]" else "[\"$dependence\"]"
                 )
             )
             return
@@ -1949,7 +1956,8 @@ Provide step by step actions."""
                     prompt = promptValue.text,
                     defaultPrompt = toolSkill?.defaultPrompt ?: promptValue.text,
                     isDefault = toolSkill?.isDefault ?: false,
-                    enabled = toolSkill?.enabled ?: true
+                    enabled = toolSkill?.enabled ?: true,
+                    dependenceJson = if (dependence == "none") "[]" else "[\"$dependence\"]"
                 )
             )
         }
@@ -2066,6 +2074,23 @@ Provide step by step actions."""
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (!isAgent) {
+                        Text("依赖（最低等级）", fontSize = 11.sp, color = colors.textSecondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                "none" to "无",
+                                "adb" to "ADB+",
+                                "root" to "ROOT"
+                            ).forEach { (value, label) ->
+                                FilterChip(
+                                    selected = dependence == value,
+                                    onClick = { dependence = value },
+                                    label = { Text(label, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
 
                     if (isAgent) {
                         OutlinedTextField(
