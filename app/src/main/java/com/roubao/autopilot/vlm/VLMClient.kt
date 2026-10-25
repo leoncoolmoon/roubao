@@ -34,13 +34,12 @@ class VLMClient(
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
-        .callTimeout(90, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .connectionPool(ConnectionPool(5, 1, TimeUnit.MINUTES))
         .build()
 
     companion object {
-        private const val MAX_RETRIES = 2
+        private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 1000L
 
         /** 规范化 URL：自动添加 https:// 前缀，移除末尾斜杠 */
@@ -184,15 +183,7 @@ class VLMClient(
                         lastException = Exception("No response from model")
                     }
                 } else {
-                    val err = "API error: ${response.code} - ${responseBody.take(500)}"
-                    println("[VLMClient] $err")
-                    if (response.code == 429 || response.code >= 500) {
-                        lastException = Exception(err)
-                        if (attempt < MAX_RETRIES) delay(1000L * attempt)
-                    } else {
-                        // 400/401/403 等客户端错误重试也没用，立即返回，避免刷 25 步。
-                        return@withContext Result.failure(Exception(err))
-                    }
+                    lastException = Exception("API error: ${response.code} - $responseBody")
                 }
             } catch (e: UnknownHostException) {
                 // DNS 解析失败，重试
@@ -267,15 +258,7 @@ class VLMClient(
                         lastException = Exception("No response from model")
                     }
                 } else {
-                    val err = "API error: ${response.code} - ${responseBody.take(500)}"
-                    println("[VLMClient] $err")
-                    if (response.code == 429 || response.code >= 500) {
-                        lastException = Exception(err)
-                        if (attempt < MAX_RETRIES) delay(1000L * attempt)
-                    } else {
-                        // 400/401/403 等客户端错误重试也没用，立即返回，避免刷 25 步。
-                        return@withContext Result.failure(Exception(err))
-                    }
+                    lastException = Exception("API error: ${response.code} - $responseBody")
                 }
             } catch (e: UnknownHostException) {
                 println("[VLMClient] DNS 解析失败，重试 $attempt/$MAX_RETRIES...")
