@@ -6,9 +6,7 @@
   "description": "通过应用名称打开指定的 App",
   "prompt": "工具: open_app\n说明: 按应用名或包名直接打开 App，优先于去桌面找图标。\n参数:\n  - text: string (必填) - 应用名称或包名",
   "usage": "",
-  "dependence": [
-    "adb"
-  ],
+  "dependence": [],
   "risk_level": "low",
   "requires_confirmation": 0,
   "executable": 1,

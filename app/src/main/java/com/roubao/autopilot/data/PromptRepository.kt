@@ -1089,7 +1089,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 16) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 17) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1118,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 16) {
+                if (version < 17) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1266,8 +1266,9 @@ class PromptRepository private constructor(context: Context) {
                         "WHERE id IN ('open_app', 'press_key')"
                 )
             }
-            if (oldVersion < 16) {
-                // basic prompt 清掉 open_app/key 的痕迹，只保留 UI 动作与 system_button。
+            if (oldVersion < 17) {
+                // open_app 改成普通 launch Intent；basic 可以用，不再依赖 adb。
+                db.execSQL("UPDATE tool_skill_prompts SET dependence_json = '[]' WHERE id = 'open_app'")
                 db.update(
                     "agent_pack_overlays",
                     ContentValues().apply { put("prompt", BASIC_MANAGER_PROMPT) },
@@ -1402,7 +1403,7 @@ class PromptRepository private constructor(context: Context) {
         }
 
         private fun applyDependenceV13(db: SQLiteDatabase) {
-            val adbIds = listOf("shell", "shell_calc", "open_app", "press_key")
+            val adbIds = listOf("shell", "shell_calc", "press_key")
             adbIds.forEach { id ->
                 db.update(
                     "tool_skill_prompts",
@@ -1455,8 +1456,8 @@ class PromptRepository private constructor(context: Context) {
 {{instruction}}
 
 ### Planning Rules ###
-1. Only plan UI actions: type, set_selection, scroll, click(text), click(coordinate), system_button(BACK/HOME), wait.
-2. To launch an app, go Home and tap the app icon or use the app drawer/search; do not use shell commands.
+1. Only plan UI actions: type, set_selection, scroll, click(text), click(coordinate), system_button(BACK/HOME), open_app, wait.
+2. To launch an app, use open_app (normal Intent, no shell) or go Home and tap the app icon; open_app no longer requires Shizuku.
 3. shell/root are unavailable in BASIC. If the task requires file/system operations, use ask_user to tell the user to enable Shizuku for the standard pack; do not try shell.
 4. Use the Accessibility UI Tree to find element text and center coordinates. The screenshot is for understanding page content; the tree is for precise targets.
 5. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
@@ -1494,12 +1495,12 @@ Choose exactly ONE next action. Use the Accessibility UI Tree for element text/c
 2. TEXT EDITING -> set_selection: start/end indices on the focused input.
 3. PAGE / LIST -> scroll.
 4. BACK / HOME -> system_button (accessibility performGlobalAction).
-5. APP LAUNCH -> go Home, tap the app icon, or open the app drawer/search and tap the app.
+5. APP LAUNCH -> open_app (normal Intent, no shell) or go Home and tap the app icon.
 6. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
 7. VISUAL-ONLY -> click with absolute pixel coordinates.
 
 ### Hard Rules ###
-- Never use shell or root actions in BASIC mode.
+- Never use shell or root actions in BASIC mode. open_app is allowed because it uses a normal launch Intent.
 - Text > coordinates; UI tree > screenshot. If the tree has the target, use its text and center coordinate.
 - If the same action failed twice, change strategy.
 - Use ask_user when required details are missing; use answer only for the final response.

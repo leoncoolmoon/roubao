@@ -18,12 +18,12 @@ Choose exactly ONE next action. Use the Accessibility UI Tree for element text/c
 2. TEXT EDITING -> set_selection: start/end indices on the focused input.
 3. PAGE / LIST -> scroll.
 4. BACK / HOME -> system_button (accessibility performGlobalAction).
-5. APP LAUNCH -> go Home, tap the app icon, or open the app drawer/search and tap the app.
+5. APP LAUNCH -> open_app (normal Intent, no shell) or go Home and tap the app icon.
 6. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
 7. VISUAL-ONLY -> click with absolute pixel coordinates.
 
 ### Hard Rules ###
-- Never use shell or root actions in BASIC mode.
+- Never use shell or root actions in BASIC mode. open_app is allowed because it uses a normal launch Intent.
 - Text > coordinates; UI tree > screenshot. If the tree has the target, use its text and center coordinate.
 - If the same action failed twice, change strategy.
 - Use ask_user when required details are missing; use answer only for the final response.

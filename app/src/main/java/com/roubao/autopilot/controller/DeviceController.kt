@@ -605,9 +605,26 @@ class DeviceController(private val context: Context? = null) {
             }
         }
 
-        // 使用 monkey 命令启动应用 (最可靠)
+        // 优先用 PackageManager 的 launch Intent：普通 App 即可启动，不需要 Shizuku。
+        // monkey 只作为没有 launcher intent 时的 fallback。
+        val launchContext = context ?: App.getInstance()
+        try {
+            val launchIntent = launchContext.packageManager
+                .getLaunchIntentForPackage(finalPackage)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                launchContext.startActivity(launchIntent)
+                println("[DeviceController] openApp via Intent: $appNameOrPackage -> $finalPackage")
+                return
+            }
+            println("[DeviceController] no launch intent for $finalPackage, fallback to monkey")
+        } catch (e: Exception) {
+            println("[DeviceController] openApp Intent failed: ${e.message}, fallback to monkey")
+        }
+
+        // fallback：需要 Shizuku/ADB
         val result = exec("monkey -p $finalPackage -c android.intent.category.LAUNCHER 1 2>/dev/null")
-        println("[DeviceController] openApp: $appNameOrPackage -> $finalPackage, result: $result")
+        println("[DeviceController] openApp fallback: $appNameOrPackage -> $finalPackage, result: $result")
     }
 
     /**

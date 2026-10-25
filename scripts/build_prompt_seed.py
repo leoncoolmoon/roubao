@@ -26,7 +26,7 @@ TOOL_META = {
     "swipe": ([], "low", 1),
     "type": ([], "low", 1),
     "press_key": (["adb"], "low", 1),
-    "open_app": (["adb"], "low", 1),
+    "open_app": ([], "low", 1),
     "deep_link": ([], "low", 1),
     "search_apps": ([], "low", 1),
     "clipboard": ([], "low", 0),
@@ -126,7 +126,7 @@ def build_source(db_path, src_dir, profile):
     write_json(os.path.join(src_dir, "providers.json"), PROVIDERS)
     write_json(os.path.join(src_dir, "packs.json"), PACKS)
     write_json(os.path.join(src_dir, "meta.json"), {
-        "schema_version": 16,
+        "schema_version": 17,
         "seed_version": 1,
         "default_pack_id": "standard",
         "profile": profile,
@@ -215,13 +215,13 @@ def build_db(db_path, out_path, profile):
     else:
         out.execute("UPDATE user_feedback SET enabled=1")
 
-    out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('schema_version','16')")
+    out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('schema_version','17')")
     out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('seed_version','1')")
     out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('seed_built_at',?)", (str(int(time.time())),))
     out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('default_pack_id','standard')")
     out.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('profile',?)", (profile,))
 
-    out.execute("PRAGMA user_version=16")
+    out.execute("PRAGMA user_version=17")
     out.commit()
     out.execute("DETACH DATABASE src")
     out.execute("VACUUM")
