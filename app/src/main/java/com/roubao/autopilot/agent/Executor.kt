@@ -77,6 +77,11 @@ class Executor {
             prompt += "\n\n### Active Skill ###\n${infoPool.activeSkillContext}\n"
         }
 
+        prompt += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
+            "Only open or operate apps from Installed apps: $installedApps\n" +
+            "If the current skill's preferred app is not installed, do not open it. " +
+            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n"
+
         if (infoPool.lastToolResult.isNotBlank()) {
             prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
         }

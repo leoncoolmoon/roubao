@@ -139,6 +139,13 @@ class Manager {
         result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
             "Use `ask_user` when required details are missing. Use `answer` only for the final response after the task is complete. This rule overrides any other wording that says to use `answer` for questions.\n"
 
+        val installedApps = infoPool.installedApps.ifBlank { "Unknown" }
+        result += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
+            "Installed apps: $installedApps\n" +
+            "Only plan or name apps from this list. A skill's related apps are suggestions, not proof that they are installed. " +
+            "If none of a skill's preferred apps are installed, do not plan/open those apps; use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one. " +
+            "Never call open_app for an app that is not in Installed apps.\n"
+
         val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
         if (policy.isNotBlank()) result += policy
 
