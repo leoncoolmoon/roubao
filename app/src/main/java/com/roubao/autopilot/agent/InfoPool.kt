@@ -62,7 +62,11 @@ data class InfoPool(
     var installedApps: String = "",
 
     // 无障碍 UI 元素树信息
-    var accessibilityTree: String = ""
+    var accessibilityTree: String = "",
+
+    // 本次任务快照的提示词包与访问等级
+    var packId: String = "standard",
+    var accessLevel: String = "user"
 )
 
 /**

@@ -121,13 +121,31 @@ class MobileAgent(
 
         log("使用 OpenAI 兼容模式")
 
+        AccessLevelManager.refresh(context)
+        val accessLevel = AccessLevelManager.current()
+        val packMode = try {
+            App.getInstance().settingsManager.settings.value.promptPackMode
+        } catch (e: Exception) {
+            "auto"
+        }
+        val pack = PromptPackResolver.resolve(accessLevel, packMode)
+        val packId = pack?.id ?: "basic"
+
         // 使用 LLM 匹配 Skill，生成上下文信息给 Agent（不执行任何操作）
+        // basic 包不做 LLM 技能匹配，避免把 shell/root 技能上下文注入 UI-only prompt。
         log("正在分析意图...")
-        val skillContext = skillManager?.generateAgentContextWithLLM(instruction)
+        val skillContext = if (packId == "basic") {
+            null
+        } else {
+            skillManager?.generateAgentContextWithLLM(instruction)
+        }
 
         val infoPool = InfoPool(instruction = instruction)
+        infoPool.packId = packId
+        infoPool.accessLevel = accessLevel.id
+        log("访问等级: ${accessLevel.id}, 提示词包: $packId")
         infoPool.availableSkills = try {
-            skillManager?.getEnabledSkillRoster()
+            skillManager?.getEnabledSkillRoster(accessLevel)
                 ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
                 .orEmpty()
         } catch (e: Exception) {
@@ -139,6 +157,7 @@ class MobileAgent(
         val executorSystemPrompt = buildString {
             append("You are an agent who can operate an Android phone. ")
             append("Decide the next action based on the current state.\n\n")
+            append("Access level: ${accessLevel.id} (${accessLevel.label}). Prompt pack: $packId.\n")
             append("User Request: $instruction\n")
         }
         infoPool.executorMemory = ConversationMemory.withSystemPrompt(executorSystemPrompt)
@@ -280,7 +299,7 @@ class MobileAgent(
                     planResult.selectedSkillId?.let { selectedId ->
                         infoPool.selectedSkillId = selectedId
                         val selectedPrompt = try {
-                            skillManager?.getSkillPrompt(selectedId)
+                            skillManager?.getSkillPrompt(selectedId, AccessLevel.fromId(infoPool.accessLevel))
                         } catch (e: Exception) {
                             null
                         }
@@ -1045,6 +1064,13 @@ class MobileAgent(
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool): String? = withContext(Dispatchers.IO) {
+        val level = AccessLevel.fromId(infoPool.accessLevel)
+        val gateError = ActionGate.check(action, level, infoPool.packId)
+        if (gateError != null) {
+            log("动作被拒绝: $gateError")
+            ActionGate.audit(action, level, infoPool.packId, "rejected: $gateError")
+            return@withContext "Action rejected: $gateError"
+        }
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()

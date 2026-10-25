@@ -55,9 +55,12 @@ class SkillManager private constructor(
      * 运行时 Skill 目录：来自数据库，包含 assets 之外的自定义 Skill。
      * 只返回启用且有 Prompt 的 Skill，供 Manager 首次规划选择。
      */
-    fun getEnabledSkillRoster(): List<EnabledSkillInfo> = try {
+    fun getEnabledSkillRoster(level: com.roubao.autopilot.agent.AccessLevel): List<EnabledSkillInfo> = try {
         PromptRepository.getInstance().getAllToolSkillPrompts()
-            .filter { it.category == "skill" && it.enabled && it.prompt.isNotBlank() }
+            .filter {
+                it.category == "skill" && it.enabled && it.prompt.isNotBlank() &&
+                    com.roubao.autopilot.agent.AccessLevel.satisfies(level, it.dependenceJson)
+            }
             .map {
                 EnabledSkillInfo(
                     id = it.id,
@@ -72,9 +75,12 @@ class SkillManager private constructor(
     }
 
     /** 按 id 取运行时 Skill 的完整上下文。 */
-    fun getSkillPrompt(id: String): String? = try {
+    fun getSkillPrompt(id: String, level: com.roubao.autopilot.agent.AccessLevel): String? = try {
         PromptRepository.getInstance().getToolSkillPrompt(id)
-            ?.takeIf { it.category == "skill" && it.enabled }
+            ?.takeIf {
+                it.category == "skill" && it.enabled &&
+                    com.roubao.autopilot.agent.AccessLevel.satisfies(level, it.dependenceJson)
+            }
             ?.prompt
     } catch (e: Exception) {
         null

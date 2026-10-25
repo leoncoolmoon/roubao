@@ -23,7 +23,7 @@ class Manager {
      */
     fun getPrompt(infoPool: InfoPool): String {
         val template = try {
-            PromptRepository.getInstance().getAgentPrompt("manager")?.prompt
+            PromptRepository.getInstance().getAgentPrompt("manager", infoPool.packId)?.prompt
                 ?: PromptRepository.DEFAULT_MANAGER_PROMPT
         } catch (e: Exception) {
             PromptRepository.DEFAULT_MANAGER_PROMPT
@@ -31,7 +31,7 @@ class Manager {
 
         val formatted = formatManagerPrompt(infoPool, template)
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt()
+            PromptRepository.getInstance().getFeedbackPrompt(AccessLevel.fromId(infoPool.accessLevel))
         } catch (e: Exception) {
             ""
         }
@@ -139,7 +139,7 @@ class Manager {
         result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
             "Use `ask_user` when required details are missing. Use `answer` only for the final response after the task is complete. This rule overrides any other wording that says to use `answer` for questions.\n"
 
-        val policy = toolPolicySection()
+        val policy = toolPolicySection(infoPool.packId, AccessLevel.fromId(infoPool.accessLevel))
         if (policy.isNotBlank()) result += policy
 
         return result

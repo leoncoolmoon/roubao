@@ -46,6 +46,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
+import com.roubao.autopilot.agent.AccessLevel
+import com.roubao.autopilot.agent.AccessLevelManager
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.service.AutoPilotAccessibilityService
@@ -66,6 +68,8 @@ fun SettingsScreen(
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
+    onUpdatePromptPackMode: (String) -> Unit = {},
+    onUpdateAdvancedModeEnabled: (Boolean) -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
@@ -83,6 +87,8 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
+    var showPackDialog by remember { mutableStateOf(false) }
+    val currentLevel by AccessLevelManager.level.collectAsState()
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
         mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
@@ -234,15 +240,16 @@ fun SettingsScreen(
                                     Text("去开启", fontSize = 11.sp)
                                 }
                             }
-                            TextButton(
-                                onClick = {
-                                    accessibilityServiceRunning =
-                                        AutoPilotAccessibilityService.isServiceRunning()
-                                },
-                                contentPadding = PaddingValues(horizontal = 6.dp)
-                            ) {
-                                Text("刷新", fontSize = 11.sp)
-                            }
+                             TextButton(
+                                 onClick = {
+                                     accessibilityServiceRunning =
+                                         AutoPilotAccessibilityService.isServiceRunning()
+                                     AccessLevelManager.refresh(context)
+                                 },
+                                 contentPadding = PaddingValues(horizontal = 6.dp)
+                             ) {
+                                 Text("刷新", fontSize = 11.sp)
+                             }
                         }
                     }
                     Switch(
@@ -257,6 +264,21 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+
+        // 提示词包选择
+        item {
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "提示词包",
+                subtitle = when (settings.promptPackMode) {
+                    "basic" -> "基础包（仅无障碍）"
+                    "standard" -> "标准包（Shizuku / su-user）"
+                    "advanced" -> "高级包（Root）"
+                    else -> "自动（当前等级：${currentLevel.label}）"
+                },
+                onClick = { showPackDialog = true }
+            )
         }
 
         // Shizuku 高级设置分组（仅在 Shizuku 可用时显示）
@@ -777,6 +799,72 @@ fun SettingsScreen(
     // 悬浮窗权限帮助对话框
     if (showOverlayHelpDialog) {
         OverlayHelpDialog(onDismiss = { showOverlayHelpDialog = false })
+    }
+
+    // 提示词包选择
+    if (showPackDialog) {
+        val options = listOf(
+            "auto" to "自动（按当前等级选最高可用包）",
+            "basic" to "基础包 · 仅无障碍",
+            "standard" to "标准包 · Shizuku / su-user",
+            "advanced" to "高级包 · Root"
+        )
+        AlertDialog(
+            onDismissRequest = { showPackDialog = false },
+            title = { Text("提示词包") },
+            text = {
+                Column {
+                    Text(
+                        "当前访问等级：${currentLevel.label}（${currentLevel.id}）",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    options.forEach { (mode, label) ->
+                        val enabled = when (mode) {
+                            "standard" -> currentLevel.rank >= AccessLevel.ADB.rank
+                            "advanced" -> currentLevel.rank >= AccessLevel.ROOT.rank
+                            else -> true
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = enabled) {
+                                    onUpdatePromptPackMode(mode)
+                                    showPackDialog = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = settings.promptPackMode == mode,
+                                onClick = {
+                                    if (enabled) {
+                                        onUpdatePromptPackMode(mode)
+                                        showPackDialog = false
+                                    }
+                                },
+                                enabled = enabled
+                            )
+                            Text(
+                                text = label,
+                                fontSize = 14.sp,
+                                color = if (enabled) colors.textPrimary else colors.textHint
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "提示：标准/高级包需要相应权限；等级不够时选择不会生效，会自动回退到可用包。",
+                        fontSize = 11.sp,
+                        color = colors.textHint
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPackDialog = false }) { Text("关闭") }
+            }
+        )
     }
 
     // Root 模式警告对话框

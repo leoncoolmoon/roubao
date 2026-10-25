@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.Looper
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
+import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.service.ShellService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -401,6 +402,20 @@ class DeviceController(private val context: Context? = null) {
      * 失败时返回黑屏占位图（降级处理）
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
+        // 优先无障碍截图（API 30+）：全屏、无 shell 也能用，basic 包的关键路径。
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val service = AutoPilotAccessibilityService.getInstance()
+                val bitmap = service?.takeScreenshotBitmap()
+                if (bitmap != null) {
+                    println("[DeviceController] Screenshot via accessibility takeScreenshot")
+                    return@withContext ScreenshotResult(bitmap)
+                }
+            } catch (e: Exception) {
+                println("[DeviceController] Accessibility screenshot failed: ${e.message}")
+            }
+        }
+
         try {
             // 截图到 /data/local/tmp 并设置权限让 App 可读
             val output = exec("screencap -p $SCREENSHOT_PATH && chmod 666 $SCREENSHOT_PATH")

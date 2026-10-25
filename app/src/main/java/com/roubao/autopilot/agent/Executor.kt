@@ -26,7 +26,7 @@ class Executor {
      */
     fun getPrompt(infoPool: InfoPool): String {
         val rawPrompt = try {
-            PromptRepository.getInstance().getAgentPrompt("executor")?.prompt
+            PromptRepository.getInstance().getAgentPrompt("executor", infoPool.packId)?.prompt
                 ?: PromptRepository.DEFAULT_EXECUTOR_PROMPT
         } catch (e: Exception) {
             PromptRepository.DEFAULT_EXECUTOR_PROMPT
@@ -65,7 +65,7 @@ class Executor {
             .replace("{{actionHistory}}", actionHistoryStr)
 
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt()
+            PromptRepository.getInstance().getFeedbackPrompt(AccessLevel.fromId(infoPool.accessLevel))
         } catch (e: Exception) {
             ""
         }
@@ -110,7 +110,7 @@ class Executor {
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
-        val policy = toolPolicySection()
+        val policy = toolPolicySection(infoPool.packId, AccessLevel.fromId(infoPool.accessLevel))
         if (policy.isNotBlank()) prompt += policy
 
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")

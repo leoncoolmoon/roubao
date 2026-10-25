@@ -1,9 +1,16 @@
 package com.roubao.autopilot.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
+import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.Build
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * 无障碍服务 - 提取 UI 元素树、坐标精确定位及截图失败盲操
@@ -23,6 +30,11 @@ class AutoPilotAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         println("[AccessibilityService] 无障碍服务已连接")
+        try {
+            com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        } catch (e: Exception) {
+            println("[AccessibilityService] refresh access level failed: ${e.message}")
+        }
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
@@ -42,6 +54,46 @@ class AutoPilotAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         println("[AccessibilityService] 无障碍服务中断")
+    }
+
+    /**
+     * API 30+ 的无障碍截图：全屏（含其他 App），不需要 MediaProjection 授权，
+     * 但有最小调用间隔。失败返回 null，由 DeviceController 回退到 shell/tree-only。
+     */
+    fun takeScreenshotBitmap(timeoutMs: Long = 2500L): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val latch = CountDownLatch(1)
+        var bitmap: Bitmap? = null
+        return try {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        try {
+                            val buffer = result.hardwareBuffer
+                            val wrapped = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                            bitmap = wrapped?.copy(Bitmap.Config.ARGB_8888, false)
+                            buffer.close()
+                        } catch (e: Exception) {
+                            println("[AccessibilityService] takeScreenshot decode failed: ${e.message}")
+                        } finally {
+                            latch.countDown()
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        println("[AccessibilityService] takeScreenshot failed: $errorCode")
+                        latch.countDown()
+                    }
+                }
+            )
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            bitmap
+        } catch (e: Exception) {
+            println("[AccessibilityService] takeScreenshot exception: ${e.message}")
+            null
+        }
     }
 
     /**

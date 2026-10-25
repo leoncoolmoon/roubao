@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import android.net.Uri
 import android.provider.Settings
+import com.roubao.autopilot.agent.AccessLevelManager
 import com.roubao.autopilot.agent.MobileAgent
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
@@ -128,7 +129,7 @@ class MainActivity : ComponentActivity() {
 
         deviceController = DeviceController(this)
         deviceController.setCacheDir(cacheDir)
-        settingsManager = SettingsManager(this)
+        settingsManager = App.getInstance().settingsManager
         executionRepository = ExecutionRepository(this)
 
         // 加载执行记录
@@ -361,6 +362,16 @@ class MainActivity : ComponentActivity() {
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
                                 onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
+                                onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
+                                onUpdateAdvancedModeEnabled = { enabled ->
+                                    settingsManager.updateAdvancedModeEnabled(enabled)
+                                    if (enabled) {
+                                        AccessLevelManager.ensureRoot(this@MainActivity)
+                                    } else {
+                                        AccessLevelManager.invalidateSuCache()
+                                        AccessLevelManager.refresh(this@MainActivity)
+                                    }
+                                },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
@@ -706,6 +717,11 @@ class MainActivity : ComponentActivity() {
         scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
         scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
         applyOverlayIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AccessLevelManager.refresh(this)
     }
 
     companion object {

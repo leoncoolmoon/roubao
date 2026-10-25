@@ -88,7 +88,9 @@ data class AppSettings(
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
     val suCommandEnabled: Boolean = false,
-    val accessibilityModeEnabled: Boolean = false
+    val accessibilityModeEnabled: Boolean = false,
+    val advancedModeEnabled: Boolean = false,
+    val promptPackMode: String = "auto"  // auto / basic / standard / advanced
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -226,7 +228,9 @@ class SettingsManager(context: Context) {
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
             suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
-            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", false)
+            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", false),
+            advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
+            promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto"
         )
     }
 
@@ -362,5 +366,19 @@ class SettingsManager(context: Context) {
     fun updateAccessibilityModeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("accessibility_mode_enabled", enabled).apply()
         _settings.value = _settings.value.copy(accessibilityModeEnabled = enabled)
+    }
+
+    fun updateAdvancedModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("advanced_mode_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(advancedModeEnabled = enabled)
+    }
+
+    fun updatePromptPackMode(mode: String) {
+        val safe = when (mode) {
+            "basic", "standard", "advanced" -> mode
+            else -> "auto"
+        }
+        prefs.edit().putString("prompt_pack_mode", safe).apply()
+        _settings.value = _settings.value.copy(promptPackMode = safe)
     }
 }
