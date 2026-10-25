@@ -66,8 +66,15 @@ data class InfoPool(
 
     // 本次任务快照的提示词包与访问等级
     var packId: String = "standard",
+    var packLevel: String = "adb",
     var accessLevel: String = "user"
-)
+) {
+    /** pack 是上限：basic 包在 adb 环境下也只能用 user 级工具。 */
+    fun effectiveLevel(): AccessLevel = AccessLevel.cap(
+        AccessLevel.fromId(accessLevel),
+        AccessLevel.fromId(packLevel)
+    )
+}
 
 /**
  * 动作定义

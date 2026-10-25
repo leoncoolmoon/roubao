@@ -142,10 +142,11 @@ class MobileAgent(
 
         val infoPool = InfoPool(instruction = instruction)
         infoPool.packId = packId
+        infoPool.packLevel = pack?.level ?: "user"
         infoPool.accessLevel = accessLevel.id
-        log("访问等级: ${accessLevel.id}, 提示词包: $packId")
+        log("访问等级: ${accessLevel.id}, 提示词包: $packId (cap=${infoPool.packLevel})")
         infoPool.availableSkills = try {
-            skillManager?.getEnabledSkillRoster(accessLevel)
+            skillManager?.getEnabledSkillRoster(infoPool.effectiveLevel())
                 ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
                 .orEmpty()
         } catch (e: Exception) {
@@ -299,7 +300,7 @@ class MobileAgent(
                     planResult.selectedSkillId?.let { selectedId ->
                         infoPool.selectedSkillId = selectedId
                         val selectedPrompt = try {
-                            skillManager?.getSkillPrompt(selectedId, AccessLevel.fromId(infoPool.accessLevel))
+                            skillManager?.getSkillPrompt(selectedId, infoPool.effectiveLevel())
                         } catch (e: Exception) {
                             null
                         }
@@ -1064,7 +1065,7 @@ class MobileAgent(
      * 执行具体动作 (在 IO 线程执行，避免 ANR)
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool): String? = withContext(Dispatchers.IO) {
-        val level = AccessLevel.fromId(infoPool.accessLevel)
+        val level = infoPool.effectiveLevel()
         val gateError = ActionGate.check(action, level, infoPool.packId)
         if (gateError != null) {
             log("动作被拒绝: $gateError")

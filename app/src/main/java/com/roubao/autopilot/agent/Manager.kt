@@ -31,7 +31,7 @@ class Manager {
 
         val formatted = formatManagerPrompt(infoPool, template)
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt(AccessLevel.fromId(infoPool.accessLevel))
+            PromptRepository.getInstance().getFeedbackPrompt(infoPool.effectiveLevel())
         } catch (e: Exception) {
             ""
         }
@@ -139,7 +139,7 @@ class Manager {
         result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
             "Use `ask_user` when required details are missing. Use `answer` only for the final response after the task is complete. This rule overrides any other wording that says to use `answer` for questions.\n"
 
-        val policy = toolPolicySection(infoPool.packId, AccessLevel.fromId(infoPool.accessLevel))
+        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
         if (policy.isNotBlank()) result += policy
 
         return result

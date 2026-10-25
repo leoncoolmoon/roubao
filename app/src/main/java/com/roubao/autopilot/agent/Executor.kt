@@ -65,7 +65,7 @@ class Executor {
             .replace("{{actionHistory}}", actionHistoryStr)
 
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt(AccessLevel.fromId(infoPool.accessLevel))
+            PromptRepository.getInstance().getFeedbackPrompt(infoPool.effectiveLevel())
         } catch (e: Exception) {
             ""
         }
@@ -110,7 +110,7 @@ class Executor {
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
-        val policy = toolPolicySection(infoPool.packId, AccessLevel.fromId(infoPool.accessLevel))
+        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
         if (policy.isNotBlank()) prompt += policy
 
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")

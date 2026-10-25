@@ -42,9 +42,15 @@ object ActionGate {
         } ?: return null
 
         if (!item.enabled) return "tool '$itemId' is disabled"
-        if (!AccessLevel.satisfies(level, item.dependenceJson)) {
+        val packLevel = try {
+            repo.getPack(packId)?.level?.let { AccessLevel.fromId(it) } ?: AccessLevel.ROOT
+        } catch (e: Exception) {
+            AccessLevel.ROOT
+        }
+        val effective = AccessLevel.cap(level, packLevel)
+        if (!AccessLevel.satisfies(effective, item.dependenceJson)) {
             val deps = AccessLevel.parse(item.dependenceJson)
-            return "tool '$itemId' requires ${deps.joinToString("+")}, current level is ${level.id}"
+            return "tool '$itemId' requires ${deps.joinToString("+")}, current pack cap is ${effective.id}"
         }
         return null
     }

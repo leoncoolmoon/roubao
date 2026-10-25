@@ -16,9 +16,16 @@ fun toolPolicySection(
         return ""
     }
 
+    val packLevel = try {
+        repo.getPack(packId)?.level?.let { AccessLevel.fromId(it) } ?: AccessLevel.ROOT
+    } catch (e: Exception) {
+        AccessLevel.ROOT
+    }
+    val effective = AccessLevel.cap(level, packLevel)
+
     val dispatchable = setOf("tap", "type", "swipe", "press_key", "open_app", "shell")
     val items = try {
-        repo.getToolSkillPromptsForLevel(level)
+        repo.getToolSkillPromptsForLevel(effective)
             .filter { it.category == "tool" && it.id in dispatchable && it.enabled }
     } catch (e: Exception) {
         emptyList()
@@ -36,7 +43,7 @@ fun toolPolicySection(
 
     return buildString {
         append("\n\n### Tool Policy (AUTHORITATIVE) ###\n")
-        append("Access level: ").append(level.id).append(" (").append(level.label).append(")")
+        append("Access level: ").append(effective.id).append(" (").append(effective.label).append(")")
         append(" | pack: ").append(packId).append('\n')
         append("Enabled tools:\n")
         items.sortedBy { it.id }.forEach { item ->

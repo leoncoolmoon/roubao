@@ -36,5 +36,9 @@ enum class AccessLevel(val rank: Int, val id: String, val label: String) {
 
         fun satisfies(level: AccessLevel, dependenceJson: String?): Boolean =
             maxOfJson(dependenceJson).rank <= level.rank
+
+        /** pack 是当前等级的上限：basic 在 adb 环境下也只能用 user 级工具。 */
+        fun cap(current: AccessLevel, packLevel: AccessLevel): AccessLevel =
+            if (current.rank <= packLevel.rank) current else packLevel
     }
 }
