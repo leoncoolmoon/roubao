@@ -227,7 +227,7 @@ fun CapabilitiesScreen() {
     var addPromptCategory by remember { mutableStateOf<String?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
-    val availableToolSkills = toolSkillList.filter {
+    val availableToolSkillCount = toolSkillList.count {
         AccessLevel.satisfies(currentLevel, it.dependenceJson)
     }
 
@@ -237,13 +237,13 @@ fun CapabilitiesScreen() {
         }
     } else emptyList()
     val visibleTools = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Tools")) {
-        availableToolSkills.filter {
+        toolSkillList.filter {
             it.category == "tool" &&
                 matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
         }
     } else emptyList()
     val visibleSkills = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Skills")) {
-        availableToolSkills.filter {
+        toolSkillList.filter {
             it.category == "skill" &&
                 matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
         }
@@ -276,7 +276,7 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${availableToolSkills.size}/${toolSkillList.size} 个 Tool/Skill 可用 · 等级 ${currentLevel.label} · 包 $activePackId",
+                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前等级可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 包 $activePackId",
                     fontSize = 13.sp,
                     color = colors.textSecondary
                 )
@@ -411,6 +411,7 @@ fun CapabilitiesScreen() {
                 agents = visibleAgents,
                 tools = visibleTools,
                 skills = visibleSkills,
+                currentLevel = currentLevel,
                 onEditAgent = { agent -> activePromptTarget = PromptTarget.AgentTarget(agent) },
                 onDeleteAgent = { agent -> deleteConfirmTarget = PromptTarget.AgentTarget(agent) },
                 onToggleAgent = { agent, enabled ->
@@ -569,6 +570,7 @@ fun UnifiedCapabilitiesList(
     agents: List<AgentPromptEntity>,
     tools: List<ToolSkillPromptEntity>,
     skills: List<ToolSkillPromptEntity>,
+    currentLevel: AccessLevel,
     onEditAgent: (AgentPromptEntity) -> Unit,
     onDeleteAgent: (AgentPromptEntity) -> Unit,
     onToggleAgent: (AgentPromptEntity, Boolean) -> Unit,
@@ -633,6 +635,7 @@ fun UnifiedCapabilitiesList(
             items(tools, key = { "tool_${it.id}" }) { item ->
                 ToolSkillCard(
                     item = item,
+                    available = AccessLevel.satisfies(currentLevel, item.dependenceJson),
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
                     onToggleEnabled = { onToggleTool(item, it) },
@@ -647,6 +650,7 @@ fun UnifiedCapabilitiesList(
             items(skills, key = { "skill_${it.id}" }) { item ->
                 ToolSkillCard(
                     item = item,
+                    available = AccessLevel.satisfies(currentLevel, item.dependenceJson),
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
                     onToggleEnabled = { onToggleTool(item, it) },
@@ -1083,6 +1087,7 @@ fun ToolsSkillsListView(
 @Composable
 fun ToolSkillCard(
     item: ToolSkillPromptEntity,
+    available: Boolean = true,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
@@ -1170,6 +1175,13 @@ fun ToolSkillCard(
                         fontSize = 11.sp,
                         color = if (deps.isEmpty()) colors.textHint else colors.primary
                     )
+                    if (!available) {
+                        Text(
+                            text = "当前等级不可用（仍可编辑/启用）",
+                            fontSize = 11.sp,
+                            color = colors.error
+                        )
+                    }
                 }
 
                 Switch(

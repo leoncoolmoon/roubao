@@ -4,9 +4,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -625,6 +627,14 @@ class DeviceController(private val context: Context? = null) {
      * 打开 DeepLink
      */
     fun openDeepLink(uri: String) {
-        exec("am start -a android.intent.action.VIEW -d \"$uri\"")
+        // 优先用普通 Intent，user 级即可打开；失败再回退 shell（需要 adb）。
+        try {
+            val ctx = context ?: App.getInstance()
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            exec("am start -a android.intent.action.VIEW -d \"$uri\"")
+        }
     }
 }
