@@ -39,6 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.roubao.autopilot.agent.AccessLevel
+import com.roubao.autopilot.agent.AccessLevelManager
 import com.roubao.autopilot.data.AgentPromptEntity
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.data.ToolSkillPromptEntity
@@ -70,6 +72,7 @@ fun CapabilitiesScreen() {
     val repository = remember { PromptRepository.getInstance() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val currentLevel by AccessLevelManager.level.collectAsState()
 
     var refreshTrigger by remember { mutableStateOf(0) }
 
@@ -185,6 +188,10 @@ fun CapabilitiesScreen() {
         feedbackList = repository.getAllFeedback()
     }
 
+    LaunchedEffect(Unit) {
+        AccessLevelManager.refresh(context)
+    }
+
     // 顶层分区：能力（Agents/Tools/Skills）与 反馈（建议/吐槽）分开
     var mainSection by remember { mutableStateOf("能力") }
     var selectedFilter by remember { mutableStateOf("全部") }
@@ -211,19 +218,23 @@ fun CapabilitiesScreen() {
     var addPromptCategory by remember { mutableStateOf<String?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
+    val availableToolSkills = toolSkillList.filter {
+        AccessLevel.satisfies(currentLevel, it.dependenceJson)
+    }
+
     val visibleAgents = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Agents")) {
         agentsList.filter {
             matchesSearch(it.name, it.role, it.description, it.prompt)
         }
     } else emptyList()
     val visibleTools = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Tools")) {
-        toolSkillList.filter {
+        availableToolSkills.filter {
             it.category == "tool" &&
                 matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
         }
     } else emptyList()
     val visibleSkills = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Skills")) {
-        toolSkillList.filter {
+        availableToolSkills.filter {
             it.category == "skill" &&
                 matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
         }
@@ -256,7 +267,7 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill",
+                    text = "${agentsList.size} 个 Agent，${availableToolSkills.size}/${toolSkillList.size} 个 Tool/Skill 可用 · 当前等级 ${currentLevel.label}",
                     fontSize = 13.sp,
                     color = colors.textSecondary
                 )
@@ -1140,6 +1151,13 @@ fun ToolSkillCard(
                         color = colors.textSecondary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val deps = AccessLevel.parse(item.dependenceJson)
+                    Text(
+                        text = "依赖: " + if (deps.isEmpty()) "无（所有等级）" else deps.joinToString(" + ") { it.uppercase() },
+                        fontSize = 11.sp,
+                        color = if (deps.isEmpty()) colors.textHint else colors.primary
                     )
                 }
 

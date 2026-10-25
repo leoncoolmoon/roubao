@@ -239,13 +239,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 首次进入且 Shizuku 未连接时，显示帮助引导（只显示一次）
-        LaunchedEffect(Unit) {
-            if (!isShizukuAvailable && settings.hasSeenOnboarding && !hasShownShizukuHelp) {
-                hasShownShizukuHelp = true
-                showShizukuHelpDialog = true
-            }
-        }
+        // 不再自动弹 Shizuku 使用指南：basic/无障碍模式不需要 Shizuku。
+        // 需要时从“设置 → Shizuku 连接 / 授权”手动发起。
 
         Scaffold(
             modifier = Modifier.background(colors.background),
@@ -372,6 +367,7 @@ class MainActivity : ComponentActivity() {
                                         AccessLevelManager.refresh(this@MainActivity)
                                     }
                                 },
+                                onRefreshShizuku = { refreshShizukuStatus() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
@@ -432,23 +428,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkAndUpdateShizukuStatus() {
-        Log.d(TAG, "checkAndUpdateShizukuStatus called")
+    private fun checkAndUpdateShizukuStatus(requestIfNeeded: Boolean = false) {
+        Log.d(TAG, "checkAndUpdateShizukuStatus called, requestIfNeeded=$requestIfNeeded")
         try {
             val binderAlive = Shizuku.pingBinder()
             Log.d(TAG, "Shizuku pingBinder: $binderAlive")
 
             if (binderAlive) {
-                shizukuAvailable.value = true
                 val hasPermission = checkShizukuPermission()
                 Log.d(TAG, "Shizuku hasPermission: $hasPermission")
 
                 if (hasPermission) {
+                    shizukuAvailable.value = true
                     Log.d(TAG, "Binding Shizuku service")
                     deviceController.bindService()
                 } else {
-                    Log.d(TAG, "Requesting Shizuku permission")
-                    requestShizukuPermission()
+                    // 不自动弹 Shizuku 授权：basic/无障碍模式不需要 Shizuku。
+                    // 只有用户主动点“授权/刷新”时才 requestPermission。
+                    shizukuAvailable.value = false
+                    if (requestIfNeeded) {
+                        Log.d(TAG, "Requesting Shizuku permission by user action")
+                        requestShizukuPermission()
+                    } else {
+                        Log.d(TAG, "Shizuku permission missing; skip auto request")
+                    }
                 }
             } else {
                 Log.d(TAG, "Shizuku binder not alive")
@@ -463,7 +466,7 @@ class MainActivity : ComponentActivity() {
     private fun refreshShizukuStatus() {
         Log.d(TAG, "refreshShizukuStatus called by user")
         Toast.makeText(this, "正在检查 Shizuku 状态...", Toast.LENGTH_SHORT).show()
-        checkAndUpdateShizukuStatus()
+        checkAndUpdateShizukuStatus(requestIfNeeded = true)
 
         if (shizukuAvailable.value && checkShizukuPermission()) {
             Toast.makeText(this, "Shizuku 已连接", Toast.LENGTH_SHORT).show()

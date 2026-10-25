@@ -70,6 +70,7 @@ fun SettingsScreen(
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
     onUpdatePromptPackMode: (String) -> Unit = {},
     onUpdateAdvancedModeEnabled: (Boolean) -> Unit = {},
+    onRefreshShizuku: () -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
@@ -278,6 +279,16 @@ fun SettingsScreen(
                     else -> "自动（当前等级：${currentLevel.label}）"
                 },
                 onClick = { showPackDialog = true }
+            )
+        }
+
+        // 手动连接/授权 Shizuku：不在启动时自动弹授权框，basic 模式可完全跳过
+        item {
+            SettingsItem(
+                icon = Icons.Default.Build,
+                title = "Shizuku 连接 / 授权",
+                subtitle = if (shizukuAvailable) "已连接" else "未连接或未授权；basic 模式不需要 Shizuku",
+                onClick = { onRefreshShizuku() }
             )
         }
 

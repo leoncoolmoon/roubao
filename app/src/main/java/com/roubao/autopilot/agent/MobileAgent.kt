@@ -188,6 +188,8 @@ class MobileAgent(
 
         updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
+        var apiFailureStreak = 0
+
         try {
             for (step in 0 until maxSteps) {
                 // 检查协程是否被取消
@@ -288,9 +290,21 @@ class MobileAgent(
                     }
 
                     if (planResponse.isFailure) {
-                        log("Manager 调用失败: ${planResponse.exceptionOrNull()?.message}")
+                        apiFailureStreak++
+                        val err = planResponse.exceptionOrNull()?.message ?: "unknown"
+                        log("Manager 调用失败($apiFailureStreak/3): $err")
+                        OverlayService.update("模型调用失败，重试...")
+                        if (apiFailureStreak >= 3) {
+                            OverlayService.update("模型调用连续失败")
+                            OverlayService.idle(context)
+                            updateState { copy(isRunning = false) }
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "模型调用连续失败: ${err.take(300)}")
+                        }
+                        delay(1500L * apiFailureStreak)
                         continue
                     }
+                    apiFailureStreak = 0
 
                     val rawPlan = planResponse.getOrThrow()
                     val planResult = manager.parseResponse(rawPlan)
@@ -378,9 +392,21 @@ class MobileAgent(
                 }
 
                 if (actionResponse.isFailure) {
-                    log("Executor 调用失败: ${actionResponse.exceptionOrNull()?.message}")
+                    apiFailureStreak++
+                    val err = actionResponse.exceptionOrNull()?.message ?: "unknown"
+                    log("Executor 调用失败($apiFailureStreak/3): $err")
+                    OverlayService.update("模型调用失败，重试...")
+                    if (apiFailureStreak >= 3) {
+                        OverlayService.update("模型调用连续失败")
+                        OverlayService.idle(context)
+                        updateState { copy(isRunning = false) }
+                        bringAppToFront()
+                        return AgentResult(success = false, message = "模型调用连续失败: ${err.take(300)}")
+                    }
+                    delay(1500L * apiFailureStreak)
                     continue
                 }
+                apiFailureStreak = 0
 
                 val responseText = actionResponse.getOrThrow()
                 val executorResult = executor.parseResponse(responseText)
@@ -534,9 +560,20 @@ class MobileAgent(
                     val reflectPrompt = reflector.getPrompt(infoPool)
                     val reflectResponse = modelClient.predict(reflectPrompt, listOfNotNull(screenshot, afterScreenshot))
                     if (reflectResponse.isSuccess) {
+                        apiFailureStreak = 0
                         reflector.parseResponse(reflectResponse.getOrThrow())
                     } else {
-                        ReflectorResult("C", "Failed to call reflector")
+                        apiFailureStreak++
+                        val err = reflectResponse.exceptionOrNull()?.message ?: "unknown"
+                        log("Reflector 调用失败($apiFailureStreak/3): $err")
+                        if (apiFailureStreak >= 3) {
+                            OverlayService.update("模型调用连续失败")
+                            OverlayService.idle(context)
+                            updateState { copy(isRunning = false) }
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "模型调用连续失败: ${err.take(300)}")
+                        }
+                        ReflectorResult("C", "Failed to call reflector: ${err.take(160)}")
                     }
                 }
 
