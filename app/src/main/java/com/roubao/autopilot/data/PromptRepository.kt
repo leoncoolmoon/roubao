@@ -1089,7 +1089,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 17) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 18) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1118,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 17) {
+                if (version < 18) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1280,6 +1280,20 @@ class PromptRepository private constructor(context: Context) {
                     ContentValues().apply { put("prompt", BASIC_EXECUTOR_PROMPT) },
                     "agent_id = ? AND pack_id = ?",
                     arrayOf("executor", "basic")
+                )
+            }
+            if (oldVersion < 18) {
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put(
+                            "description",
+                            "在已安装的音乐/媒体播放器中暂停、继续或播放音乐；先确认已安装应用，不要假设特定 App 存在。"
+                        )
+                        put("prompt", MUSIC_PLAYER_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("music_player")
                 )
             }
         }
@@ -1518,6 +1532,13 @@ Choose exactly ONE next action. Use the Accessibility UI Tree for element text/c
 One valid JSON object, no markdown fences.
 ### Description ###
 One short sentence."""
+
+        private val MUSIC_PLAYER_PROMPT = """技能: music_player
+说明: 在已安装的音乐/媒体播放器中暂停、继续或播放音乐。先查看 Installed Apps 列表，只对已安装的播放器操作；不要假设网易云/QQ/VLC 等特定 App 存在。
+步骤:
+1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
+2. 只对已安装的播放器使用 open_app。
+3. 若没有已安装播放器，再 ask_user 或去应用列表查找。"""
 
         private val ADVANCED_OVERLAY = """### Advanced Mode (Root) ###
 Root-level tools may be available in this pack.

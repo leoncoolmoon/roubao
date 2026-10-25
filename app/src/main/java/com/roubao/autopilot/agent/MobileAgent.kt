@@ -1265,22 +1265,23 @@ class MobileAgent(
                 }
             }
             "system_button" -> {
-                when (action.button) {
-                    "Back", "back" -> {
+                // 模型可能返回 HOME/BACK/ENTER（大写）；统一按小写处理。
+                when (action.button?.lowercase()) {
+                    "back" -> {
                         if (accessibilityModeEnabled && accessibilityService?.pressBack() == true) {
                             log("🤖 无障碍 BACK")
                         } else {
                             controller.back()
                         }
                     }
-                    "Home", "home" -> {
+                    "home" -> {
                         if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
                             log("🤖 无障碍 HOME")
                         } else {
                             controller.home()
                         }
                     }
-                    "Enter", "enter" -> {
+                    "enter" -> {
                         if (infoPool.effectiveLevel() >= AccessLevel.ADB) {
                             controller.enter()
                         } else {
