@@ -1089,7 +1089,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 18) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 19) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1118,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 18) {
+                if (version < 19) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1282,18 +1282,28 @@ class PromptRepository private constructor(context: Context) {
                     arrayOf("executor", "basic")
                 )
             }
-            if (oldVersion < 18) {
+            if (oldVersion < 19) {
+                // music_player 是旧 DB 的重复技能；统一收敛到 play_music。
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 0)
+                        put("source", "legacy")
+                    },
+                    "id = ?",
+                    arrayOf("music_player")
+                )
                 db.update(
                     "tool_skill_prompts",
                     ContentValues().apply {
                         put(
                             "description",
-                            "在已安装的音乐/媒体播放器中暂停、继续或播放音乐；先确认已安装应用，不要假设特定 App 存在。"
+                            "在已安装的音乐/媒体播放器中播放、暂停或继续音乐；先确认已安装应用。"
                         )
-                        put("prompt", MUSIC_PLAYER_PROMPT)
+                        put("prompt", PLAY_MUSIC_PROMPT)
                     },
                     "id = ?",
-                    arrayOf("music_player")
+                    arrayOf("play_music")
                 )
             }
         }
@@ -1535,6 +1545,13 @@ One short sentence."""
 
         private val MUSIC_PLAYER_PROMPT = """技能: music_player
 说明: 在已安装的音乐/媒体播放器中暂停、继续或播放音乐。先查看 Installed Apps 列表，只对已安装的播放器操作；不要假设网易云/QQ/VLC 等特定 App 存在。
+步骤:
+1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
+2. 只对已安装的播放器使用 open_app。
+3. 若没有已安装播放器，再 ask_user 或去应用列表查找。"""
+
+        private val PLAY_MUSIC_PROMPT = """技能: play_music
+说明: 在已安装的音乐/媒体播放器中播放、暂停或继续音乐。先查看 Installed Apps 列表，只对已安装的播放器操作；不要假设网易云/QQ/酷狗/Spotify 等特定 App 存在。
 步骤:
 1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
 2. 只对已安装的播放器使用 open_app。

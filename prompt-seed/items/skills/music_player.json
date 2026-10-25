@@ -14,5 +14,8 @@
   "keywords": [],
   "related_apps": [],
   "prompt_hint": "",
-  "domain": ""
+  "domain": "",
+  "enabled": false,
+  "legacy_alias_of": "play_music",
+  "source": "legacy"
 }
