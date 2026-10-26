@@ -488,6 +488,9 @@ class MobileAgent(
 
                 // 7. 执行动作
                 awaitIfPaused()
+                // 动作期间隐藏悬浮窗，避免肉包图标盖住目标控件、点击落到自己身上。
+                OverlayService.setVisible(false)
+                delay(150)
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
                 val toolResult = executeAction(action, infoPool)

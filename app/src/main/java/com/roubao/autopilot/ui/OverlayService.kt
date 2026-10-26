@@ -2,64 +2,77 @@ package com.roubao.autopilot.ui
 
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.*
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.roubao.autopilot.MainActivity
 import com.roubao.autopilot.R
 
 /**
- * 七彩悬浮窗服务 - 显示当前执行步骤
- * 放在屏幕顶部状态栏下方，不影响截图识别
+ * 肉包悬浮窗服务
+ *
+ * 视觉结构（空闲态与工作态里，包子是同一个 ImageView，位置/大小永远一致）：
+ *
+ *   空闲态：  [包子]                               窗口 84dp × 84dp
+ *   工作态：  [包子]【橙色面板：当前步骤文字】      窗口 360dp × 84dp
+ *
+ * 层级（从下到上）：橙色面板 → 包子 → 文字 → 操作按钮行 → 输入面板
+ *
+ * 工作时包子循环播放「横向压缩→还原→纵向压缩→还原」动画；点击包子暂停/继续（暂停时动画冻结），
+ * 状态变化用 Toast 提示；长按包子打开主界面。
+ *
+ * 资源：
+ *   R.drawable.roubao_idle_icon   包子图标（drawable-nodpi，已裁成紧凑的正方形）
+ *   R.drawable.roubao_panel_bg    橙色圆角面板 9-patch（drawable-xxhdpi，只有面板，没有包子）
  */
 class OverlayService : Service() {
 
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
+
+    private var panelView: View? = null            // 橙色面板（工作态显示）
+    private var idleIconView: ImageView? = null    // 包子（始终显示，位置固定）
     private var textView: TextView? = null
     private var actionButton: TextView? = null
     private var actionRowTag: LinearLayout? = null
-    private var pauseButton: TextView? = null
-    private var progressRing: ProgressBar? = null
-    private var cancelButton: TextView? = null  // 确认模式下的取消按钮
-    private var askUserDialog: AlertDialog? = null
+    private var cancelButton: TextView? = null     // 确认模式下的取消按钮
+
     private var askUserPanel: LinearLayout? = null
     private var askUserInput: EditText? = null
     private var askUserQuestion: TextView? = null
     private var pendingAskAnswer: ((String) -> Unit)? = null
     private var askUserFromIdle = false
-    private var overlayParams: WindowManager.LayoutParams? = null
-    private var overlayRoot: FrameLayout? = null
-    private var idleIconView: ImageView? = null
+
     private var isIdleMode = false
-    private var divider: View? = null
-    private var divider2: View? = null  // 确认模式下第二个分隔线
-    private var animator: ValueAnimator? = null
+    private var isMinimized = false   // 最小化：只显示包子，隐藏橙色内容区
+    private var bunAnimator: ValueAnimator? = null   // 包子的压缩动画
 
     companion object {
         private var instance: OverlayService? = null
@@ -70,6 +83,20 @@ class OverlayService : Service() {
         private var isTakeOverMode = false
         private var isConfirmMode = false  // 敏感操作确认模式
         private var isPaused = false
+
+        // 悬浮窗布局尺寸（dp）。包子的位置/大小只由这几个常量决定，空闲态与工作态共用
+        private const val WINDOW_HEIGHT_DP = 84
+        private const val IDLE_WINDOW_WIDTH_DP = 84
+        private const val WORK_WINDOW_WIDTH_DP = 360
+        private const val ASK_WINDOW_HEIGHT_DP = 190
+        private const val BUN_SIZE_DP = 76
+        private const val BUN_LEFT_DP = 4                       // 包子左边距
+        private const val BUN_SQUASH_SCALE = 0.95f              // 压缩到 95%
+        private const val BUN_ANIM_CYCLE_MS = 1600L             // 一个完整循环（横向+纵向）时长
+        private const val PANEL_HEIGHT_DP = 60
+        private const val PANEL_LEFT_DP = 60                    // 面板从这里开始，左端被包子盖住一部分
+        private const val PANEL_RIGHT_DP = 4
+        private const val TEXT_LEFT_DP = 90
 
         // 等待 instance 回调队列
         private val pendingCallbacks = mutableListOf<() -> Unit>()
@@ -139,14 +166,15 @@ class OverlayService : Service() {
         }
 
         fun updatePauseState(paused: Boolean) {
+            val changed = isPaused != paused
             isPaused = paused
-            instance?.applyPauseState(paused)
+            instance?.applyPauseState(paused, changed)
         }
 
-        /** 截图时临时隐藏悬浮窗 */
+        /** 截图/动作期间临时隐藏悬浮窗 */
         fun setVisible(visible: Boolean) {
             instance?.overlayView?.post {
-                instance?.overlayView?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+                instance?.overlayView?.visibility = if (visible) View.VISIBLE else View.GONE
             }
         }
 
@@ -300,53 +328,120 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        animator?.cancel()
+        bunAnimator?.cancel()
         overlayView?.let { windowManager?.removeView(it) }
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun createOverlayView() {
-        // 使用用户提供的 9-patch：左侧包子，右侧橙色内容区；不再额外画图标
-        val container = FrameLayout(this).apply {
-            background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
-            alpha = 0.86f
-        }
+        // 容器本身不设背景：背景由「橙色面板」和「包子」两个独立 View 组成
+        val container = FrameLayout(this)
 
-        val frameSize = dp(60)
-        progressRing = ProgressBar(this).apply {
-            isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-            layoutParams = FrameLayout.LayoutParams(frameSize, frameSize, Gravity.START or Gravity.CENTER_VERTICAL).apply {
-                leftMargin = dp(4)
+        // ① 橙色面板（最底层）：从包子右侧伸出，左端被包子盖住，像对话框从包子里弹出
+        panelView = View(this).apply {
+            setBackgroundResource(R.drawable.roubao_panel_bg)
+            alpha = 0.92f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(PANEL_HEIGHT_DP),
+                Gravity.CENTER_VERTICAL
+            ).apply {
+                leftMargin = dp(PANEL_LEFT_DP)
+                rightMargin = dp(PANEL_RIGHT_DP)
             }
         }
-        pauseButton = TextView(this).apply {
-            text = "Ⅱ"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.argb(105, 18, 20, 28))
-                setStroke(1, Color.argb(130, 255, 255, 255))
-            }
-            layoutParams = FrameLayout.LayoutParams(dp(32), dp(32), Gravity.START or Gravity.CENTER_VERTICAL).apply {
-                leftMargin = dp(20)
-            }
-            setOnClickListener {
-                if (!isTakeOverMode && !isConfirmMode) pauseCallback?.invoke()
-            }
-            setOnLongClickListener {
-                if (!isTakeOverMode && !isConfirmMode && !isPaused) pauseCallback?.invoke()
-                openMainWindow()
-                true
-            }
-        }
-        container.addView(progressRing)
-        container.addView(pauseButton)
+        container.addView(panelView)
 
-        // 文字叠在 9-patch 右侧橙色区域
+        // ② 包子：空闲态与工作态是同一个 View，位置、大小固定，所以必然重合
+        idleIconView = ImageView(this).apply {
+            setImageResource(R.drawable.roubao_idle_icon)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                dp(BUN_SIZE_DP), dp(BUN_SIZE_DP),
+                Gravity.START or Gravity.CENTER_VERTICAL
+            ).apply { leftMargin = dp(BUN_LEFT_DP) }
+
+            var downRawX = 0f
+            var downRawY = 0f
+            var startX = 0
+            var startY = 0
+            var moved = false
+            var longPressed = false
+            val bunLongHandler = Handler(Looper.getMainLooper())
+            val tapHandler = Handler(Looper.getMainLooper())
+            var pendingTap: Runnable? = null
+            val bunLongRunnable = Runnable {
+                if (!moved) {
+                    longPressed = true
+                    openMainWindow()
+                }
+            }
+            // 包子：拖动移动悬浮窗；长按打开主界面；单击 —— 空闲态打开输入面板，工作态暂停/继续；双击 —— 最小化/展开
+            setOnTouchListener { _, event ->
+                val p = overlayParams ?: return@setOnTouchListener false
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downRawX = event.rawX
+                        downRawY = event.rawY
+                        startX = p.x
+                        startY = p.y
+                        moved = false
+                        longPressed = false
+                        bunLongHandler.postDelayed(bunLongRunnable, 500)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - downRawX
+                        val dy = event.rawY - downRawY
+                        if (kotlin.math.abs(dx) > dp(6) || kotlin.math.abs(dy) > dp(6)) {
+                            moved = true
+                            bunLongHandler.removeCallbacks(bunLongRunnable)
+                        }
+                        if (moved) {
+                            p.x = startX + dx.toInt()
+                            p.y = startY + dy.toInt()
+                            windowManager?.updateViewLayout(container, p)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        bunLongHandler.removeCallbacks(bunLongRunnable)
+                        if (!moved && !longPressed) {
+                            when {
+                                isIdleMode -> showIdleInput()
+                                isTakeOverMode || isConfirmMode -> Unit
+                                else -> {
+                                    val pending = pendingTap
+                                    if (pending != null) {
+                                        // 双击：最小化 / 展开
+                                        tapHandler.removeCallbacks(pending)
+                                        pendingTap = null
+                                        pauseCallback?.invoke()
+                                    } else {
+                                        // 先等一个双击间隔，期间没有第二次点击才算单击（暂停/继续）
+                                        val r = Runnable {
+                                            pendingTap = null
+                                            toggleMinimize()
+                                        }
+                                        pendingTap = r
+                                        tapHandler.postDelayed(r, ViewConfiguration.getDoubleTapTimeout().toLong())
+                                    }
+                                }
+                            }
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        bunLongHandler.removeCallbacks(bunLongRunnable)
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+        container.addView(idleIconView)
+
+        // ③ 文字：叠在橙色面板上
         textView = TextView(this).apply {
             text = "准备中..."
             textSize = 13f
@@ -361,12 +456,13 @@ class OverlayService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER_VERTICAL
             ).apply {
-                leftMargin = dp(94)
+                leftMargin = dp(TEXT_LEFT_DP)
                 rightMargin = dp(12)
             }
         }
         container.addView(textView)
 
+        // ④ 操作按钮行（继续 / 确认 / 取消）
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -375,7 +471,7 @@ class OverlayService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply { rightMargin = dp(8) }
+            ).apply { rightMargin = dp(10) }
         }
         actionButton = TextView(this).apply {
             text = ""
@@ -423,7 +519,7 @@ class OverlayService : Service() {
         actionRowTag = actionRow
         container.addView(actionRow)
 
-        // ask_user：直接显示在悬浮窗内部，避免 Service 弹 Dialog 的 token 问题
+        // ⑤ ask_user 输入面板：直接显示在悬浮窗内部，避免 Service 弹 Dialog 的 token 问题
         val askPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -515,66 +611,6 @@ class OverlayService : Service() {
         askUserPanel = askPanel
         container.addView(askPanel)
 
-        // 空闲态只显示肉包图标；点击复用输入面板
-        idleIconView = ImageView(this).apply {
-            setImageResource(R.drawable.roubao_idle_icon)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            visibility = View.GONE
-            setPadding(dp(2), dp(2), dp(2), dp(2))
-            layoutParams = FrameLayout.LayoutParams(dp(80), dp(80), Gravity.CENTER)
-            var downRawX = 0f
-            var downRawY = 0f
-            var startX = 0
-            var startY = 0
-            var moved = false
-            var longPressed = false
-            val idleLongHandler = Handler(Looper.getMainLooper())
-            val idleLongRunnable = Runnable {
-                if (!moved) {
-                    longPressed = true
-                    openMainWindow()
-                }
-            }
-            setOnTouchListener { _, event ->
-                val p = overlayParams
-                if (p == null) return@setOnTouchListener false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        downRawX = event.rawX
-                        downRawY = event.rawY
-                        startX = p.x
-                        startY = p.y
-                        moved = false
-                        longPressed = false
-                        idleLongHandler.postDelayed(idleLongRunnable, 500)
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = event.rawX - downRawX
-                        val dy = event.rawY - downRawY
-                        if (kotlin.math.abs(dx) > dp(6) || kotlin.math.abs(dy) > dp(6)) {
-                            moved = true
-                            idleLongHandler.removeCallbacks(idleLongRunnable)
-                        }
-                        if (moved) {
-                            p.x = startX + dx.toInt()
-                            p.y = startY + dy.toInt()
-                            windowManager?.updateViewLayout(container, p)
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        idleLongHandler.removeCallbacks(idleLongRunnable)
-                        if (!moved && !longPressed) showIdleInput()
-                        true
-                    }
-                    else -> false
-                }
-            }
-        }
-        container.addView(idleIconView)
-        overlayRoot = container
-
         val params = WindowManager.LayoutParams().apply {
             type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -587,8 +623,8 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON  // 保持屏幕常亮
             format = PixelFormat.TRANSLUCENT
-            width = dp(360)
-            height = dp(84)
+            width = dp(WORK_WINDOW_WIDTH_DP)
+            height = dp(WINDOW_HEIGHT_DP)
             gravity = Gravity.TOP or Gravity.START
             x = 100
             y = 200
@@ -650,20 +686,21 @@ class OverlayService : Service() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    /** 空闲态：只有包子，窗口缩成 84×84 */
     private fun setIdleMode() {
         isIdleMode = true
+        isMinimized = false
         overlayView?.post {
-            overlayRoot?.background = null
-            overlayRoot?.alpha = 1f
+            resetBunAnimation()
+            panelView?.visibility = View.GONE
             idleIconView?.visibility = View.VISIBLE
             askUserPanel?.visibility = View.GONE
             textView?.visibility = View.GONE
-            pauseButton?.visibility = View.GONE
-            progressRing?.visibility = View.GONE
             actionRowTag?.visibility = View.GONE
             val params = overlayParams ?: return@post
-            params.width = dp(84)
-            params.height = dp(84)
+            params.width = dp(IDLE_WINDOW_WIDTH_DP)
+            params.height = dp(WINDOW_HEIGHT_DP)
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             windowManager?.updateViewLayout(overlayView, params)
         }
     }
@@ -699,67 +736,6 @@ class OverlayService : Service() {
         }
     }
 
-    private fun startRainbowAnimation(drawable: GradientDrawable) {
-        val colors = intArrayOf(
-            Color.parseColor("#FF6B6B"), // 红
-            Color.parseColor("#FFA94D"), // 橙
-            Color.parseColor("#FFE066"), // 黄
-            Color.parseColor("#69DB7C"), // 绿
-            Color.parseColor("#4DABF7"), // 蓝
-            Color.parseColor("#9775FA"), // 紫
-            Color.parseColor("#F783AC"), // 粉
-            Color.parseColor("#FF6B6B")  // 回到红
-        )
-
-        animator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 3000
-            repeatCount = ValueAnimator.INFINITE
-            repeatMode = ValueAnimator.RESTART
-
-            addUpdateListener { animation ->
-                val fraction = animation.animatedValue as Float
-                val index = (fraction * (colors.size - 1)).toInt()
-                val nextIndex = minOf(index + 1, colors.size - 1)
-                val localFraction = (fraction * (colors.size - 1)) - index
-
-                val color1 = interpolateColor(colors[index], colors[nextIndex], localFraction)
-                val color2 = interpolateColor(
-                    colors[(index + 2) % colors.size],
-                    colors[(nextIndex + 2) % colors.size],
-                    localFraction
-                )
-                val color3 = interpolateColor(
-                    colors[(index + 4) % colors.size],
-                    colors[(nextIndex + 4) % colors.size],
-                    localFraction
-                )
-
-                drawable.colors = intArrayOf(color1, color2, color3)
-                drawable.orientation = GradientDrawable.Orientation.LEFT_RIGHT
-            }
-            start()
-        }
-    }
-
-    private fun interpolateColor(startColor: Int, endColor: Int, fraction: Float): Int {
-        val startA = Color.alpha(startColor)
-        val startR = Color.red(startColor)
-        val startG = Color.green(startColor)
-        val startB = Color.blue(startColor)
-
-        val endA = Color.alpha(endColor)
-        val endR = Color.red(endColor)
-        val endG = Color.green(endColor)
-        val endB = Color.blue(endColor)
-
-        return Color.argb(
-            (startA + (endA - startA) * fraction).toInt(),
-            (startR + (endR - startR) * fraction).toInt(),
-            (startG + (endG - startG) * fraction).toInt(),
-            (startB + (endB - startB) * fraction).toInt()
-        )
-    }
-
     private fun updateText(text: String) {
         textView?.post {
             textView?.text = text
@@ -775,22 +751,21 @@ class OverlayService : Service() {
     private fun showAskUserDialog(question: String, onAnswer: (String) -> Unit) {
         askUserFromIdle = isIdleMode
         isIdleMode = false
+        isMinimized = false   // 需要用户输入，自动展开
         pendingAskAnswer = onAnswer
         overlayView?.post {
-            overlayRoot?.background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
-            overlayRoot?.alpha = 0.86f
+            // 输入面板自带深色背景并盖住整个窗口，这里把橙色面板和包子一起收起来
+            panelView?.visibility = View.GONE
             idleIconView?.visibility = View.GONE
             askUserQuestion?.text = question
             askUserInput?.setText("")
             askUserPanel?.visibility = View.VISIBLE
             textView?.visibility = View.GONE
-            pauseButton?.visibility = View.GONE
-            progressRing?.visibility = View.GONE
             actionRowTag?.visibility = View.GONE
 
             val params = overlayParams ?: return@post
-            params.width = dp(360)
-            params.height = dp(190)
+            params.width = dp(WORK_WINDOW_WIDTH_DP)
+            params.height = dp(ASK_WINDOW_HEIGHT_DP)
             params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
             windowManager?.updateViewLayout(overlayView, params)
             askUserInput?.requestFocus()
@@ -827,85 +802,163 @@ class OverlayService : Service() {
             if (returnToIdle) {
                 setIdleMode()
             } else {
+                panelView?.visibility = View.VISIBLE
+                idleIconView?.visibility = View.VISIBLE
                 textView?.visibility = View.VISIBLE
-                pauseButton?.visibility = View.VISIBLE
-                progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
                 actionRowTag?.visibility = View.GONE
                 val params = overlayParams ?: return@post
-                params.height = dp(84)
+                params.height = dp(WINDOW_HEIGHT_DP)
                 params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 windowManager?.updateViewLayout(overlayView, params)
             }
         }
     }
 
+    /** 双击包子：最小化（只留包子，窗口缩到 84dp）/ 展开（恢复橙色内容区）。包子位置不变，动画照常 */
+    private fun toggleMinimize() {
+        if (isIdleMode || isTakeOverMode || isConfirmMode) return
+        isMinimized = !isMinimized
+        overlayView?.post {
+            panelView?.visibility = if (isMinimized) View.GONE else View.VISIBLE
+            textView?.visibility = if (isMinimized) View.GONE else View.VISIBLE
+            actionRowTag?.visibility = View.GONE
+            ensureWorkingSize()
+        }
+    }
+
     /** 切换到人机协作模式 */
     private fun setTakeOverMode(message: String) {
         println("[OverlayService] setTakeOverMode: $message")
+        isIdleMode = false
+        isMinimized = false   // 需要用户操作，自动展开
         overlayView?.post {
             overlayView?.visibility = View.VISIBLE
+            ensureWorkingSize()
+            panelView?.visibility = View.VISIBLE
+            idleIconView?.visibility = View.VISIBLE
+            textView?.visibility = View.VISIBLE
             textView?.text = "🖐 $message"
             actionRowTag?.visibility = View.VISIBLE
             actionButton?.visibility = View.VISIBLE
             actionButton?.text = "继续"
-            actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
-            divider2?.visibility = View.GONE
+            actionButton?.setTextColor(Color.parseColor("#3B1A00"))
             cancelButton?.visibility = View.GONE
-            pauseButton?.visibility = View.GONE
-            progressRing?.visibility = View.GONE
+            syncBunAnimation()
         }
     }
 
-    /** 切换到正常模式；普通模式不提供停止按钮 */
+    /** 切换到正常（工作）模式：包子 + 右侧橙色面板；普通模式不提供停止按钮 */
     private fun setNormalMode() {
         println("[OverlayService] setNormalMode")
         isIdleMode = false
         overlayView?.post {
-            overlayRoot?.background = ContextCompat.getDrawable(this@OverlayService, R.drawable.roubao_overlay_bg)
-            overlayRoot?.alpha = 0.86f
-            idleIconView?.visibility = View.GONE
+            panelView?.visibility = if (isMinimized) View.GONE else View.VISIBLE
+            idleIconView?.visibility = View.VISIBLE
             askUserPanel?.visibility = View.GONE
-            textView?.visibility = View.VISIBLE
+            textView?.visibility = if (isMinimized) View.GONE else View.VISIBLE
             actionRowTag?.visibility = View.GONE
             actionButton?.visibility = View.GONE
             actionButton?.text = ""
-            pauseButton?.visibility = View.VISIBLE
-            progressRing?.visibility = if (isPaused) View.GONE else View.VISIBLE
-            applyPauseState(isPaused)
-            divider2?.visibility = View.GONE
             cancelButton?.visibility = View.GONE
-            val params = overlayParams ?: return@post
-            params.width = dp(360)
-            params.height = dp(84)
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            windowManager?.updateViewLayout(overlayView, params)
+            ensureWorkingSize()
+            syncBunAnimation()
         }
     }
 
-    private fun applyPauseState(paused: Boolean) {
+    /** 把窗口恢复成工作态尺寸 360×84（包子位置不变，只是右侧展开面板） */
+    private fun ensureWorkingSize() {
+        val params = overlayParams ?: return
+        params.width = dp(if (isMinimized) IDLE_WINDOW_WIDTH_DP else WORK_WINDOW_WIDTH_DP)
+        params.height = dp(WINDOW_HEIGHT_DP)
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        windowManager?.updateViewLayout(overlayView, params)
+    }
+
+    /** 暂停/继续：冻结或恢复包子动画；状态真正变化时用 Toast 提示 */
+    private fun applyPauseState(paused: Boolean, notify: Boolean = false) {
         overlayView?.post {
-            pauseButton?.text = if (paused) "▶" else "Ⅱ"
-            pauseButton?.setTextColor(if (paused) Color.parseColor("#B8F5C0") else Color.WHITE)
-            progressRing?.visibility = if (paused) View.GONE else View.VISIBLE
+            syncBunAnimation()
+            if (notify) {
+                Toast.makeText(
+                    applicationContext,
+                    if (paused) "任务已暂停" else "任务继续",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
+    }
+
+    /**
+     * 包子压缩动画：一个循环 = 横向压缩到 95% 再还原，然后纵向压缩到 95% 再还原。
+     * 只在「工作中且未暂停、未等待用户操作」时播放，其余状态冻结在当前帧。
+     */
+    private fun syncBunAnimation() {
+        val shouldRun = !isIdleMode && !isPaused && !isTakeOverMode && !isConfirmMode
+        if (shouldRun) playBunAnimation() else freezeBunAnimation()
+    }
+
+    private fun playBunAnimation() {
+        val icon = idleIconView ?: return
+        val anim = bunAnimator ?: ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = BUN_ANIM_CYCLE_MS
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.RESTART
+            interpolator = null   // 线性时间轴，缓动由 sin 提供
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                val squash = 1f - BUN_SQUASH_SCALE
+                if (t < 0.5f) {
+                    // 前半段：横向压缩再还原
+                    val k = kotlin.math.sin(Math.PI * (t / 0.5f)).toFloat()
+                    icon.scaleX = 1f - squash * k
+                    icon.scaleY = 1f
+                } else {
+                    // 后半段：纵向压缩再还原
+                    val k = kotlin.math.sin(Math.PI * ((t - 0.5f) / 0.5f)).toFloat()
+                    icon.scaleX = 1f
+                    icon.scaleY = 1f - squash * k
+                }
+            }
+        }.also { bunAnimator = it }
+
+        when {
+            !anim.isStarted -> anim.start()
+            anim.isPaused -> anim.resume()
+        }
+    }
+
+    private fun freezeBunAnimation() {
+        val anim = bunAnimator ?: return
+        if (anim.isRunning) anim.pause()
+    }
+
+    private fun resetBunAnimation() {
+        bunAnimator?.cancel()
+        idleIconView?.scaleX = 1f
+        idleIconView?.scaleY = 1f
     }
 
     /** 切换到敏感操作确认模式 */
     private fun setConfirmMode(message: String) {
         println("[OverlayService] setConfirmMode: $message")
+        isIdleMode = false
+        isMinimized = false   // 需要用户操作，自动展开
         overlayView?.post {
             // 确保悬浮窗可见
             overlayView?.visibility = View.VISIBLE
+            ensureWorkingSize()
+            panelView?.visibility = View.VISIBLE
+            idleIconView?.visibility = View.VISIBLE
+            textView?.visibility = View.VISIBLE
             textView?.text = "⚠️ $message"
             actionRowTag?.visibility = View.VISIBLE
             actionButton?.visibility = View.VISIBLE
             actionButton?.text = "确认"
-            actionButton?.setTextColor(Color.parseColor("#B8F5C0"))
-            // 显示取消按钮和第二分隔线
-            divider2?.visibility = View.VISIBLE
+            actionButton?.setTextColor(Color.parseColor("#3B1A00"))
+            // 显示取消按钮
+            cancelButton?.setTextColor(Color.parseColor("#7A1F1F"))
             cancelButton?.visibility = View.VISIBLE
-            pauseButton?.visibility = View.GONE
-            progressRing?.visibility = View.GONE
+            syncBunAnimation()
         }
     }
 }
