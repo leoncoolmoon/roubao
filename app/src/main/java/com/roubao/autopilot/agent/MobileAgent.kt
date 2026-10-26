@@ -1242,7 +1242,6 @@ class MobileAgent(
                         "home" -> {
                             val viaAccessibility =
                                 accessibilityModeEnabled && accessibilityService?.pressHome() == true
-                            if (viaAccessibility) log("🤖 无障碍 HOME (key)")
                             // HOME Intent 也发一次，作为 MIUI 忽略 performGlobalAction 时的兜底。
                             if (!controller.homeViaIntent() && !viaAccessibility) {
                                 controller.home()
@@ -1303,7 +1302,6 @@ class MobileAgent(
                     "home" -> {
                         val viaAccessibility =
                             accessibilityModeEnabled && accessibilityService?.pressHome() == true
-                        if (viaAccessibility) log("🤖 无障碍 HOME")
                         // HOME Intent 也发一次，作为 MIUI 忽略 performGlobalAction 时的兜底。
                         if (!controller.homeViaIntent() && !viaAccessibility) {
                             controller.home()
