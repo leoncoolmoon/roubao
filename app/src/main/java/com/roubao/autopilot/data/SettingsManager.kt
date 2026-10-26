@@ -88,8 +88,9 @@ data class AppSettings(
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
     val suCommandEnabled: Boolean = false,
-    val accessibilityModeEnabled: Boolean = false,
+    val accessibilityModeEnabled: Boolean = true,
     val advancedModeEnabled: Boolean = false,
+    val overlayScale: Float = 0.65f,
     val promptPackMode: String = "auto"  // auto / basic / standard / advanced
 ) {
     // 便捷属性：获取当前服务商的配置
@@ -228,8 +229,9 @@ class SettingsManager(context: Context) {
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
             suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
-            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", false),
+            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", true),
             advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
+            overlayScale = prefs.getFloat("overlay_scale", 0.65f).coerceIn(0.4f, 1.2f),
             promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto"
         )
     }
@@ -371,6 +373,12 @@ class SettingsManager(context: Context) {
     fun updateAdvancedModeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("advanced_mode_enabled", enabled).apply()
         _settings.value = _settings.value.copy(advancedModeEnabled = enabled)
+    }
+
+    fun updateOverlayScale(scale: Float) {
+        val safe = scale.coerceIn(0.4f, 1.2f)
+        prefs.edit().putFloat("overlay_scale", safe).apply()
+        _settings.value = _settings.value.copy(overlayScale = safe)
     }
 
     fun updatePromptPackMode(mode: String) {

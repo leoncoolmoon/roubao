@@ -67,6 +67,7 @@ fun SettingsScreen(
     onUpdateCachedModels: (List<String>) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
+    onUpdateOverlayScale: (Float) -> Unit = {},
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
@@ -86,6 +87,7 @@ fun SettingsScreen(
     var showModelDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMaxStepsDialog by remember { mutableStateOf(false) }
+    var showOverlayScaleDialog by remember { mutableStateOf(false) }
     var showBaseUrlDialog by remember { mutableStateOf(false) }
     var showShizukuHelpDialog by remember { mutableStateOf(false) }
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
@@ -167,6 +169,16 @@ fun SettingsScreen(
                 title = "最大执行步数",
                 subtitle = "${settings.maxSteps} 步",
                 onClick = { showMaxStepsDialog = true }
+            )
+        }
+
+        // 悬浮窗大小
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "悬浮窗大小",
+                subtitle = "${(settings.overlayScale * 100).toInt()}%",
+                onClick = { showOverlayScaleDialog = true }
             )
         }
 
@@ -754,6 +766,37 @@ fun SettingsScreen(
             onConfirm = {
                 onUpdateMaxSteps(it)
                 showMaxStepsDialog = false
+            }
+        )
+    }
+
+    // 悬浮窗大小
+    if (showOverlayScaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showOverlayScaleDialog = false },
+            title = { Text("悬浮窗大小") },
+            text = {
+                Column {
+                    val options = listOf(0.5f, 0.6f, 0.65f, 0.7f, 0.8f, 1.0f)
+                    options.forEach { scale ->
+                        TextButton(
+                            onClick = {
+                                onUpdateOverlayScale(scale)
+                                showOverlayScaleDialog = false
+                            }
+                        ) {
+                            Text(
+                                text = "${(scale * 100).toInt()}%" +
+                                    if (kotlin.math.abs(scale - settings.overlayScale) < 0.01f) "  ✓" else "",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showOverlayScaleDialog = false }) { Text("关闭") }
             }
         )
     }

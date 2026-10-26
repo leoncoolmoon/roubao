@@ -177,6 +177,8 @@ class MainActivity : ComponentActivity() {
                 if (!settings.hasSeenOnboarding) {
                     OnboardingScreen(
                         onComplete = {
+                            // 引导去开无障碍时，设置里的无障碍模式默认就是开的。
+                            settingsManager.updateAccessibilityModeEnabled(true)
                             settingsManager.setOnboardingSeen()
                         }
                     )
@@ -358,6 +360,10 @@ class MainActivity : ComponentActivity() {
                                 onUpdateCachedModels = { settingsManager.updateCachedModels(it) },
                                 onUpdateThemeMode = { settingsManager.updateThemeMode(it) },
                                 onUpdateMaxSteps = { settingsManager.updateMaxSteps(it) },
+                                onUpdateOverlayScale = {
+                                    settingsManager.updateOverlayScale(it)
+                                    OverlayService.setScale(it)
+                                },
                                 onUpdateCloudCrashReport = { enabled ->
                                     settingsManager.updateCloudCrashReportEnabled(enabled)
                                     App.getInstance().updateCloudCrashReportEnabled(enabled)

@@ -32,6 +32,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.roubao.autopilot.MainActivity
+import com.roubao.autopilot.App
 import com.roubao.autopilot.R
 
 /**
@@ -56,6 +57,8 @@ class OverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var overlayView: View? = null
     private var overlayParams: WindowManager.LayoutParams? = null
+    /** 悬浮窗整体缩放，默认 65%；可在设置中实时调整。 */
+    private var uiScale = 0.65f
 
     private var panelView: View? = null            // 橙色面板（工作态显示）
     private var idleIconView: ImageView? = null    // 包子（始终显示，位置固定）
@@ -85,18 +88,18 @@ class OverlayService : Service() {
         private var isPaused = false
 
         // 悬浮窗布局尺寸（dp）。包子的位置/大小只由这几个常量决定，空闲态与工作态共用
-        private const val WINDOW_HEIGHT_DP = 42
-        private const val IDLE_WINDOW_WIDTH_DP = 42
-        private const val WORK_WINDOW_WIDTH_DP = 180
-        private const val ASK_WINDOW_HEIGHT_DP = 95
-        private const val BUN_SIZE_DP = 38
-        private const val BUN_LEFT_DP = 2
+        private const val WINDOW_HEIGHT_DP = 84
+        private const val IDLE_WINDOW_WIDTH_DP = 84
+        private const val WORK_WINDOW_WIDTH_DP = 360
+        private const val ASK_WINDOW_HEIGHT_DP = 190
+        private const val BUN_SIZE_DP = 76
+        private const val BUN_LEFT_DP = 4
         private const val BUN_SQUASH_SCALE = 0.95f              // 压缩到 95%
         private const val BUN_ANIM_CYCLE_MS = 1600L             // 一个完整循环（横向+纵向）时长
-        private const val PANEL_HEIGHT_DP = 30
-        private const val PANEL_LEFT_DP = 30                    // 面板从这里开始，左端被包子盖住一部分
-        private const val PANEL_RIGHT_DP = 2
-        private const val TEXT_LEFT_DP = 45
+        private const val PANEL_HEIGHT_DP = 60
+        private const val PANEL_LEFT_DP = 60                    // 面板从这里开始，左端被包子盖住一部分
+        private const val PANEL_RIGHT_DP = 4
+        private const val TEXT_LEFT_DP = 90
 
         // 等待 instance 回调队列
         private val pendingCallbacks = mutableListOf<() -> Unit>()
@@ -178,6 +181,11 @@ class OverlayService : Service() {
             }
         }
 
+        /** 设置里调整悬浮窗比例后立即重建。 */
+        fun setScale(scale: Float) {
+            instance?.applyScale(scale.coerceIn(0.4f, 1.2f))
+        }
+
         /** 显示人机协作模式 - 等待用户手动完成操作 */
         fun showTakeOver(message: String, onContinue: () -> Unit) {
             val action: () -> Unit = {
@@ -249,6 +257,11 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        uiScale = try {
+            App.getInstance().settingsManager.settings.value.overlayScale.coerceIn(0.4f, 1.2f)
+        } catch (e: Exception) {
+            0.65f
+        }
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
         // 必须第一时间调用 startForeground，否则会崩溃
@@ -444,11 +457,11 @@ class OverlayService : Service() {
         // ③ 文字：叠在橙色面板上
         textView = TextView(this).apply {
             text = "准备中..."
-            textSize = 6.5f
+            textSize = 13f * uiScale
             setTextColor(Color.parseColor("#3B1A00"))
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), 0, dp(4), 0)
+            setPadding(dp(8), 0, dp(8), 0)
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = FrameLayout.LayoutParams(
@@ -457,7 +470,7 @@ class OverlayService : Service() {
                 Gravity.CENTER_VERTICAL
             ).apply {
                 leftMargin = dp(TEXT_LEFT_DP)
-                rightMargin = dp(6)
+                rightMargin = dp(12)
             }
         }
         container.addView(textView)
@@ -471,14 +484,14 @@ class OverlayService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.END or Gravity.CENTER_VERTICAL
-            ).apply { rightMargin = dp(5) }
+            ).apply { rightMargin = dp(10) }
         }
         actionButton = TextView(this).apply {
             text = ""
-            textSize = 6.5f
+            textSize = 13f * uiScale
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(2), dp(4), dp(2))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener {
                 when {
@@ -499,10 +512,10 @@ class OverlayService : Service() {
         }
         cancelButton = TextView(this).apply {
             text = "取消"
-            textSize = 6f
+            textSize = 12f * uiScale
             setTextColor(Color.parseColor("#FFD1D1"))
             gravity = Gravity.CENTER
-            setPadding(dp(4), dp(2), dp(4), dp(2))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             typeface = Typeface.DEFAULT_BOLD
             visibility = View.GONE
             setOnClickListener {
@@ -523,34 +536,30 @@ class OverlayService : Service() {
         val askPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(dp(7), dp(5), dp(7), dp(4))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(6).toFloat()
-                setColor(Color.argb(242, 24, 26, 34))
-            }
+            setPadding(dp(14), dp(10), dp(14), dp(8))
+            setBackgroundResource(R.drawable.roubao_panel_bg)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
         askUserQuestion = TextView(this).apply {
-            textSize = 6f
-            setTextColor(Color.WHITE)
+            textSize = 12f * uiScale
+            setTextColor(Color.parseColor("#3B1A00"))
             maxLines = 3
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         askUserInput = EditText(this).apply {
             hint = "输入补充信息"
-            textSize = 6.5f
+            textSize = 13f * uiScale
             setSingleLine(true)
             setImeOptions(EditorInfo.IME_ACTION_DONE)
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.argb(150, 255, 255, 255))
-            setPadding(dp(3), dp(2), dp(3), dp(2))
+            setTextColor(Color.parseColor("#3B1A00"))
+            setHintTextColor(Color.argb(150, 59, 26, 0))
+            setPadding(dp(6), dp(4), dp(6), dp(4))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(4).toFloat()
+                cornerRadius = dp(8).toFloat()
                 setColor(Color.argb(60, 255, 255, 255))
             }
             setOnEditorActionListener { _, actionId, _ ->
@@ -562,27 +571,27 @@ class OverlayService : Service() {
         }
         val askSubmit = TextView(this).apply {
             text = "提交"
-            textSize = 6f
+            textSize = 12f * uiScale
             setTextColor(Color.parseColor("#3B1A00"))
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(5), dp(2), dp(5), dp(2))
+            setPadding(dp(10), dp(5), dp(10), dp(5))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(4).toFloat()
+                cornerRadius = dp(8).toFloat()
                 setColor(Color.parseColor("#FFA94D"))
             }
             setOnClickListener { submitAskUser() }
         }
         val askCancel = TextView(this).apply {
             text = "取消"
-            textSize = 6f
+            textSize = 12f * uiScale
             setTextColor(Color.argb(190, 255, 255, 255))
             gravity = Gravity.CENTER
-            setPadding(dp(5), dp(2), dp(5), dp(2))
+            setPadding(dp(10), dp(5), dp(10), dp(5))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(4).toFloat()
+                cornerRadius = dp(8).toFloat()
                 setColor(Color.argb(55, 255, 255, 255))
             }
             setOnClickListener { cancelAskUser() }
@@ -593,21 +602,21 @@ class OverlayService : Service() {
         }
         askButtons.addView(askCancel, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
-            dp(15)
-        ).apply { rightMargin = dp(4) })
+            dp(30)
+        ).apply { rightMargin = dp(8) })
         askButtons.addView(askSubmit, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
-            dp(15)
+            dp(30)
         ))
         askPanel.addView(askUserQuestion)
         askPanel.addView(askUserInput, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(17)
-        ).apply { topMargin = dp(2) })
+            dp(34)
+        ).apply { topMargin = dp(4) })
         askPanel.addView(askButtons, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            dp(15)
-        ).apply { topMargin = dp(3) })
+            dp(30)
+        ).apply { topMargin = dp(6) })
         askUserPanel = askPanel
         container.addView(askPanel)
 
@@ -684,7 +693,36 @@ class OverlayService : Service() {
         windowManager?.addView(overlayView, params)
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * uiScale * resources.displayMetrics.density).toInt()
+
+    private fun applyScale(scale: Float) {
+        if (kotlin.math.abs(uiScale - scale) < 0.01f) return
+        uiScale = scale
+        val wasIdle = isIdleMode
+        val oldText = textView?.text?.toString() ?: "准备中..."
+        bunAnimator?.cancel()
+        overlayView?.let { windowManager?.removeView(it) }
+        overlayView = null
+        panelView = null
+        idleIconView = null
+        textView = null
+        actionRowTag = null
+        actionButton = null
+        cancelButton = null
+        askUserPanel = null
+        askUserQuestion = null
+        askUserInput = null
+        try {
+            createOverlayView()
+            if (wasIdle) {
+                setIdleMode()
+            } else {
+                updateText(oldText)
+            }
+        } catch (e: Exception) {
+            println("[OverlayService] applyScale failed: ${e.message}")
+        }
+    }
 
     /** 空闲态：只有包子，窗口缩成 84×84 */
     private fun setIdleMode() {
@@ -962,3 +1000,5 @@ class OverlayService : Service() {
         }
     }
 }
+
+
