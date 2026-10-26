@@ -609,7 +609,12 @@ class DeviceController(private val context: Context? = null) {
         } else {
             // 使用 AppScanner 搜索应用
             val appScanner = App.getInstance().appScanner
-            val searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            var searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            if (searchResults.isEmpty()) {
+                // 可能是刚安装/缓存过期：强制刷新一次再找。
+                appScanner.refreshApps()
+                searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            }
             if (searchResults.isNotEmpty()) {
                 finalPackage = searchResults[0].app.packageName
                 println("[DeviceController] AppScanner found: ${searchResults[0].app.appName} -> $finalPackage")

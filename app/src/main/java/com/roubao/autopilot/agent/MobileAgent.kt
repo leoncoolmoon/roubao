@@ -184,9 +184,9 @@ class MobileAgent(
         log("屏幕尺寸: ${width}x${height}")
 
         // 获取已安装应用列表（只取非系统应用，限制数量避免 prompt 过长）
-        // 每次任务开始刷新一次，避免中文应用名/新装应用被旧缓存漏掉。
+        // 60 秒内复用缓存；超过 TTL 才全量刷新，避免每个任务都扫一遍。
         val apps = try {
-            appScanner.refreshApps()
+            appScanner.refreshAppsIfStale()
         } catch (e: Exception) {
             appScanner.getApps()
         }

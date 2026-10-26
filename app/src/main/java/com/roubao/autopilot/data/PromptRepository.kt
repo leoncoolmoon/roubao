@@ -114,6 +114,9 @@ private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
 )
 
 /** 去重并重写后的预设反馈：一条只覆盖一个操作原则。 */
+private const val SECURITY_FEEDBACK =
+    "涉及支付确认、密码/验证码输入、生物识别、登录授权或系统安全设置时，先 ask_user/take_over；不要代替用户确认支付、输入密码或修改安全设置。"
+
 private val LEGACY_PRESET_FEEDBACK = listOf(
     "suggestion" to "列表翻页优先使用 scroll，避免重复 swipe。",
     "suggestion" to "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
@@ -121,7 +124,8 @@ private val LEGACY_PRESET_FEEDBACK = listOf(
     "complaint" to "文件与系统操作优先使用 shell，不要打开文件管理器。",
     "complaint" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
     "complaint" to "光标与选区使用 set_selection，不要长按拖拽。",
-    "complaint" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。"
+    "complaint" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。",
+    "suggestion" to SECURITY_FEEDBACK
 )
 
 /** v10：把旧版随手写的反馈替换成专业、单职责的表述。 */
@@ -1089,7 +1093,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 21) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 22) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1122,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 21) {
+                if (version < 22) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1358,6 +1362,25 @@ class PromptRepository private constructor(context: Context) {
                     "id = ?",
                     arrayOf("play_music")
                 )
+            }
+            if (oldVersion < 22) {
+                // 从原版 prompt 的安全段落提炼的一条默认建议。
+                val exists = db.query(
+                    "user_feedback",
+                    arrayOf("id"),
+                    "text = ?",
+                    arrayOf(SECURITY_FEEDBACK),
+                    null, null, null
+                ).use { it.moveToFirst() }
+                if (!exists) {
+                    db.insert("user_feedback", null, ContentValues().apply {
+                        put("text", SECURITY_FEEDBACK)
+                        put("created_at", System.currentTimeMillis())
+                        put("enabled", 1)
+                        put("kind", "suggestion")
+                        put("dependence_json", "[]")
+                    })
+                }
             }
         }
 
