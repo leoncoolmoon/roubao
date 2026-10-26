@@ -1234,7 +1234,7 @@ class MobileAgent(
                         "home" -> {
                             if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
                                 log("🤖 无障碍 HOME (key)")
-                            } else {
+                            } else if (!controller.homeViaIntent()) {
                                 controller.home()
                             }
                         }
@@ -1293,7 +1293,7 @@ class MobileAgent(
                     "home" -> {
                         if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
                             log("🤖 无障碍 HOME")
-                        } else {
+                        } else if (!controller.homeViaIntent()) {
                             controller.home()
                         }
                     }

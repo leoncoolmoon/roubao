@@ -329,6 +329,21 @@ class DeviceController(private val context: Context? = null) {
         exec("input keyevent 3")
     }
 
+    /** user 级 HOME 兜底：直接发 HOME Intent，不需要 Shizuku。 */
+    fun homeViaIntent(): Boolean {
+        return try {
+            val ctx = context ?: App.getInstance()
+            val intent = Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            println("[DeviceController] homeViaIntent failed: ${e.message}")
+            false
+        }
+    }
+
     /**
      * 回车键
      */
