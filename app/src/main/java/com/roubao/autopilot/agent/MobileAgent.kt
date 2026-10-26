@@ -1232,9 +1232,11 @@ class MobileAgent(
                             }
                         }
                         "home" -> {
-                            if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
-                                log("🤖 无障碍 HOME (key)")
-                            } else if (!controller.homeViaIntent()) {
+                            val viaAccessibility =
+                                accessibilityModeEnabled && accessibilityService?.pressHome() == true
+                            if (viaAccessibility) log("🤖 无障碍 HOME (key)")
+                            // HOME Intent 也发一次，作为 MIUI 忽略 performGlobalAction 时的兜底。
+                            if (!controller.homeViaIntent() && !viaAccessibility) {
                                 controller.home()
                             }
                         }
@@ -1291,9 +1293,11 @@ class MobileAgent(
                         }
                     }
                     "home" -> {
-                        if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
-                            log("🤖 无障碍 HOME")
-                        } else if (!controller.homeViaIntent()) {
+                        val viaAccessibility =
+                            accessibilityModeEnabled && accessibilityService?.pressHome() == true
+                        if (viaAccessibility) log("🤖 无障碍 HOME")
+                        // HOME Intent 也发一次，作为 MIUI 忽略 performGlobalAction 时的兜底。
+                        if (!controller.homeViaIntent() && !viaAccessibility) {
                             controller.home()
                         }
                     }
