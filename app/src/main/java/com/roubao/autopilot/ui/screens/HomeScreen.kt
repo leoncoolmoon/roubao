@@ -181,27 +181,12 @@ fun HomeScreen(
                         color = colors.primary
                     )
                     Text(
-                        text = if (shizukuAvailable) "准备就绪，告诉我你想做什么" else "请先连接 Shizuku",
+                        text = "准备就绪，告诉我你想做什么",
                         fontSize = 14.sp,
-                        color = if (shizukuAvailable) colors.textSecondary else colors.error
+                        color = colors.textSecondary
                     )
                 }
 
-                // 未连接时显示刷新按钮
-                if (!shizukuAvailable) {
-                    IconButton(
-                        onClick = onRefreshShizuku,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colors.backgroundCard)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "刷新 Shizuku 状态",
-                            tint = colors.primary
-                        )
-                    }
-                }
             }
         }
 
@@ -225,11 +210,7 @@ fun HomeScreen(
                 // 空闲时显示预设命令
                 PresetCommandsView(
                     onCommandClick = { command ->
-                        if (shizukuAvailable) {
-                            inputText = command
-                        } else {
-                            onShizukuRequired()
-                        }
+                        inputText = command
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -276,12 +257,8 @@ fun HomeScreen(
             isRunning = isRunning,
             isPaused = isPaused,
             onTogglePause = onTogglePause,
-            enabled = shizukuAvailable,
-            onInputClick = {
-                if (!shizukuAvailable) {
-                    onShizukuRequired()
-                }
-            }
+            enabled = true,
+            onInputClick = { }
         )
 
         reminderResult?.let { result ->

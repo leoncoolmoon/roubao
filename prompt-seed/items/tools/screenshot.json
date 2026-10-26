@@ -1,0 +1,18 @@
+{
+  "id": "screenshot",
+  "kind": "tool",
+  "name": "screenshot",
+  "display_name": "屏幕截图",
+  "description": "截取当前屏幕，获取界面图像供 AI 分析",
+  "prompt": "工具: screenshot\n说明: 只在需要视觉判断时截图；优先使用无障碍 UI 树。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

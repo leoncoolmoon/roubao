@@ -1,0 +1,44 @@
+[
+  {
+    "id": "accessibility",
+    "display_name": "无障碍",
+    "level": "user",
+    "priority": 10
+  },
+  {
+    "id": "accessibility-screenshot",
+    "display_name": "无障碍截图",
+    "level": "user",
+    "priority": 20
+  },
+  {
+    "id": "mediaprojection",
+    "display_name": "MediaProjection",
+    "level": "user",
+    "priority": 30
+  },
+  {
+    "id": "shizuku-adb",
+    "display_name": "Shizuku ADB",
+    "level": "adb",
+    "priority": 10
+  },
+  {
+    "id": "su-user",
+    "display_name": "su-user",
+    "level": "adb",
+    "priority": 20
+  },
+  {
+    "id": "shizuku-root",
+    "display_name": "Shizuku Root",
+    "level": "root",
+    "priority": 10
+  },
+  {
+    "id": "su",
+    "display_name": "su",
+    "level": "root",
+    "priority": 20
+  }
+]

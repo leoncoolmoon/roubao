@@ -1,0 +1,6 @@
+{
+  "text": "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
+  "kind": "suggestion",
+  "enabled": false,
+  "dependence": []
+}

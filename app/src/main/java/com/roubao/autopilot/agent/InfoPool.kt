@@ -42,6 +42,18 @@ data class InfoPool(
 
     // Skill 上下文（从 SkillManager 获取的相关技能信息）
     var skillContext: String = "",
+    // Manager 首次规划可见的启用 Skill 短名单
+    var availableSkills: String = "",
+    // Manager 选中的 Skill id
+    var selectedSkillId: String = "",
+    // 选中 Skill 的完整执行上下文，只给 Executor
+    var activeSkillContext: String = "",
+    // 最近一次工具执行结果（如 shell 输出）
+    var lastToolResult: String = "",
+    // 是否向模型发送截图；UI 树足够时可由模型关闭
+    var visionEnabled: Boolean = true,
+    // ask_user 的用户补充内容
+    var userReply: String = "",
 
     // 对话记忆（保存完整对话历史，用于 Executor）
     var executorMemory: ConversationMemory? = null,
@@ -50,8 +62,19 @@ data class InfoPool(
     var installedApps: String = "",
 
     // 无障碍 UI 元素树信息
-    var accessibilityTree: String = ""
-)
+    var accessibilityTree: String = "",
+
+    // 本次任务快照的提示词包与访问等级
+    var packId: String = "standard",
+    var packLevel: String = "adb",
+    var accessLevel: String = "user"
+) {
+    /** pack 是上限：basic 包在 adb 环境下也只能用 user 级工具。 */
+    fun effectiveLevel(): AccessLevel = AccessLevel.cap(
+        AccessLevel.fromId(accessLevel),
+        AccessLevel.fromId(packLevel)
+    )
+}
 
 /**
  * 动作定义
@@ -83,7 +106,8 @@ data class Action(
     val key: String? = null,         // key 动作: ENTER / TAB / DPAD_DOWN / ...
     val start: Int? = null,          // set_selection 起始字符下标
     val end: Int? = null,            // set_selection 结束字符下标
-    val command: String? = null      // shell 动作的命令
+    val command: String? = null,     // shell 动作的命令
+    val enabled: Boolean? = null     // set_screenshot 开关
 ) {
     companion object {
         private const val SCALE_FACTOR = 999  // MAI-UI 坐标缩放因子
@@ -133,7 +157,8 @@ data class Action(
                     key = obj.optString("key", null),
                     start = if (obj.has("start")) obj.optInt("start") else null,
                     end = if (obj.has("end")) obj.optInt("end") else null,
-                    command = obj.optString("command", null)
+                    command = obj.optString("command", null),
+                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null
                 )
             } catch (e: Exception) {
                 null

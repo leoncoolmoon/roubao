@@ -1,0 +1,18 @@
+{
+  "id": "deep_link",
+  "kind": "tool",
+  "name": "deep_link",
+  "display_name": "DeepLink 跳转",
+  "description": "通过 DeepLink URL 直接打开应用的特定页面",
+  "prompt": "工具: deep_link\n说明: 用 DeepLink 直接打开 App 页面，比逐级点击更快。\n参数:\n  - url: string (必填) - DeepLink URL",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

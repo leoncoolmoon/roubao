@@ -1,0 +1,47 @@
+{
+  "id": "generate_image",
+  "kind": "skill",
+  "name": "generate_image",
+  "display_name": "AI画图",
+  "description": "使用 AI 生成图片",
+  "prompt": "技能: generate_image\n说明: 使用 AI 生成图片\n关联应用:\n- 即梦\n- 豆包",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "prompt",
+      "type": "string",
+      "description": "图片描述",
+      "required": true
+    }
+  ],
+  "keywords": [
+    "画图",
+    "生成图片",
+    "AI画图",
+    "生成图",
+    "画一张",
+    "生成一张"
+  ],
+  "related_apps": [
+    {
+      "package": "com.volcengine.jimeng",
+      "name": "即梦",
+      "type": "delegation",
+      "deep_link": "jimeng://create?prompt={prompt}",
+      "priority": 100
+    },
+    {
+      "package": "com.lark.bot",
+      "name": "豆包",
+      "type": "delegation",
+      "deep_link": "doubao://chat?message=帮我画{prompt}",
+      "priority": 90
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "AI"
+}

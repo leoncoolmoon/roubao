@@ -1,0 +1,18 @@
+{
+  "id": "ride_hailing",
+  "kind": "skill",
+  "name": "ride_hailing",
+  "display_name": "打车出行",
+  "description": "在滴滴/高德等应用中输入目的地并呼叫网约车",
+  "prompt": "技能: ride_hailing\n说明: 打车。open_app 滴滴/高德；目的地用 type；选车型用 click(text)。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

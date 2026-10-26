@@ -1,0 +1,18 @@
+{
+  "id": "tap",
+  "kind": "tool",
+  "name": "tap",
+  "display_name": "点击屏幕",
+  "description": "点击屏幕指定坐标位置",
+  "prompt": "工具: tap\n说明: 坐标点击只作为 text/节点匹配失败后的兜底；坐标是绝对像素。\n参数:\n  - coordinate: list (必填) - [x, y]",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

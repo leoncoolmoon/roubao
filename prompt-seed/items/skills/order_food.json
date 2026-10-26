@@ -1,0 +1,63 @@
+{
+  "id": "order_food",
+  "kind": "skill",
+  "name": "order_food",
+  "display_name": "点外卖",
+  "description": "帮你点外卖、订餐",
+  "prompt": "技能: order_food\n说明: 帮你点外卖、订餐\n关联应用:\n- 小美\n- 饿了么: 打开饿了么 -> 搜索食物 -> 选择商家 -> 下单",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "food",
+      "type": "string",
+      "description": "想吃什么",
+      "required": false,
+      "examples": [
+        "汉堡",
+        "猪脚饭",
+        "麻辣烫",
+        "炸鸡"
+      ]
+    }
+  ],
+  "keywords": [
+    "点外卖",
+    "叫外卖",
+    "外卖",
+    "点餐",
+    "订餐",
+    "吃饭",
+    "饿了",
+    "点吃的",
+    "送餐",
+    "订个餐"
+  ],
+  "related_apps": [
+    {
+      "package": "com.meituan.android.beam",
+      "name": "小美",
+      "type": "delegation",
+      "deep_link": "beam://www.meituan.com/home",
+      "priority": 100,
+      "description": "美团 AI 助手，直接对话点餐，最快捷"
+    },
+    {
+      "package": "me.ele",
+      "name": "饿了么",
+      "type": "gui_automation",
+      "priority": 60,
+      "steps": [
+        "打开饿了么",
+        "搜索食物",
+        "选择商家",
+        "下单"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "外卖"
+}

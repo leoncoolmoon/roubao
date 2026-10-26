@@ -1,0 +1,18 @@
+{
+  "id": "swipe",
+  "kind": "tool",
+  "name": "swipe",
+  "display_name": "滑动屏幕",
+  "description": "在屏幕上滑动，支持上下左右方向",
+  "prompt": "工具: swipe\n说明: 翻页优先用 scroll 动作；swipe 只用于拖拽、滑块或 scroll 失败。\n参数:\n  - coordinate: list (必填) - 起点 [x1, y1]\n  - coordinate2: list (必填) - 终点 [x2, y2]",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

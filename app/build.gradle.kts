@@ -5,6 +5,14 @@ plugins {
     id("com.google.firebase.crashlytics")
 }
 
+val cleanResDir = layout.buildDirectory.dir("clean-res")
+val copyCleanRes = tasks.register<Copy>("copyCleanRes") {
+    from("src/main/res") {
+        exclude("**/*.back")
+    }
+    into(cleanResDir)
+}
+
 android {
     namespace = "com.roubao.autopilot"
     compileSdk = 34
@@ -13,8 +21,8 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.4.2"
+        versionCode = 9
+        versionName = "1.4.4"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -55,6 +63,17 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    // UI 备份文件使用 .back 扩展名；资源合并前先复制一份干净的 res。
+    sourceSets {
+        getByName("main") {
+            res.setSrcDirs(listOf(cleanResDir.get().asFile.absolutePath))
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(copyCleanRes)
 }
 
 dependencies {

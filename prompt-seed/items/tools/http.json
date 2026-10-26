@@ -1,0 +1,18 @@
+{
+  "id": "http",
+  "kind": "tool",
+  "name": "http",
+  "display_name": "HTTP 请求",
+  "description": "发送 HTTP 请求获取外部数据",
+  "prompt": "工具: http\n说明: 用 HTTP 获取外部数据；不要用浏览器 UI 做 API 请求。\n参数:\n  - url: string (必填) - 请求 URL\n  - method: string (可选) - GET/POST",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

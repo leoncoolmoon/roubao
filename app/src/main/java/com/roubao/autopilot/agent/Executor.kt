@@ -7,26 +7,18 @@ import com.roubao.autopilot.data.PromptRepository
  */
 class Executor {
 
-    companion object {
-        val GUIDELINES = """
-General:
-- For any pop-up window, close it (e.g., by clicking 'Don't Allow' or 'Accept') before proceeding.
-- For requests that are questions, remember to use the `answer` action to reply before finish!
-- If the desired state is already achieved, you can just complete the task.
-
-Accessibility & Fallback:
-- When Accessibility Mode is enabled, review the Accessibility UI Tree to obtain accurate element coordinates, text, and resource IDs.
-- If screenshot capture fails or is blocked (black/sensitive screen), rely on the Accessibility UI Tree attributes to accurately locate elements and perform blind actions.
-
-Action Related:
-- Use `open_app` to open an app, do not use the app drawer.
-- Consider using `swipe` to reveal additional content.
-- If swiping doesn't change the page, it may have reached the bottom.
-
-Text Related:
-- To input text: first click the input box, make sure keyboard is visible, then use `type` action.
-- To clear text: long press the backspace button in the keyboard.
-        """.trimIndent()
+    private fun resolveCurrentSubgoal(infoPool: InfoPool): String {
+        if (infoPool.currentSubgoal.isNotBlank()) return infoPool.currentSubgoal
+        val plan = infoPool.plan
+        if (plan.isBlank()) return "No active subgoal."
+        val numberedRegex = Regex("""^\d+[.)]\s+""")
+        val numbered = plan.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { numberedRegex.containsMatchIn(it) }
+            ?.replaceFirst(numberedRegex, "")
+            ?.trim()
+        if (!numbered.isNullOrBlank()) return numbered
+        return plan.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "No active subgoal."
     }
 
     /**
@@ -34,7 +26,7 @@ Text Related:
      */
     fun getPrompt(infoPool: InfoPool): String {
         val rawPrompt = try {
-            PromptRepository.getInstance().getAgentPrompt("executor")?.prompt
+            PromptRepository.getInstance().getAgentPrompt("executor", infoPool.packId)?.prompt
                 ?: PromptRepository.DEFAULT_EXECUTOR_PROMPT
         } catch (e: Exception) {
             PromptRepository.DEFAULT_EXECUTOR_PROMPT
@@ -61,20 +53,59 @@ Text Related:
             "No actions have been taken yet.\n"
         }
 
+        val currentSubgoal = resolveCurrentSubgoal(infoPool)
+        val installedApps = infoPool.installedApps.ifBlank { "Unknown" }
+        val installAllowed = try {
+            PromptRepository.getInstance().isToolSkillEnabled("install_app")
+        } catch (e: Exception) {
+            false
+        }
+
         var prompt = rawPrompt
             .replace("{{instruction}}", infoPool.instruction)
             .replace("{{plan}}", infoPool.plan)
+            .replace("{{currentSubgoal}}", currentSubgoal)
+            .replace("{{installedApps}}", installedApps)
             .replace("{{progressStatus}}", infoPool.progressStatus.ifEmpty { "No progress yet." })
             .replace("{{actionHistory}}", actionHistoryStr)
 
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt()
+            PromptRepository.getInstance().getFeedbackPrompt(infoPool.effectiveLevel())
         } catch (e: Exception) {
             ""
         }
         if (feedback.isNotEmpty()) {
             prompt = "### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback\n\n$prompt"
         }
+
+        if (infoPool.activeSkillContext.isNotBlank()) {
+            prompt += "\n\n### Active Skill ###\n${infoPool.activeSkillContext}\n"
+        }
+
+        prompt += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
+            "Only open or operate apps from Installed apps: $installedApps\n" +
+            "If the current skill's preferred app is not installed, do not open it. " +
+            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n" +
+            "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
+            "If the user explicitly names an installed app, call open_app with that exact name first; only ask if open_app fails.\n"
+
+        if (infoPool.lastToolResult.isNotBlank()) {
+            prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
+        }
+
+        if (infoPool.userReply.isNotBlank()) {
+            prompt += "\n\n### User Reply ###\n${infoPool.userReply}\n"
+        }
+
+        prompt += "\n\n### Visual Input ###\n" +
+            "Screenshots are currently ${if (infoPool.visionEnabled) "ON" else "OFF"}. " +
+            "If the UI tree is sufficient and you do not need pixels, disable screenshots with " +
+            "{\"action\":\"set_screenshot\",\"enabled\":false}. " +
+            "Re-enable with true when visual confirmation is required.\n" +
+            "If required details are missing, use " +
+            "{\"action\":\"ask_user\",\"message\":\"your question\"} instead of guessing. " +
+            "Use `answer` only for the final response after the task is complete. " +
+            "This overrides any other rule that says to use `answer` for questions.\n"
 
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
@@ -91,6 +122,9 @@ Text Related:
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
+        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
+        if (policy.isNotBlank()) prompt += policy
+
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")
 
         return prompt

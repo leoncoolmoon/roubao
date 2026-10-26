@@ -1,0 +1,18 @@
+{
+  "id": "search_apps",
+  "kind": "tool",
+  "name": "search_apps",
+  "display_name": "搜索应用",
+  "description": "搜索手机中已安装的应用，匹配应用名称和包名",
+  "prompt": "工具: search_apps\n说明: 搜索已安装应用，返回包名；用于 open_app 前确认。\n参数:\n  - query: string (必填) - 搜索关键词",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

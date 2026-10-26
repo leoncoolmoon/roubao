@@ -18,6 +18,8 @@ class App : Application() {
         private set
     lateinit var appScanner: AppScanner
         private set
+    lateinit var settingsManager: SettingsManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -27,7 +29,7 @@ class App : Application() {
         CrashHandler.getInstance().init(this)
 
         // 初始化 Firebase Crashlytics（根据用户设置决定是否启用）
-        val settingsManager = SettingsManager(this)
+        settingsManager = SettingsManager(this)
         val cloudCrashReportEnabled = settingsManager.settings.value.cloudCrashReportEnabled
         FirebaseCrashlytics.getInstance().apply {
             setCrashlyticsCollectionEnabled(cloudCrashReportEnabled)
@@ -72,6 +74,9 @@ class App : Application() {
         println("[App] SkillManager 已加载 ${skillManager.getAllSkills().size} 个 Skills")
 
         println("[App] 组件初始化完成")
+
+        // 刷新访问等级（只读缓存，不触发 su 弹窗）
+        com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
     }
 
     override fun onTerminate() {

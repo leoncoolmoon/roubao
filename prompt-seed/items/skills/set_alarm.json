@@ -1,0 +1,45 @@
+{
+  "id": "set_alarm",
+  "kind": "skill",
+  "name": "set_alarm",
+  "display_name": "设闹钟",
+  "description": "设置闹钟提醒",
+  "prompt": "技能: set_alarm\n说明: 设置闹钟提醒\n关联应用:\n- 时钟: 打开时钟 -> 进入闹钟 -> 新建闹钟 -> 设置时间 -> 保存",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "time",
+      "type": "string",
+      "description": "时间",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "闹钟",
+    "提醒",
+    "定时",
+    "叫我起床",
+    "设个闹钟"
+  ],
+  "related_apps": [
+    {
+      "package": "com.android.deskclock",
+      "name": "时钟",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开时钟",
+        "进入闹钟",
+        "新建闹钟",
+        "设置时间",
+        "保存"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "工具"
+}

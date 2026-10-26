@@ -1,0 +1,46 @@
+{
+  "id": "post_xiaohongshu",
+  "kind": "skill",
+  "name": "post_xiaohongshu",
+  "display_name": "发小红书",
+  "description": "在小红书发布笔记",
+  "prompt": "技能: post_xiaohongshu\n说明: 在小红书发布笔记\n约束: 小红书笔记内容不能超过100字，请精炼表达；无障碍模式下可通过 UI 节点树精确定位按钮坐标，截图失败时可依据元素属性盲操\n关联应用:\n- 小红书: 打开小红书 -> 点击底部+号发布 -> 选择图片或视频 -> 输入标题和正文（正文不超过100字） -> 添加话题标签 -> 发布",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "content",
+      "type": "string",
+      "description": "笔记内容",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "发小红书",
+    "小红书",
+    "发笔记",
+    "小红书笔记",
+    "红书"
+  ],
+  "related_apps": [
+    {
+      "package": "com.xingin.xhs",
+      "name": "小红书",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开小红书",
+        "点击底部+号发布",
+        "选择图片或视频",
+        "输入标题和正文（正文不超过100字）",
+        "添加话题标签",
+        "发布"
+      ]
+    }
+  ],
+  "prompt_hint": "小红书笔记内容不能超过100字，请精炼表达；无障碍模式下可通过 UI 节点树精确定位按钮坐标，截图失败时可依据元素属性盲操",
+  "domain": "社交"
+}

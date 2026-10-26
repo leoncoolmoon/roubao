@@ -28,6 +28,8 @@ class VLMClient(
     // 规范化 URL：自动添加 https:// 前缀，移除末尾斜杠
     private val baseUrl: String = normalizeUrl(baseUrl)
 
+    fun modelName(): String = model
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)

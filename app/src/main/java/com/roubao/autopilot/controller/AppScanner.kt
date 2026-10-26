@@ -19,6 +19,7 @@ class AppScanner(private val context: Context) {
         // 内存缓存 (应用生命周期内有效)
         @Volatile
         private var cachedApps: List<AppInfo>? = null
+        private var lastRefreshAt: Long = 0L
 
         // 预编译的正则表达式（避免重复创建）
         private val PINYIN_CLEAN_REGEX = Regex("[^a-z0-9\\u4e00-\\u9fa5]")
@@ -167,6 +168,7 @@ class AppScanner(private val context: Context) {
             val loaded = loadFromFile(cacheFile)
             if (loaded.isNotEmpty()) {
                 cachedApps = loaded
+                lastRefreshAt = cacheFile.lastModified()
                 println("[AppScanner] 从文件加载 ${loaded.size} 个应用")
                 return loaded
             }
@@ -182,11 +184,24 @@ class AppScanner(private val context: Context) {
         println("[AppScanner] 扫描已安装应用...")
         val apps = scanAllApps()
         cachedApps = apps
+        lastRefreshAt = System.currentTimeMillis()
 
         val cacheFile = File(context.filesDir, CACHE_FILE)
         saveToFile(apps, cacheFile)
         println("[AppScanner] 已缓存 ${apps.size} 个应用")
 
+        return apps
+    }
+
+    /**
+     * 非任务开始就全量扫描：缓存足够新时直接用，超过 TTL 才刷新。
+     * 安装/卸载后最多一个 TTL 窗口就能看到；open_app 失败时另有强制刷新兜底。
+     */
+    fun refreshAppsIfStale(maxAgeMs: Long = 60_000L): List<AppInfo> {
+        val apps = getApps()
+        if (apps.isEmpty() || System.currentTimeMillis() - lastRefreshAt > maxAgeMs) {
+            return refreshApps()
+        }
         return apps
     }
 

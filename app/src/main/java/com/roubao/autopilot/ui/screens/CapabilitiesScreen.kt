@@ -39,11 +39,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.roubao.autopilot.App
+import com.roubao.autopilot.agent.AccessLevel
+import com.roubao.autopilot.agent.AccessLevelManager
+import com.roubao.autopilot.agent.PromptPackResolver
 import com.roubao.autopilot.data.AgentPromptEntity
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.data.ToolSkillPromptEntity
 import com.roubao.autopilot.data.UserFeedbackEntity
 import com.roubao.autopilot.ui.theme.BaoziTheme
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,12 +74,18 @@ fun CapabilitiesScreen() {
     val repository = remember { PromptRepository.getInstance() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val currentLevel by AccessLevelManager.level.collectAsState()
+    val settings by App.getInstance().settingsManager.settings.collectAsState()
+    val activePackId = PromptPackResolver.resolve(currentLevel, settings.promptPackMode)?.id ?: "standard"
 
     var refreshTrigger by remember { mutableStateOf(0) }
 
     var agentsList by remember { mutableStateOf<List<AgentPromptEntity>>(emptyList()) }
     var toolSkillList by remember { mutableStateOf<List<ToolSkillPromptEntity>>(emptyList()) }
     var feedbackList by remember { mutableStateOf<List<UserFeedbackEntity>>(emptyList()) }
+
+    var singleExportTarget by remember { mutableStateOf<PromptTarget?>(null) }
+    var singleImportTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
     fun showToast(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -90,7 +102,10 @@ fun CapabilitiesScreen() {
                     val result = repository.importPromptsJson(json)
                     withContext(Dispatchers.Main) {
                         refreshTrigger++
-                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill, ${result.feedback} 反馈"
+                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill, ${result.feedback} 反馈" +
+                            if (result.packs > 0 || result.overlays > 0) {
+                                "，${result.packs} Pack，${result.overlays} Overlay"
+                            } else ""
                         showToast(
                             if (result.errors.isEmpty()) summary
                             else summary + "\n" + result.errors.take(3).joinToString("\n")
@@ -109,7 +124,7 @@ fun CapabilitiesScreen() {
         if (uri != null) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val json = repository.exportPromptsJson()
+                    val json = repository.exportPromptsJson(activePackId)
                     context.contentResolver.openOutputStream(uri)?.use {
                         it.write(json.toByteArray(Charsets.UTF_8))
                     }
@@ -121,15 +136,79 @@ fun CapabilitiesScreen() {
         }
     }
 
-    LaunchedEffect(refreshTrigger) {
-        agentsList = repository.getAllAgentPrompts()
+    val singleExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val target = singleExportTarget
+        singleExportTarget = null
+        if (uri != null && target != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = when (target) {
+                        is PromptTarget.AgentTarget -> repository.exportAgentJson(target.agent, activePackId)
+                        is PromptTarget.ToolSkillTarget -> repository.exportToolSkillJson(target.item)
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use {
+                        it.write(json.toByteArray(Charsets.UTF_8))
+                    }
+                    withContext(Dispatchers.Main) { showToast("单条 Prompt 已导出") }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导出失败: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    val singleImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val target = singleImportTarget
+        singleImportTarget = null
+        if (uri != null && target != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val json = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                    val category = when (target) {
+                        is PromptTarget.AgentTarget -> "agent"
+                        is PromptTarget.ToolSkillTarget -> target.item.category
+                    }
+                    val result = repository.importSinglePromptJson(json, category)
+                    withContext(Dispatchers.Main) {
+                        refreshTrigger++
+                        val summary = "导入: ${result.agents} Agent, ${result.tools} Tool/Skill"
+                        showToast(
+                            if (result.errors.isEmpty()) summary
+                            else summary + "\n" + result.errors.take(3).joinToString("\n")
+                        )
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { showToast("导入失败: ${e.message}") }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTrigger, activePackId) {
+        agentsList = repository.getAllAgentPrompts().map { base ->
+            repository.getAgentPromptForEditing(base.id, activePackId) ?: base
+        }
         toolSkillList = repository.getAllToolSkillPrompts()
         feedbackList = repository.getAllFeedback()
+    }
+
+    LaunchedEffect(Unit) {
+        AccessLevelManager.refresh(context)
     }
 
     // 顶层分区：能力（Agents/Tools/Skills）与 反馈（建议/吐槽）分开
     var mainSection by remember { mutableStateOf("能力") }
     var selectedFilter by remember { mutableStateOf("全部") }
+    var searchQuery by remember { mutableStateOf("") }
+    fun matchesSearch(vararg fields: String): Boolean {
+        val q = searchQuery.trim()
+        return q.isEmpty() || fields.any { it.contains(q, ignoreCase = true) }
+    }
     val filters = if (mainSection == "能力") {
         listOf("全部", "Agents", "Tools", "Skills")
     } else {
@@ -148,19 +227,31 @@ fun CapabilitiesScreen() {
     var addPromptCategory by remember { mutableStateOf<String?>(null) }
     var deleteConfirmTarget by remember { mutableStateOf<PromptTarget?>(null) }
 
+    val availableToolSkillCount = toolSkillList.count {
+        AccessLevel.satisfies(currentLevel, it.dependenceJson)
+    }
+
     val visibleAgents = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Agents")) {
-        agentsList
+        agentsList.filter {
+            matchesSearch(it.name, it.role, it.description, it.prompt)
+        }
     } else emptyList()
     val visibleTools = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Tools")) {
-        toolSkillList.filter { it.category == "tool" }
+        toolSkillList.filter {
+            it.category == "tool" &&
+                matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
+        }
     } else emptyList()
     val visibleSkills = if (mainSection == "能力" && (selectedFilter == "全部" || selectedFilter == "Skills")) {
-        toolSkillList.filter { it.category == "skill" }
+        toolSkillList.filter {
+            it.category == "skill" &&
+                matchesSearch(it.id, it.displayName, it.description, it.prompt, it.keywordsJson, it.domain)
+        }
     } else emptyList()
     val visibleFeedback = if (mainSection == "反馈") {
         when (selectedFilter) {
-            "建议" -> feedbackList.filter { it.kind == "suggestion" }
-            else -> feedbackList.filter { it.kind != "suggestion" }
+            "建议" -> feedbackList.filter { it.kind == "suggestion" && matchesSearch(it.text) }
+            else -> feedbackList.filter { it.kind != "suggestion" && matchesSearch(it.text) }
         }
     } else emptyList()
 
@@ -185,7 +276,7 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill",
+                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前等级可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 包 $activePackId",
                     fontSize = 13.sp,
                     color = colors.textSecondary
                 )
@@ -273,6 +364,17 @@ fun CapabilitiesScreen() {
             )
         }
 
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            singleLine = true,
+            placeholder = { Text("搜索名称、描述、关键词、Prompt…", fontSize = 13.sp) },
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+        )
+
         // 分区内过滤标签
         Row(
             modifier = Modifier
@@ -309,6 +411,7 @@ fun CapabilitiesScreen() {
                 agents = visibleAgents,
                 tools = visibleTools,
                 skills = visibleSkills,
+                currentLevel = currentLevel,
                 onEditAgent = { agent -> activePromptTarget = PromptTarget.AgentTarget(agent) },
                 onDeleteAgent = { agent -> deleteConfirmTarget = PromptTarget.AgentTarget(agent) },
                 onToggleAgent = { agent, enabled ->
@@ -320,6 +423,22 @@ fun CapabilitiesScreen() {
                 onToggleTool = { item, enabled ->
                     repository.updateToolSkillEnabled(item.id, enabled)
                     refreshTrigger++
+                },
+                onExportAgent = { agent ->
+                    singleExportTarget = PromptTarget.AgentTarget(agent)
+                    singleExportLauncher.launch("agent_${agent.id}.json")
+                },
+                onImportAgent = { agent ->
+                    singleImportTarget = PromptTarget.AgentTarget(agent)
+                    singleImportLauncher.launch(arrayOf("application/json", "text/plain"))
+                },
+                onExportTool = { item ->
+                    singleExportTarget = PromptTarget.ToolSkillTarget(item)
+                    singleExportLauncher.launch("${item.category}_${item.id}.json")
+                },
+                onImportTool = { item ->
+                    singleImportTarget = PromptTarget.ToolSkillTarget(item)
+                    singleImportLauncher.launch(arrayOf("application/json", "text/plain"))
                 }
             )
         }
@@ -330,9 +449,10 @@ fun CapabilitiesScreen() {
         UnifiedPromptDialog(
             category = "agent",
             agent = target.agent,
+            activePackId = activePackId,
             onDismiss = { activePromptTarget = null },
             onSaveAgent = { updated ->
-                repository.updateAgentDetails(updated)
+                repository.updateAgentDetailsForPack(updated, activePackId)
                 refreshTrigger++
                 activePromptTarget = null
             }
@@ -344,6 +464,7 @@ fun CapabilitiesScreen() {
         UnifiedPromptDialog(
             category = target.item.category,
             toolSkill = target.item,
+            activePackId = activePackId,
             onDismiss = { activePromptTarget = null },
             onSaveToolSkill = { updated ->
                 repository.updateToolSkillDetails(updated)
@@ -383,9 +504,13 @@ fun CapabilitiesScreen() {
             category = feedbackDraftKind,
             onDismiss = { showAddFeedbackDialog = false },
             onSaveFeedback = { text ->
-                repository.addFeedback(text, feedbackDraftKind)
-                refreshTrigger++
-                showAddFeedbackDialog = false
+                val result = repository.addFeedback(text, feedbackDraftKind)
+                if (result == PromptRepository.FEEDBACK_DUPLICATE) {
+                    Toast.makeText(context, "已存在相同反馈，未重复添加", Toast.LENGTH_SHORT).show()
+                } else {
+                    refreshTrigger++
+                    showAddFeedbackDialog = false
+                }
             }
         )
     }
@@ -396,9 +521,12 @@ fun CapabilitiesScreen() {
             feedback = item,
             onDismiss = { editingFeedback = null },
             onSaveFeedback = { text ->
-                repository.updateFeedback(item.id, text, item.kind)
-                refreshTrigger++
-                editingFeedback = null
+                if (repository.updateFeedback(item.id, text, item.kind)) {
+                    refreshTrigger++
+                    editingFeedback = null
+                } else {
+                    Toast.makeText(context, "已有相同反馈，无法保存", Toast.LENGTH_SHORT).show()
+                }
             }
         )
     }
@@ -442,12 +570,17 @@ fun UnifiedCapabilitiesList(
     agents: List<AgentPromptEntity>,
     tools: List<ToolSkillPromptEntity>,
     skills: List<ToolSkillPromptEntity>,
+    currentLevel: AccessLevel,
     onEditAgent: (AgentPromptEntity) -> Unit,
     onDeleteAgent: (AgentPromptEntity) -> Unit,
     onToggleAgent: (AgentPromptEntity, Boolean) -> Unit,
     onEditTool: (ToolSkillPromptEntity) -> Unit,
     onDeleteTool: (ToolSkillPromptEntity) -> Unit,
-    onToggleTool: (ToolSkillPromptEntity, Boolean) -> Unit
+    onToggleTool: (ToolSkillPromptEntity, Boolean) -> Unit,
+    onExportAgent: (AgentPromptEntity) -> Unit = {},
+    onImportAgent: (AgentPromptEntity) -> Unit = {},
+    onExportTool: (ToolSkillPromptEntity) -> Unit = {},
+    onImportTool: (ToolSkillPromptEntity) -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
     LazyColumn(
@@ -490,7 +623,9 @@ fun UnifiedCapabilitiesList(
                     agent = agent,
                     onEditPrompt = { onEditAgent(agent) },
                     onDelete = { onDeleteAgent(agent) },
-                    onToggleEnabled = { onToggleAgent(agent, it) }
+                    onToggleEnabled = { onToggleAgent(agent, it) },
+                    onExport = { onExportAgent(agent) },
+                    onImport = { onImportAgent(agent) }
                 )
             }
         }
@@ -500,9 +635,12 @@ fun UnifiedCapabilitiesList(
             items(tools, key = { "tool_${it.id}" }) { item ->
                 ToolSkillCard(
                     item = item,
+                    available = AccessLevel.satisfies(currentLevel, item.dependenceJson),
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
-                    onToggleEnabled = { onToggleTool(item, it) }
+                    onToggleEnabled = { onToggleTool(item, it) },
+                    onExport = { onExportTool(item) },
+                    onImport = { onImportTool(item) }
                 )
             }
         }
@@ -512,9 +650,12 @@ fun UnifiedCapabilitiesList(
             items(skills, key = { "skill_${it.id}" }) { item ->
                 ToolSkillCard(
                     item = item,
+                    available = AccessLevel.satisfies(currentLevel, item.dependenceJson),
                     onEditPrompt = { onEditTool(item) },
                     onDelete = { onDeleteTool(item) },
-                    onToggleEnabled = { onToggleTool(item, it) }
+                    onToggleEnabled = { onToggleTool(item, it) },
+                    onExport = { onExportTool(item) },
+                    onImport = { onImportTool(item) }
                 )
             }
         }
@@ -745,7 +886,9 @@ fun AgentCard(
     agent: AgentPromptEntity,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
-    onToggleEnabled: (Boolean) -> Unit
+    onToggleEnabled: (Boolean) -> Unit,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
     var expanded by remember { mutableStateOf(false) }
@@ -880,6 +1023,15 @@ fun AgentCard(
                 prompt = agent.prompt,
                 onLongPress = onEditPrompt
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onImport) { Text("导入本条") }
+                TextButton(onClick = onExport) { Text("导出本条") }
+            }
         }
     }
 }
@@ -935,9 +1087,12 @@ fun ToolsSkillsListView(
 @Composable
 fun ToolSkillCard(
     item: ToolSkillPromptEntity,
+    available: Boolean = true,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
-    onToggleEnabled: (Boolean) -> Unit
+    onToggleEnabled: (Boolean) -> Unit,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {}
 ) {
     val colors = BaoziTheme.colors
 
@@ -1013,6 +1168,20 @@ fun ToolSkillCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    val deps = AccessLevel.parse(item.dependenceJson)
+                    Text(
+                        text = "依赖: " + if (deps.isEmpty()) "无（所有等级）" else deps.joinToString(" + ") { it.uppercase() },
+                        fontSize = 11.sp,
+                        color = if (deps.isEmpty()) colors.textHint else colors.primary
+                    )
+                    if (!available) {
+                        Text(
+                            text = "当前等级不可用（仍可编辑/启用）",
+                            fontSize = 11.sp,
+                            color = colors.error
+                        )
+                    }
                 }
 
                 Switch(
@@ -1041,6 +1210,15 @@ fun ToolSkillCard(
                 prompt = item.prompt,
                 onLongPress = onEditPrompt
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onImport) { Text("导入本条") }
+                TextButton(onClick = onExport) { Text("导出本条") }
+            }
         }
     }
 }
@@ -1616,12 +1794,33 @@ Provide step by step actions."""
  * Agent / Tool / Skill / 建议 / 吐槽 共用的添加、编辑弹窗。
  * 同一分类的添加和编辑必须走同一个 Composable，避免两套界面。
  */
+private fun safeJsonArray(text: String): JSONArray = try {
+    JSONArray(text.ifBlank { "[]" })
+} catch (e: Exception) {
+    JSONArray()
+}
+
+private fun buildSkillEditorJson(item: ToolSkillPromptEntity?): String {
+    val root = JSONObject()
+    root.put("keywords", safeJsonArray(item?.keywordsJson ?: "[]"))
+    root.put("params", safeJsonArray(item?.paramsJson ?: "[]"))
+    root.put("related_apps", safeJsonArray(item?.relatedAppsJson ?: "[]"))
+    root.put("prompt_hint", item?.promptHint ?: "")
+    root.put("prompt", item?.prompt ?: "")
+    root.put("domain", item?.domain ?: "")
+    root.put("source", item?.source ?: "custom")
+    root.put("executable", item?.executable ?: false)
+    return root.toString(2)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnifiedPromptDialog(
     category: String,
     agent: AgentPromptEntity? = null,
     toolSkill: ToolSkillPromptEntity? = null,
     feedback: UserFeedbackEntity? = null,
+    activePackId: String = "",
     onDismiss: () -> Unit,
     onSaveAgent: ((AgentPromptEntity) -> Unit)? = null,
     onSaveToolSkill: ((ToolSkillPromptEntity) -> Unit)? = null,
@@ -1644,6 +1843,11 @@ fun UnifiedPromptDialog(
     var icon by remember { mutableStateOf(agent?.icon ?: "🤖") }
     var role by remember { mutableStateOf(agent?.role ?: "自定义助手") }
     var description by remember { mutableStateOf(agent?.description ?: toolSkill?.description ?: "") }
+    var dependence by remember {
+        mutableStateOf(
+            AccessLevel.parse(toolSkill?.dependenceJson ?: "[]").firstOrNull() ?: "none"
+        )
+    }
     var responsibilitiesStr by remember {
         mutableStateOf(agent?.responsibilities?.joinToString("，") ?: "")
     }
@@ -1666,6 +1870,8 @@ Provide step by step actions."""
     var errorText by remember { mutableStateOf<String?>(null) }
     var formError by remember { mutableStateOf<String?>(null) }
     var showPlaceholderPanel by remember { mutableStateOf(false) }
+    val isSkill = !isAgent && !isFeedback && category == "skill"
+    var skillJson by remember { mutableStateOf(buildSkillEditorJson(toolSkill)) }
 
     fun save() {
         formError = null
@@ -1686,6 +1892,51 @@ Provide step by step actions."""
         }
         if (!isAgent && !name.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) {
             formError = "标识符只能包含字母、数字、下划线，且不能以数字开头"
+            return
+        }
+
+        if (isSkill) {
+            val json = try {
+                JSONObject(skillJson)
+            } catch (e: Exception) {
+                errorText = "其余字段不是合法 JSON：${e.message}"
+                return
+            }
+            val identifier = toolSkill?.name ?: name
+            val jsonPrompt = json.optString("prompt").ifBlank {
+                "技能: $identifier\n说明: ${description.ifBlank { "自定义 Skill" }}"
+            }
+            val promptError = validatePromptFormat(
+                name = identifier,
+                category = "skill",
+                agentId = null,
+                prompt = jsonPrompt
+            )
+            if (promptError != null) {
+                errorText = promptError
+                return
+            }
+            onSaveToolSkill?.invoke(
+                ToolSkillPromptEntity(
+                    id = toolSkill?.id ?: UUID.randomUUID().toString(),
+                    name = identifier,
+                    displayName = displayName.ifBlank { identifier },
+                    category = "skill",
+                    description = description,
+                    prompt = jsonPrompt,
+                    defaultPrompt = toolSkill?.defaultPrompt ?: jsonPrompt,
+                    isDefault = toolSkill?.isDefault ?: false,
+                    enabled = toolSkill?.enabled ?: true,
+                    keywordsJson = json.optJSONArray("keywords")?.toString() ?: "[]",
+                    paramsJson = json.optJSONArray("params")?.toString() ?: "[]",
+                    relatedAppsJson = json.optJSONArray("related_apps")?.toString() ?: "[]",
+                    promptHint = json.optString("prompt_hint", ""),
+                    domain = json.optString("domain", ""),
+                    source = json.optString("source", toolSkill?.source ?: "custom"),
+                    executable = json.optBoolean("executable", toolSkill?.executable ?: false),
+                    dependenceJson = if (dependence == "none") "[]" else "[\"$dependence\"]"
+                )
+            )
             return
         }
 
@@ -1729,7 +1980,8 @@ Provide step by step actions."""
                     prompt = promptValue.text,
                     defaultPrompt = toolSkill?.defaultPrompt ?: promptValue.text,
                     isDefault = toolSkill?.isDefault ?: false,
-                    enabled = toolSkill?.enabled ?: true
+                    enabled = toolSkill?.enabled ?: true,
+                    dependenceJson = if (dependence == "none") "[]" else "[\"$dependence\"]"
                 )
             )
         }
@@ -1772,6 +2024,13 @@ Provide step by step actions."""
                         text = "类型：$typeLabel（由入口决定，不在表单内切换）",
                         fontSize = 11.sp,
                         color = colors.textSecondary
+                    )
+                }
+                if (activePackId.isNotBlank()) {
+                    Text(
+                        text = "当前包: $activePackId；Agent 提示词按当前包覆盖保存",
+                        fontSize = 11.sp,
+                        color = colors.primary
                     )
                 }
             }
@@ -1847,6 +2106,23 @@ Provide step by step actions."""
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    if (!isAgent) {
+                        Text("依赖（最低等级）", fontSize = 11.sp, color = colors.textSecondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                "none" to "无",
+                                "adb" to "ADB+",
+                                "root" to "ROOT"
+                            ).forEach { (value, label) ->
+                                FilterChip(
+                                    selected = dependence == value,
+                                    onClick = { dependence = value },
+                                    label = { Text(label, fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
+
                     if (isAgent) {
                         OutlinedTextField(
                             value = responsibilitiesStr,
@@ -1857,38 +2133,55 @@ Provide step by step actions."""
                         )
                     }
 
-                    PromptEditorBody(
-                        promptValue = promptValue,
-                        onPromptValueChange = {
-                            promptValue = it
-                            errorText = null
-                        },
-                        errorText = errorText ?: formError,
-                        allowPlaceholders = isAgent,
-                        showPlaceholderPanel = showPlaceholderPanel,
-                        onTogglePlaceholderPanel = {
-                            showPlaceholderPanel = !showPlaceholderPanel
-                        },
-                        fieldHeight = if (showPlaceholderPanel) 140.dp else 170.dp
-                    )
-
-                    if (!isAgent) {
-                        TextButton(
-                            onClick = {
-                                val identifier = toolSkill?.name ?: name.ifBlank { "my_${category}" }
-                                val desc = description.ifBlank { "自定义 $typeLabel" }
-                                promptValue = TextFieldValue(
-                                    if (category == "tool") {
-                                        "工具: $identifier\n说明: $desc\n参数:\n  - query: string (必填) - 查询参数"
-                                    } else {
-                                        "技能: $identifier\n说明: $desc"
-                                    }
-                                )
+                    if (isSkill) {
+                        OutlinedTextField(
+                            value = skillJson,
+                            onValueChange = {
+                                skillJson = it
                                 errorText = null
                             },
-                            contentPadding = PaddingValues(horizontal = 4.dp)
-                        ) {
-                            Text("插入格式模板", fontSize = 11.sp)
+                            label = { Text("其余字段（JSON：keywords / params / related_apps / prompt_hint / prompt / domain / source / executable）") },
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(240.dp)
+                        )
+                        (errorText ?: formError)?.let { message ->
+                            Text(message, fontSize = 12.sp, color = colors.error)
+                        }
+                    } else {
+                        PromptEditorBody(
+                            promptValue = promptValue,
+                            onPromptValueChange = {
+                                promptValue = it
+                                errorText = null
+                            },
+                            errorText = errorText ?: formError,
+                            allowPlaceholders = isAgent,
+                            showPlaceholderPanel = showPlaceholderPanel,
+                            onTogglePlaceholderPanel = {
+                                showPlaceholderPanel = !showPlaceholderPanel
+                            },
+                            fieldHeight = if (showPlaceholderPanel) 140.dp else 170.dp
+                        )
+
+                        if (!isAgent) {
+                            TextButton(
+                                onClick = {
+                                    val identifier = toolSkill?.name ?: name.ifBlank { "my_${category}" }
+                                    val desc = description.ifBlank { "自定义 $typeLabel" }
+                                    promptValue = TextFieldValue(
+                                        "工具: $identifier\n说明: $desc\n参数:\n  - query: string (必填) - 查询参数"
+                                    )
+                                    errorText = null
+                                },
+                                contentPadding = PaddingValues(horizontal = 4.dp)
+                            ) {
+                                Text("插入格式模板", fontSize = 11.sp)
+                            }
                         }
                     }
                 }
@@ -1927,6 +2220,7 @@ Provide step by step actions."""
                             responsibilitiesStr = ""
                             feedbackText = ""
                             promptValue = TextFieldValue("")
+                            skillJson = buildSkillEditorJson(null)
                             errorText = null
                             formError = null
                         }

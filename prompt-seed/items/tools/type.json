@@ -1,0 +1,18 @@
+{
+  "id": "type",
+  "kind": "tool",
+  "name": "type",
+  "display_name": "输入文本",
+  "description": "输入文本内容到当前焦点位置",
+  "prompt": "工具: type\n说明: 直接通过 ACTION_SET_TEXT 写入焦点输入框，绕过输入法；不要点键盘中/英，也不要用 input text 模拟按键。\n参数:\n  - text: string (必填) - 要输入的文本",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

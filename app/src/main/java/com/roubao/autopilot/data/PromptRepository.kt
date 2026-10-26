@@ -2,10 +2,21 @@ package com.roubao.autopilot.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.roubao.autopilot.agent.AccessLevel
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
+import java.util.Locale
+
+/** 读取可能尚未迁移的列，避免旧 DB 直接崩。 */
+private fun Cursor.getStringOr(name: String, default: String): String {
+    val index = getColumnIndex(name)
+    return if (index >= 0) getString(index) ?: default else default
+}
 
 data class AgentPromptEntity(
     val id: String,
@@ -29,7 +40,15 @@ data class ToolSkillPromptEntity(
     val prompt: String,
     val defaultPrompt: String,
     val isDefault: Boolean,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val keywordsJson: String = "[]",
+    val paramsJson: String = "[]",
+    val relatedAppsJson: String = "[]",
+    val promptHint: String = "",
+    val domain: String = "",
+    val source: String = "custom",
+    val executable: Boolean = false,
+    val dependenceJson: String = "[]"
 )
 
 data class UserFeedbackEntity(
@@ -37,15 +56,95 @@ data class UserFeedbackEntity(
     val text: String,
     val createdAt: Long,
     val enabled: Boolean,
-    val kind: String = "complaint" // "suggestion" or "complaint"
+    val kind: String = "complaint", // "suggestion" or "complaint"
+    val dependenceJson: String = "[]"
+)
+
+data class PromptPackEntity(
+    val id: String,
+    val displayName: String,
+    val level: String,
+    val description: String,
+    val sortOrder: Int = 0,
+    val isBuiltin: Boolean = true
 )
 
 data class PromptImportResult(
     val agents: Int,
     val tools: Int,
     val feedback: Int,
-    val errors: List<String>
+    val errors: List<String>,
+    val packs: Int = 0,
+    val overlays: Int = 0
 )
+
+/** 归一化反馈文本：仅用于判重，不改变落库原文。 */
+private fun normalizeFeedbackText(text: String): String =
+    text.trim()
+        .replace(Regex("\\s+"), " ")
+        .trim { it.isWhitespace() || it in "。！？!?.;；,，" }
+        .lowercase(Locale.ROOT)
+
+private fun sha256(text: String): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+/**
+ * 上一版内置/预设 Agent Prompt 的指纹。
+ * 只有命中这些指纹才在 v5 迁移时替换，避免覆盖真正手改过的 Prompt。
+ */
+private val LEGACY_AGENT_PROMPT_HASHES = mapOf(
+    "manager" to setOf(
+        "2bbdec26b012c32c5e5788fb926d7d169a80b97d15b947a4f69f090432d6ac46",
+        "f22cc9cd39d2e7352bbdc8dff36d2c5535784f9d8e69fd72942143b5377c2083"
+    ),
+    "executor" to setOf(
+        "73a77a0c33fddcf8bdab9d3f4ae9d75824c429fbfc8a42f1dd96e756f1336a59",
+        "99642e0f4e4f69a6899b7614974ef94080d04dc173d96460180410e8a73eb732"
+    ),
+    "reflector" to setOf(
+        "5d89e1b1e6514cabf0e236c378ce646d988c55bc6d9e85a363bcdc2330124b96",
+        "3262c2439cda07e3dba84e53721ea446f9db3ad462afc037fd04726c98f7d778"
+    ),
+    "notetaker" to setOf(
+        "8cf2e0fbd3e94b68ab81cd68504f54bb1854624e445940843fa3c9434b07a941",
+        "f43a88e076cab7d3d12bb4cbe853dff61cb0c2b48c9b6e488f7fa325374943af"
+    )
+)
+
+/** 去重并重写后的预设反馈：一条只覆盖一个操作原则。 */
+private const val SECURITY_FEEDBACK =
+    "涉及支付确认、密码/验证码输入、生物识别、登录授权或系统安全设置时，先 ask_user/take_over；不要代替用户确认支付、输入密码或修改安全设置。"
+
+private val LEGACY_PRESET_FEEDBACK = listOf(
+    "suggestion" to "列表翻页优先使用 scroll，避免重复 swipe。",
+    "suggestion" to "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
+    "suggestion" to "截图仅用于 UI 树无法覆盖的视觉判断。",
+    "complaint" to "文件与系统操作优先使用 shell，不要打开文件管理器。",
+    "complaint" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
+    "complaint" to "光标与选区使用 set_selection，不要长按拖拽。",
+    "complaint" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。",
+    "suggestion" to SECURITY_FEEDBACK
+)
+
+/** v10：把旧版随手写的反馈替换成专业、单职责的表述。 */
+private val LEGACY_FEEDBACK_REWRITES = listOf(
+    "翻页优先用 scroll，不要反复 swipe。" to "列表翻页优先使用 scroll，避免重复 swipe。",
+    "能用无障碍 UI 树文本定位，就不要靠截图猜坐标。" to "元素定位优先使用无障碍 UI 树，避免依赖截图坐标。",
+    "截图只在需要视觉判断时使用，不要每一步都依赖截图。" to "截图仅用于 UI 树无法覆盖的视觉判断。",
+    "不要打开文件管理器做文件操作，任务会因此失败。" to "文件与系统操作优先使用 shell，不要打开文件管理器。",
+    "不要点键盘中/英切输入法，type 会直接写入。" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
+    "不要长按拖拽选字，用 set_selection。" to "光标与选区使用 set_selection，不要长按拖拽。",
+    "不要反复点同一个位置；失败两次必须换策略。" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。"
+).map { normalizeFeedbackText(it.first) to it.second }
+
+/** v7 清理：上一版原样恢复时带回来的 3 条重复建议。 */
+private val LEGACY_DUPLICATE_SUGGESTIONS = setOf(
+    "文件/系统任务优先用 shell（ls/find/grep/cp/mv/mkdir/rm/stat），不要打开文件管理器 UI。",
+    "输入文字优先用 type（ACTION_SET_TEXT），不要点键盘中/英。",
+    "选择文字/移动光标优先用 set_selection，不要长按拖拽。"
+).map { normalizeFeedbackText(it) }.toSet()
 
 class PromptRepository private constructor(context: Context) {
 
@@ -111,12 +210,152 @@ class PromptRepository private constructor(context: Context) {
                     responsibilities = respList,
                     prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                     defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
-                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1
+                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
+                    enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1
                 )
             }
         }
         return null
     }
+
+    /**
+     * 按 pack 解析 Agent prompt：base + overlay（replace/append/prepend）。
+     * 没有 overlay 时直接用 base。
+     */
+    fun getAgentPrompt(id: String, packId: String): AgentPromptEntity? {
+        val base = getAgentPrompt(id) ?: return null
+        if (packId.isBlank()) return base
+
+        val db = dbHelper.readableDatabase
+        var mode = ""
+        var overlay = ""
+        db.query(
+            "agent_pack_overlays",
+            arrayOf("mode", "prompt"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                mode = cursor.getString(0) ?: ""
+                overlay = cursor.getString(1) ?: ""
+            }
+        }
+        if (overlay.isBlank()) return base
+
+        val resolved = when (mode) {
+            "replace" -> overlay
+            "prepend" -> overlay.trimEnd() + "\n\n" + base.prompt
+            else -> base.prompt.trimEnd() + "\n\n" + overlay
+        }
+        return base.copy(prompt = resolved)
+    }
+
+    /**
+     * 编辑用 prompt：
+     * - replace overlay（basic）显示 overlay 本身，避免用户编辑 base 却改了不生效；
+     * - append/prepend（advanced）仍显示 base，overlay 保持独立；
+     * - 无 overlay（standard）显示 base。
+     */
+    fun getAgentPromptForEditing(id: String, packId: String): AgentPromptEntity? {
+        val base = getAgentPrompt(id) ?: return null
+        if (packId.isBlank()) return base
+        val db = dbHelper.readableDatabase
+        var mode = ""
+        var overlay = ""
+        db.query(
+            "agent_pack_overlays",
+            arrayOf("mode", "prompt"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                mode = cursor.getString(0) ?: ""
+                overlay = cursor.getString(1) ?: ""
+            }
+        }
+        return if (mode == "replace" && overlay.isNotBlank()) {
+            base.copy(prompt = overlay)
+        } else {
+            base
+        }
+    }
+
+    /**
+     * 保存 Agent：
+     * - 当前包是 replace overlay 时，提示词写到 overlay，base 只更新展示信息；
+     * - 否则更新 base 提示词。
+     */
+    fun updateAgentDetailsForPack(agent: AgentPromptEntity, packId: String) {
+        val db = dbHelper.writableDatabase
+        var mode = ""
+        db.query(
+            "agent_pack_overlays",
+            arrayOf("mode"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(agent.id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) mode = cursor.getString(0) ?: ""
+        }
+
+        val cv = ContentValues().apply {
+            put("name", agent.name)
+            put("icon", agent.icon)
+            put("role", agent.role)
+            put("description", agent.description)
+            put("responsibilities", JSONArray(agent.responsibilities).toString())
+            if (mode != "replace") {
+                put("prompt", agent.prompt)
+            }
+        }
+        db.update("agent_prompts", cv, "id = ?", arrayOf(agent.id))
+
+        if (mode == "replace") {
+            db.update(
+                "agent_pack_overlays",
+                ContentValues().apply { put("prompt", agent.prompt) },
+                "agent_id = ? AND pack_id = ?",
+                arrayOf(agent.id, packId)
+            )
+        }
+    }
+
+
+    fun getAllPacks(): List<PromptPackEntity> {
+        val list = mutableListOf<PromptPackEntity>()
+        dbHelper.readableDatabase.query(
+            "prompt_packs",
+            null, null, null, null, null,
+            "sort_order ASC, id ASC"
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                list.add(
+                    PromptPackEntity(
+                        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                        displayName = cursor.getString(cursor.getColumnIndexOrThrow("display_name")),
+                        level = cursor.getString(cursor.getColumnIndexOrThrow("level")),
+                        description = cursor.getString(cursor.getColumnIndexOrThrow("description")),
+                        sortOrder = cursor.getInt(cursor.getColumnIndexOrThrow("sort_order")),
+                        isBuiltin = cursor.getInt(cursor.getColumnIndexOrThrow("is_builtin")) == 1
+                    )
+                )
+            }
+        }
+        return list
+    }
+
+    fun getPack(id: String): PromptPackEntity? =
+        getAllPacks().firstOrNull { it.id == id }
+
+    fun getToolSkillPromptsForLevel(level: AccessLevel): List<ToolSkillPromptEntity> =
+        getAllToolSkillPrompts().filter {
+            it.enabled && AccessLevel.satisfies(level, it.dependenceJson)
+        }
+
+    fun getSkillPromptsForLevel(level: AccessLevel): List<ToolSkillPromptEntity> =
+        getToolSkillPromptsForLevel(level).filter { it.category == "skill" && it.prompt.isNotBlank() }
 
     fun updateAgentPrompt(id: String, newPrompt: String) {
         val db = dbHelper.writableDatabase
@@ -205,7 +444,15 @@ class PromptRepository private constructor(context: Context) {
                         prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                         defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
                         isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
-                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1
+                        enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
+                        keywordsJson = it.getString(it.getColumnIndexOrThrow("keywords_json")),
+                        paramsJson = it.getString(it.getColumnIndexOrThrow("params_json")),
+                        relatedAppsJson = it.getString(it.getColumnIndexOrThrow("related_apps_json")),
+                        promptHint = it.getString(it.getColumnIndexOrThrow("prompt_hint")),
+                        domain = it.getString(it.getColumnIndexOrThrow("domain")),
+                        source = it.getString(it.getColumnIndexOrThrow("source")),
+                        executable = it.getInt(it.getColumnIndexOrThrow("executable")) == 1,
+                        dependenceJson = it.getStringOr("dependence_json", "[]")
                     )
                 )
             }
@@ -229,7 +476,16 @@ class PromptRepository private constructor(context: Context) {
                     description = it.getString(it.getColumnIndexOrThrow("description")),
                     prompt = it.getString(it.getColumnIndexOrThrow("prompt")),
                     defaultPrompt = it.getString(it.getColumnIndexOrThrow("default_prompt")),
-                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1
+                    isDefault = it.getInt(it.getColumnIndexOrThrow("is_default")) == 1,
+                    enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
+                    keywordsJson = it.getString(it.getColumnIndexOrThrow("keywords_json")),
+                    paramsJson = it.getString(it.getColumnIndexOrThrow("params_json")),
+                    relatedAppsJson = it.getString(it.getColumnIndexOrThrow("related_apps_json")),
+                    promptHint = it.getString(it.getColumnIndexOrThrow("prompt_hint")),
+                    domain = it.getString(it.getColumnIndexOrThrow("domain")),
+                    source = it.getString(it.getColumnIndexOrThrow("source")),
+                    executable = it.getInt(it.getColumnIndexOrThrow("executable")) == 1,
+                    dependenceJson = it.getStringOr("dependence_json", "[]")
                 )
             }
         }
@@ -251,6 +507,14 @@ class PromptRepository private constructor(context: Context) {
             put("display_name", item.displayName)
             put("description", item.description)
             put("prompt", item.prompt)
+            put("keywords_json", item.keywordsJson)
+            put("params_json", item.paramsJson)
+            put("related_apps_json", item.relatedAppsJson)
+            put("prompt_hint", item.promptHint)
+            put("domain", item.domain)
+            put("source", item.source)
+            put("executable", if (item.executable) 1 else 0)
+            put("dependence_json", item.dependenceJson)
         }
         db.update("tool_skill_prompts", cv, "id = ?", arrayOf(item.id))
     }
@@ -289,6 +553,14 @@ class PromptRepository private constructor(context: Context) {
             put("default_prompt", item.defaultPrompt)
             put("is_default", if (item.isDefault) 1 else 0)
             put("enabled", if (item.enabled) 1 else 0)
+            put("keywords_json", item.keywordsJson)
+            put("params_json", item.paramsJson)
+            put("related_apps_json", item.relatedAppsJson)
+            put("prompt_hint", item.promptHint)
+            put("domain", item.domain)
+            put("source", item.source)
+            put("executable", if (item.executable) 1 else 0)
+            put("dependence_json", item.dependenceJson)
         }
         db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
@@ -320,7 +592,8 @@ class PromptRepository private constructor(context: Context) {
                         text = it.getString(it.getColumnIndexOrThrow("text")),
                         createdAt = it.getLong(it.getColumnIndexOrThrow("created_at")),
                         enabled = it.getInt(it.getColumnIndexOrThrow("enabled")) == 1,
-                        kind = it.getString(it.getColumnIndexOrThrow("kind"))
+                        kind = it.getString(it.getColumnIndexOrThrow("kind")),
+                        dependenceJson = it.getStringOr("dependence_json", "[]")
                     )
                 )
             }
@@ -333,6 +606,9 @@ class PromptRepository private constructor(context: Context) {
         if (trimmed.isEmpty()) return -1
         val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
         val db = dbHelper.writableDatabase
+        if (findFeedbackByNormalizedText(db, normalizeFeedbackText(trimmed)) != null) {
+            return FEEDBACK_DUPLICATE
+        }
         val cv = ContentValues().apply {
             put("text", trimmed)
             put("created_at", System.currentTimeMillis())
@@ -342,11 +618,30 @@ class PromptRepository private constructor(context: Context) {
         return db.insert("user_feedback", null, cv)
     }
 
-    fun updateFeedback(id: Long, text: String, kind: String) {
+    private fun findFeedbackByNormalizedText(db: SQLiteDatabase, normalized: String): Long? {
+        val cursor = db.query(
+            "user_feedback",
+            arrayOf("id", "text"),
+            null, null, null, null,
+            "created_at DESC, id DESC"
+        )
+        cursor.use {
+            while (it.moveToNext()) {
+                if (normalizeFeedbackText(it.getString(1)) == normalized) {
+                    return it.getLong(0)
+                }
+            }
+        }
+        return null
+    }
+
+    fun updateFeedback(id: Long, text: String, kind: String): Boolean {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty()) return false
         val safeKind = if (kind == "suggestion") "suggestion" else "complaint"
         val db = dbHelper.writableDatabase
+        val duplicateId = findFeedbackByNormalizedText(db, normalizeFeedbackText(trimmed))
+        if (duplicateId != null && duplicateId != id) return false
         db.update(
             "user_feedback",
             ContentValues().apply {
@@ -356,6 +651,7 @@ class PromptRepository private constructor(context: Context) {
             "id = ?",
             arrayOf(id.toString())
         )
+        return true
     }
 
     fun setFeedbackEnabled(id: Long, enabled: Boolean) {
@@ -374,10 +670,14 @@ class PromptRepository private constructor(context: Context) {
     }
 
     /** 返回可直接注入 prompt 的反馈文本；没有启用项时返回空串。 */
-    fun getFeedbackPrompt(): String {
+    fun getFeedbackPrompt(level: AccessLevel = AccessLevel.USER): String {
         return try {
             val active = getAllFeedback()
-                .filter { it.enabled && it.text.isNotBlank() }
+                .filter {
+                    it.enabled && it.text.isNotBlank() &&
+                        AccessLevel.satisfies(level, it.dependenceJson)
+                }
+                .distinctBy { normalizeFeedbackText(it.text) }
                 .take(30)
             val suggestions = active.filter { it.kind == "suggestion" }
             val complaints = active.filter { it.kind != "suggestion" }
@@ -401,42 +701,23 @@ class PromptRepository private constructor(context: Context) {
     // 批量 JSON 导入 / 导出
     // ---------------------------------------------------------------------
 
-    fun exportPromptsJson(): String {
+    fun exportPromptsJson(activePackId: String = ""): String {
         val root = JSONObject()
         root.put("format", "roubao-prompts")
-        root.put("version", 1)
+        root.put("version", 3)
         root.put("exported_at", System.currentTimeMillis())
+        root.put("replace_overlays", true)
+        if (activePackId.isNotBlank()) root.put("active_pack", activePackId)
 
         val agents = JSONArray()
         getAllAgentPrompts().forEach { agent ->
-            agents.put(JSONObject().apply {
-                put("id", agent.id)
-                put("name", agent.name)
-                put("icon", agent.icon)
-                put("role", agent.role)
-                put("description", agent.description)
-                put("responsibilities", JSONArray(agent.responsibilities))
-                put("prompt", agent.prompt)
-                put("default_prompt", agent.defaultPrompt)
-                put("is_default", agent.isDefault)
-                put("enabled", agent.enabled)
-            })
+            agents.put(agentToJson(agent))
         }
         root.put("agents", agents)
 
         val tools = JSONArray()
         getAllToolSkillPrompts().forEach { item ->
-            tools.put(JSONObject().apply {
-                put("id", item.id)
-                put("name", item.name)
-                put("display_name", item.displayName)
-                put("category", item.category)
-                put("description", item.description)
-                put("prompt", item.prompt)
-                put("default_prompt", item.defaultPrompt)
-                put("is_default", item.isDefault)
-                put("enabled", item.enabled)
-            })
+            tools.put(toolSkillToJson(item))
         }
         root.put("tools", tools)
 
@@ -445,10 +726,159 @@ class PromptRepository private constructor(context: Context) {
             feedback.put(JSONObject().apply {
                 put("text", it.text)
                 put("kind", it.kind)
+                put("enabled", it.enabled)
+                put("dependence", parseJsonArray(it.dependenceJson))
             })
         }
         root.put("feedback", feedback)
+
+        val packs = JSONArray()
+        getAllPacks().forEach { pack ->
+            packs.put(JSONObject().apply {
+                put("id", pack.id)
+                put("display_name", pack.displayName)
+                put("level", pack.level)
+                put("description", pack.description)
+                put("sort_order", pack.sortOrder)
+                put("is_builtin", pack.isBuiltin)
+            })
+        }
+        root.put("packs", packs)
+
+        val overlays = JSONArray()
+        dbHelper.readableDatabase.query(
+            "agent_pack_overlays",
+            arrayOf("agent_id", "pack_id", "mode", "prompt"),
+            null, null, null, null,
+            "pack_id ASC, agent_id ASC"
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                overlays.put(JSONObject().apply {
+                    put("agent_id", cursor.getString(0))
+                    put("pack_id", cursor.getString(1))
+                    put("mode", cursor.getString(2))
+                    put("prompt", cursor.getString(3))
+                })
+            }
+        }
+        root.put("overlays", overlays)
         return root.toString(2)
+    }
+
+    private fun agentToJson(agent: AgentPromptEntity): JSONObject = JSONObject().apply {
+        put("id", agent.id)
+        put("name", agent.name)
+        put("icon", agent.icon)
+        put("role", agent.role)
+        put("description", agent.description)
+        put("responsibilities", JSONArray(agent.responsibilities))
+        put("prompt", agent.prompt)
+        put("default_prompt", agent.defaultPrompt)
+        put("is_default", agent.isDefault)
+        put("enabled", agent.enabled)
+    }
+
+    private fun toolSkillToJson(item: ToolSkillPromptEntity): JSONObject = JSONObject().apply {
+        put("id", item.id)
+        put("name", item.name)
+        put("display_name", item.displayName)
+        put("category", item.category)
+        put("description", item.description)
+        put("prompt", item.prompt)
+        put("default_prompt", item.defaultPrompt)
+        put("is_default", item.isDefault)
+        put("enabled", item.enabled)
+        put("keywords", parseJsonArray(item.keywordsJson))
+        put("params", parseJsonArray(item.paramsJson))
+        put("related_apps", parseJsonArray(item.relatedAppsJson))
+        put("prompt_hint", item.promptHint)
+        put("domain", item.domain)
+        put("source", item.source)
+        put("executable", item.executable)
+        put("dependence", parseJsonArray(item.dependenceJson))
+    }
+
+    private fun parseJsonArray(value: String): JSONArray = try {
+        JSONArray(value.ifBlank { "[]" })
+    } catch (e: Exception) {
+        JSONArray()
+    }
+
+    /** 单条 Agent 导出，格式与完整导出兼容。 */
+    fun exportAgentJson(agent: AgentPromptEntity, activePackId: String = ""): String = JSONObject().apply {
+        put("format", "roubao-prompts")
+        put("version", 3)
+        put("exported_at", System.currentTimeMillis())
+        // 单条导出也保持 base + overlay 分离，避免把 basic overlay 写回 base。
+        val base = getAgentPrompt(agent.id) ?: agent
+        put("agents", JSONArray().put(agentToJson(base)))
+        if (activePackId.isNotBlank()) {
+            val overlays = JSONArray()
+            dbHelper.readableDatabase.query(
+                "agent_pack_overlays",
+                arrayOf("agent_id", "pack_id", "mode", "prompt"),
+                "agent_id = ? AND pack_id = ?",
+                arrayOf(agent.id, activePackId),
+                null, null, null
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    overlays.put(JSONObject().apply {
+                        put("agent_id", cursor.getString(0))
+                        put("pack_id", cursor.getString(1))
+                        put("mode", cursor.getString(2))
+                        put("prompt", cursor.getString(3))
+                    })
+                }
+            }
+            put("active_pack", activePackId)
+            put("overlays", overlays)
+        }
+    }.toString(2)
+
+    /** 单条 Tool/Skill 导出，格式与完整导出兼容。 */
+    fun exportToolSkillJson(item: ToolSkillPromptEntity): String = JSONObject().apply {
+        put("format", "roubao-prompts")
+        put("version", 3)
+        put("exported_at", System.currentTimeMillis())
+        put("tools", JSONArray().put(toolSkillToJson(item)))
+    }.toString(2)
+
+    /** 单条导入：只接受与目标卡片类型匹配的 JSON。 */
+    fun importSinglePromptJson(json: String, category: String): PromptImportResult {
+        val root = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return PromptImportResult(0, 0, 0, listOf("JSON 解析失败: ${e.message}"))
+        }
+        val agentsArr = root.optJSONArray("agents")
+        val toolsArr = root.optJSONArray("tools")
+        val hasAgents = agentsArr != null && agentsArr.length() > 0
+        val hasTools = toolsArr != null && toolsArr.length() > 0
+
+        val valid = when (category) {
+            "agent" -> hasAgents && !hasTools
+            "tool", "skill" -> {
+                val firstCategory = toolsArr?.optJSONObject(0)?.optString("category")
+                hasTools && !hasAgents && firstCategory == category
+            }
+            else -> false
+        }
+        if (!valid) {
+            return PromptImportResult(0, 0, 0, listOf("文件类型与目标不匹配，未导入"))
+        }
+        return importPromptsJson(json)
+    }
+
+    private fun readDependenceJson(obj: JSONObject): String {
+        val arr = obj.optJSONArray("dependence")
+        if (arr != null) return arr.toString()
+        val raw = obj.optString("dependence_json", "")
+        if (raw.isBlank()) return "[]"
+        return try {
+            JSONArray(raw).toString()
+        } catch (e: Exception) {
+            "[]"
+        }
     }
 
     fun importPromptsJson(json: String): PromptImportResult {
@@ -466,9 +896,58 @@ class PromptRepository private constructor(context: Context) {
         var agentCount = 0
         var toolCount = 0
         var feedbackCount = 0
+        var packCount = 0
+        var overlayCount = 0
         val db = dbHelper.writableDatabase
         db.beginTransaction()
         try {
+            val packsArr = root.optJSONArray("packs")
+            if (packsArr != null) {
+                for (i in 0 until packsArr.length()) {
+                    val obj = packsArr.optJSONObject(i) ?: continue
+                    val id = obj.optString("id").trim()
+                    if (id.isEmpty()) {
+                        errors.add("packs[$i] 缺少 id")
+                        continue
+                    }
+                    val cv = ContentValues().apply {
+                        put("id", id)
+                        put("display_name", obj.optString("display_name", id))
+                        put("level", obj.optString("level", "user"))
+                        put("description", obj.optString("description", ""))
+                        put("sort_order", obj.optInt("sort_order", 0))
+                        put("is_builtin", if (obj.optBoolean("is_builtin", false)) 1 else 0)
+                    }
+                    db.insertWithOnConflict("prompt_packs", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    packCount++
+                }
+            }
+
+            val overlaysArr = root.optJSONArray("overlays")
+            if (overlaysArr != null) {
+                // 完整导出（replace_overlays=true）整体替换；单条导出只 upsert。
+                if (root.optBoolean("replace_overlays", false)) {
+                    db.delete("agent_pack_overlays", null, null)
+                }
+                for (i in 0 until overlaysArr.length()) {
+                    val obj = overlaysArr.optJSONObject(i) ?: continue
+                    val agentId = obj.optString("agent_id").trim()
+                    val packId = obj.optString("pack_id").trim()
+                    if (agentId.isEmpty() || packId.isEmpty()) {
+                        errors.add("overlays[$i] 缺少 agent_id/pack_id")
+                        continue
+                    }
+                    val cv = ContentValues().apply {
+                        put("agent_id", agentId)
+                        put("pack_id", packId)
+                        put("mode", obj.optString("mode", "append"))
+                        put("prompt", obj.optString("prompt", ""))
+                    }
+                    db.insertWithOnConflict("agent_pack_overlays", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                    overlayCount++
+                }
+            }
+
             if (root.optBoolean("replace_feedback", false)) {
                 db.delete("user_feedback", null, null)
             }
@@ -526,26 +1005,47 @@ class PromptRepository private constructor(context: Context) {
                         errors.add("tools[$i] 缺少 id")
                         continue
                     }
-                    val prompt = obj.optString("prompt")
-                    if (prompt.isBlank()) {
-                        errors.add("tool $id 缺少 prompt")
-                        continue
+                    val rawCategory = obj.optString("category", "tool")
+                    val category = if (rawCategory == "tool" || rawCategory == "skill") rawCategory else "skill"
+                    val domain = obj.optString("domain", rawCategory.takeIf { it != "tool" && it != "skill" }.orEmpty())
+                    val description = obj.optString("description", "")
+                    val prompt = obj.optString("prompt").ifBlank {
+                        if (category == "skill") "技能: $id\n说明: $description"
+                        else "工具: $id\n说明: $description"
                     }
-                    val category = obj.optString("category", "tool")
-                    if (category != "tool" && category != "skill") {
-                        errors.add("tool $id 的 category 必须是 tool 或 skill")
-                        continue
+                    // v2 导出没有 dependence；导入时不要把它重置成 []，
+                    // 否则 shell/open_app 会重新出现在 basic。
+                    val dependenceJson = if (obj.has("dependence") || obj.has("dependence_json")) {
+                        readDependenceJson(obj)
+                    } else {
+                        db.query(
+                            "tool_skill_prompts",
+                            arrayOf("dependence_json"),
+                            "id = ?",
+                            arrayOf(id),
+                            null, null, null
+                        ).use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) ?: "[]" else "[]"
+                        }
                     }
                     val cv = ContentValues().apply {
                         put("id", id)
                         put("name", obj.optString("name", id))
                         put("display_name", obj.optString("display_name", obj.optString("name", id)))
                         put("category", category)
-                        put("description", obj.optString("description", ""))
+                        put("description", description)
                         put("prompt", prompt)
                         put("default_prompt", obj.optString("default_prompt", prompt))
                         put("is_default", if (obj.optBoolean("is_default", false)) 1 else 0)
                         put("enabled", if (obj.optBoolean("enabled", true)) 1 else 0)
+                        put("keywords_json", obj.optJSONArray("keywords")?.toString() ?: "[]")
+                        put("params_json", obj.optJSONArray("params")?.toString() ?: "[]")
+                        put("related_apps_json", obj.optJSONArray("related_apps")?.toString() ?: "[]")
+                        put("prompt_hint", obj.optString("prompt_hint", ""))
+                        put("domain", domain)
+                        put("source", obj.optString("source", "custom"))
+                        put("executable", if (obj.optBoolean("executable", false)) 1 else 0)
+                        put("dependence_json", dependenceJson)
                     }
                     db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
                     toolCount++
@@ -556,25 +1056,27 @@ class PromptRepository private constructor(context: Context) {
             if (feedbackArr != null) {
                 for (i in 0 until feedbackArr.length()) {
                     var kind = "complaint"
+                    var enabled = true
+                    var dependenceJson = "[]"
                     val text = when (val value = feedbackArr.opt(i)) {
                         is String -> value
                         is JSONObject -> {
                             kind = if (value.optString("kind") == "suggestion") "suggestion" else "complaint"
+                            enabled = value.optBoolean("enabled", true)
+                            dependenceJson = readDependenceJson(value)
                             value.optString("text")
                         }
                         else -> ""
                     }.trim()
                     if (text.isEmpty()) continue
-                    val exists = db.rawQuery(
-                        "SELECT 1 FROM user_feedback WHERE text = ? LIMIT 1",
-                        arrayOf(text)
-                    ).use { it.moveToFirst() }
+                    val exists = findFeedbackByNormalizedText(db, normalizeFeedbackText(text)) != null
                     if (!exists) {
                         db.insert("user_feedback", null, ContentValues().apply {
                             put("text", text)
                             put("created_at", System.currentTimeMillis())
-                            put("enabled", 1)
+                            put("enabled", if (enabled) 1 else 0)
                             put("kind", kind)
+                            put("dependence_json", dependenceJson)
                         })
                         feedbackCount++
                     }
@@ -588,10 +1090,55 @@ class PromptRepository private constructor(context: Context) {
             db.endTransaction()
         }
 
-        return PromptImportResult(agentCount, toolCount, feedbackCount, errors)
+        return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 4) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 22) {
+
+        private val appContext = context.applicationContext
+
+        init {
+            copySeedIfMissing()
+        }
+
+        /**
+         * 首次安装：优先复制 assets/prompts_seed.db（完整种子库）。
+         * 已有用户 DB 时不覆盖；复制失败则回退到 onCreate 的代码 seed。
+         */
+        private fun copySeedIfMissing() {
+            val dbFile = appContext.getDatabasePath("prompts.db")
+            if (dbFile.exists() && dbFile.length() > 0) return
+            val parent = dbFile.parentFile ?: return
+            parent.mkdirs()
+            val tmp = File(parent, "prompts_seed_tmp.db")
+            try {
+                appContext.assets.open("prompts_seed.db").use { input ->
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                }
+                val check = SQLiteDatabase.openDatabase(
+                    tmp.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY
+                )
+                val version = check.version
+                check.close()
+                if (version < 22) {
+                    println("[PromptRepository] seed db version too old: $version")
+                    tmp.delete()
+                    return
+                }
+                if (dbFile.exists()) dbFile.delete()
+                val moved = tmp.renameTo(dbFile)
+                if (!moved) {
+                    tmp.copyTo(dbFile, overwrite = true)
+                    tmp.delete()
+                }
+                println("[PromptRepository] copied seed db v$version")
+            } catch (e: Exception) {
+                println("[PromptRepository] seed copy failed: ${e.message}")
+                tmp.delete()
+            }
+        }
 
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
@@ -622,7 +1169,15 @@ class PromptRepository private constructor(context: Context) {
                     prompt TEXT NOT NULL,
                     default_prompt TEXT NOT NULL,
                     is_default INTEGER NOT NULL DEFAULT 1,
-                    enabled INTEGER NOT NULL DEFAULT 1
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    keywords_json TEXT NOT NULL DEFAULT '[]',
+                    params_json TEXT NOT NULL DEFAULT '[]',
+                    related_apps_json TEXT NOT NULL DEFAULT '[]',
+                    prompt_hint TEXT NOT NULL DEFAULT '',
+                    domain TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT 'custom',
+                    executable INTEGER NOT NULL DEFAULT 0,
+                    dependence_json TEXT NOT NULL DEFAULT '[]'
                 )
                 """.trimIndent()
             )
@@ -634,13 +1189,19 @@ class PromptRepository private constructor(context: Context) {
                     text TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1,
-                    kind TEXT NOT NULL DEFAULT 'complaint'
+                    kind TEXT NOT NULL DEFAULT 'complaint',
+                    dependence_json TEXT NOT NULL DEFAULT '[]'
                 )
                 """.trimIndent()
             )
 
             insertDefaultAgents(db)
             insertDefaultToolsAndSkills(db)
+            seedBuiltInSkillsFromAssets(db)
+            insertPresetFeedback(db)
+            seedPacksV13(db)
+            applyDependenceV13(db)
+            enableBuiltinToolsV13(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -662,6 +1223,702 @@ class PromptRepository private constructor(context: Context) {
                 addColumnIfMissing(db, "agent_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
                 addColumnIfMissing(db, "tool_skill_prompts", "enabled", "INTEGER NOT NULL DEFAULT 1")
                 addColumnIfMissing(db, "user_feedback", "kind", "TEXT NOT NULL DEFAULT 'complaint'")
+            }
+            if (oldVersion < 5) {
+                migrateBuiltInAgentPrompts(db)
+                dedupeFeedback(db)
+            }
+            if (oldVersion < 6) {
+                insertPresetFeedback(db)
+            }
+            if (oldVersion < 7) {
+                removeLegacyDuplicateSuggestions(db)
+            }
+            if (oldVersion < 8) {
+                insertShellCalcSkill(db)
+            }
+            if (oldVersion < 9) {
+                addColumnIfMissing(db, "tool_skill_prompts", "keywords_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "params_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "related_apps_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "tool_skill_prompts", "prompt_hint", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tool_skill_prompts", "domain", "TEXT NOT NULL DEFAULT ''")
+                addColumnIfMissing(db, "tool_skill_prompts", "source", "TEXT NOT NULL DEFAULT 'custom'")
+                addColumnIfMissing(db, "tool_skill_prompts", "executable", "INTEGER NOT NULL DEFAULT 0")
+                seedBuiltInSkillsFromAssets(db)
+            }
+            if (oldVersion < 10) {
+                rewritePresetFeedback(db)
+            }
+            if (oldVersion < 11) {
+                refreshToolAgnosticPrompts(db)
+            }
+            if (oldVersion < 12) {
+                refreshToolAgnosticPrompts(db)
+            }
+            if (oldVersion < 13) {
+                addColumnIfMissing(db, "tool_skill_prompts", "dependence_json", "TEXT NOT NULL DEFAULT '[]'")
+                addColumnIfMissing(db, "user_feedback", "dependence_json", "TEXT NOT NULL DEFAULT '[]'")
+                seedPacksV13(db)
+                applyDependenceV13(db)
+                enableBuiltinToolsV13(db)
+            }
+            if (oldVersion < 14) {
+                // open_app/press_key 目前仍走 shell；basic 必须隐藏，而不是混进提示词。
+                db.execSQL(
+                    "UPDATE tool_skill_prompts SET dependence_json = '[\"adb\"]' " +
+                        "WHERE id IN ('open_app', 'press_key')"
+                )
+            }
+            if (oldVersion < 17) {
+                // open_app 改成普通 launch Intent；basic 可以用，不再依赖 adb。
+                db.execSQL("UPDATE tool_skill_prompts SET dependence_json = '[]' WHERE id = 'open_app'")
+                db.update(
+                    "agent_pack_overlays",
+                    ContentValues().apply { put("prompt", BASIC_MANAGER_PROMPT) },
+                    "agent_id = ? AND pack_id = ?",
+                    arrayOf("manager", "basic")
+                )
+                db.update(
+                    "agent_pack_overlays",
+                    ContentValues().apply { put("prompt", BASIC_EXECUTOR_PROMPT) },
+                    "agent_id = ? AND pack_id = ?",
+                    arrayOf("executor", "basic")
+                )
+            }
+            if (oldVersion < 19) {
+                // music_player 是旧 DB 的重复技能；统一收敛到 play_music。
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 0)
+                        put("source", "legacy")
+                    },
+                    "id = ?",
+                    arrayOf("music_player")
+                )
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put(
+                            "description",
+                            "在已安装的音乐/媒体播放器中播放、暂停或继续音乐；先确认已安装应用。"
+                        )
+                        put("prompt", PLAY_MUSIC_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("play_music")
+                )
+            }
+            if (oldVersion < 20) {
+                // 自带安装 skill，默认关闭；用户开启才表示允许走应用商店安装流程。
+                val cv = ContentValues().apply {
+                    put("id", "install_app")
+                    put("name", "install_app")
+                    put("display_name", "安装应用")
+                    put("category", "skill")
+                    put("description", "当任务需要的应用未安装时，列出候选并让用户用数字选择，再打开应用商店。")
+                    put("prompt", INSTALL_APP_PROMPT)
+                    put("default_prompt", INSTALL_APP_PROMPT)
+                    put("is_default", 1)
+                    put("enabled", 0)
+                    put("keywords_json", "[]")
+                    put("params_json", "[]")
+                    put("related_apps_json", "[]")
+                    put("prompt_hint", "")
+                    put("domain", "")
+                    put("source", "builtin")
+                    put("executable", 0)
+                    put("dependence_json", "[]")
+                }
+                db.insertWithOnConflict(
+                    "tool_skill_prompts",
+                    null,
+                    cv,
+                    SQLiteDatabase.CONFLICT_IGNORE
+                )
+            }
+            if (oldVersion < 21) {
+                // 恢复原来的 music skill；不在 skill 层做去重，交给 agent 做运行时应用过滤。
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 1)
+                        put("source", "custom")
+                        put("description", "在网易云音乐/QQ音乐中搜索并播放指定歌曲")
+                        put("prompt", LEGACY_MUSIC_PLAYER_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("music_player")
+                )
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 0)
+                        put("source", "builtin")
+                        put("description", "播放音乐")
+                        put("prompt", LEGACY_PLAY_MUSIC_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("play_music")
+                )
+            }
+            if (oldVersion < 22) {
+                // 从原版 prompt 的安全段落提炼的一条默认建议。
+                val exists = db.query(
+                    "user_feedback",
+                    arrayOf("id"),
+                    "text = ?",
+                    arrayOf(SECURITY_FEEDBACK),
+                    null, null, null
+                ).use { it.moveToFirst() }
+                if (!exists) {
+                    db.insert("user_feedback", null, ContentValues().apply {
+                        put("text", SECURITY_FEEDBACK)
+                        put("created_at", System.currentTimeMillis())
+                        put("enabled", 1)
+                        put("kind", "suggestion")
+                        put("dependence_json", "[]")
+                    })
+                }
+            }
+        }
+
+        /** v11：移除内置 Prompt 中静态写死的 shell/open_app 推荐。 */
+        private fun refreshToolAgnosticPrompts(db: SQLiteDatabase) {
+            val defaults = mapOf(
+                "manager" to PromptRepository.DEFAULT_MANAGER_PROMPT,
+                "executor" to PromptRepository.DEFAULT_EXECUTOR_PROMPT,
+                "reflector" to PromptRepository.DEFAULT_REFLECTOR_PROMPT
+            )
+            for ((id, newDefault) in defaults) {
+                val row = db.query(
+                    "agent_prompts",
+                    arrayOf("prompt", "default_prompt"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null
+                } ?: continue
+                if (row.first == row.second) {
+                    db.update(
+                        "agent_prompts",
+                        ContentValues().apply {
+                            put("prompt", newDefault)
+                            put("default_prompt", newDefault)
+                        },
+                        "id = ?",
+                        arrayOf(id)
+                    )
+                    println("[PromptRepository] refreshed tool-agnostic prompt: $id")
+                }
+            }
+        }
+
+        /** v13：pack 表 + 基础/高级 overlay + dependence。 */
+        private fun seedPacksV13(db: SQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS prompt_packs (
+                    id TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_builtin INTEGER NOT NULL DEFAULT 1
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS agent_pack_overlays (
+                    agent_id TEXT NOT NULL,
+                    pack_id TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'append',
+                    prompt TEXT NOT NULL,
+                    PRIMARY KEY (agent_id, pack_id)
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS action_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts INTEGER NOT NULL,
+                    task_id TEXT,
+                    pack_id TEXT NOT NULL,
+                    item_id TEXT NOT NULL,
+                    provider_id TEXT,
+                    level TEXT NOT NULL,
+                    action_json TEXT NOT NULL,
+                    risk_level TEXT NOT NULL,
+                    confirmed INTEGER NOT NULL DEFAULT 0,
+                    result TEXT NOT NULL DEFAULT ''
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+
+            val packs = listOf(
+                Triple("basic", "基础包（仅无障碍）", "user"),
+                Triple("standard", "标准包（Shizuku / su-user）", "adb"),
+                Triple("advanced", "高级包（Root）", "root")
+            )
+            packs.forEachIndexed { index, (id, name, level) ->
+                db.insertWithOnConflict(
+                    "prompt_packs",
+                    null,
+                    ContentValues().apply {
+                        put("id", id)
+                        put("display_name", name)
+                        put("level", level)
+                        put("description", if (id == "basic") "只用无障碍：UI 树 + 截图 + 手势" else if (id == "standard") "可用 adb 级 shell，文件/系统操作优先 shell" else "可用 root 级工具；高风险动作需确认")
+                        put("sort_order", (index + 1) * 10)
+                        put("is_builtin", 1)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
+
+            val overlays = listOf(
+                Triple("manager", "basic", BASIC_MANAGER_PROMPT),
+                Triple("executor", "basic", BASIC_EXECUTOR_PROMPT),
+                Triple("manager", "advanced", ADVANCED_OVERLAY),
+                Triple("executor", "advanced", ADVANCED_OVERLAY)
+            )
+            overlays.forEach { (agentId, packId, prompt) ->
+                db.insertWithOnConflict(
+                    "agent_pack_overlays",
+                    null,
+                    ContentValues().apply {
+                        put("agent_id", agentId)
+                        put("pack_id", packId)
+                        put("mode", if (packId == "basic") "replace" else "append")
+                        put("prompt", prompt)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
+        }
+
+        private fun applyDependenceV13(db: SQLiteDatabase) {
+            val adbIds = listOf("shell", "shell_calc", "press_key")
+            adbIds.forEach { id ->
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply { put("dependence_json", "[\"adb\"]") },
+                    "id = ?",
+                    arrayOf(id)
+                )
+            }
+            // 其余条目默认无依赖；把新列显式写成 []，避免旧库 NULL/空串。
+            db.execSQL("UPDATE tool_skill_prompts SET dependence_json = '[]' WHERE dependence_json IS NULL OR dependence_json = '' OR dependence_json = 'null'")
+
+            val feedbackRows = mutableListOf<Pair<Long, String>>()
+            db.query("user_feedback", arrayOf("id", "text"), null, null, null, null, null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    feedbackRows.add(cursor.getLong(0) to cursor.getString(1).orEmpty())
+                }
+            }
+            feedbackRows.forEach { (id, text) ->
+                val deps = if (text.contains("shell") || text.contains("文件")) "[\"adb\"]" else "[]"
+                db.update(
+                    "user_feedback",
+                    ContentValues().apply { put("dependence_json", deps) },
+                    "id = ?",
+                    arrayOf(id.toString())
+                )
+            }
+        }
+
+        private fun enableBuiltinToolsV13(db: SQLiteDatabase) {
+            // 手机上的测试状态可能把 type/open_app/shell 停用了；内置条目回到启用状态，
+            // 避免新装/升级后 basic 连 UI 输入都没有。用户仍可在能力页手动停用。
+            db.execSQL("UPDATE tool_skill_prompts SET enabled = 1 WHERE is_default = 1")
+            val toolIds = listOf("tap", "swipe", "type", "press_key", "open_app", "shell", "screenshot", "search_apps", "deep_link", "clipboard", "http")
+            toolIds.forEach { id ->
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("source", "builtin")
+                        put("executable", 1)
+                    },
+                    "id = ?",
+                    arrayOf(id)
+                )
+            }
+        }
+
+        private val BASIC_MANAGER_PROMPT = """You are the planning agent for an Android automation app running in BASIC mode: accessibility only, no shell, no root.
+
+### User Request ###
+{{instruction}}
+
+### Planning Rules ###
+1. Only plan UI actions: type, set_selection, scroll, click(text), click(coordinate), system_button(BACK/HOME), open_app, wait.
+2. To launch an app, use open_app (normal Intent, no shell) or go Home and tap the app icon; open_app no longer requires Shizuku.
+3. shell/root are unavailable in BASIC. If the task requires file/system operations, use ask_user to tell the user to enable Shizuku for the standard pack; do not try shell.
+4. Use the Accessibility UI Tree to find element text and center coordinates. The screenshot is for understanding page content; the tree is for precise targets.
+5. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
+6. If the same action failed twice, switch strategy.
+7. Use ask_user when required details are missing; use answer only for the final response.
+
+{{phaseGuidance}}
+
+### Output ###
+### Thought ###
+One or two sentences.
+### Historical Operations ###
+Completed subgoals (or "None yet").
+### Plan ###
+1. ...
+2. ..."""
+
+        private val BASIC_EXECUTOR_PROMPT = """You are the execution agent for an Android automation app running in BASIC mode: accessibility only, no shell, no root.
+Choose exactly ONE next action. Use the Accessibility UI Tree for element text/coordinates; use the screenshot to understand the page.
+
+### User Request ###
+{{instruction}}
+
+### Overall Plan ###
+{{plan}}
+
+### Current Subgoal ###
+{{currentSubgoal}}
+
+### Progress Status ###
+{{progressStatus}}
+
+### Action Priority ###
+1. TEXT INPUT -> type: click the input, then type exact text via ACTION_SET_TEXT. Do not tap the on-screen keyboard.
+2. TEXT EDITING -> set_selection: start/end indices on the focused input.
+3. PAGE / LIST -> scroll.
+4. BACK / HOME -> system_button (accessibility performGlobalAction).
+5. APP LAUNCH -> open_app (normal Intent, no shell) or go Home and tap the app icon.
+6. ELEMENT CLICK -> click with exact text from the UI tree; center coordinate as fallback.
+7. VISUAL-ONLY -> click with absolute pixel coordinates.
+
+### Hard Rules ###
+- Never use shell or root actions in BASIC mode. open_app is allowed because it uses a normal launch Intent.
+- Text > coordinates; UI tree > screenshot. If the tree has the target, use its text and center coordinate.
+- If the same action failed twice, change strategy.
+- Use ask_user when required details are missing; use answer only for the final response.
+- Stay on the current subgoal.
+
+### Latest Action History ###
+{{actionHistory}}
+
+### Output ###
+### Thought ###
+1. **Screen**: ...
+2. **Target**: ...
+3. **Decision**: ...
+### Action ###
+One valid JSON object, no markdown fences.
+### Description ###
+One short sentence."""
+
+        private val MUSIC_PLAYER_PROMPT = """技能: music_player
+说明: 在已安装的音乐/媒体播放器中暂停、继续或播放音乐。先查看 Installed Apps 列表，只对已安装的播放器操作；不要假设网易云/QQ/VLC 等特定 App 存在。
+步骤:
+1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
+2. 只对已安装的播放器使用 open_app。
+3. 若没有已安装播放器，再 ask_user 或去应用列表查找。"""
+
+        private val PLAY_MUSIC_PROMPT = """技能: play_music
+说明: 在已安装的音乐/媒体播放器中播放、暂停或继续音乐。先查看 Installed Apps 列表，只对已安装的播放器操作；不要假设网易云/QQ/酷狗/Spotify 等特定 App 存在。
+步骤:
+1. 从 Installed Apps / 当前 UI 确认已安装的播放器。
+2. 只对已安装的播放器使用 open_app。
+3. 若没有已安装播放器，再 ask_user 或去应用列表查找。"""
+
+        private val INSTALL_APP_PROMPT = """技能: install_app
+说明: 当任务需要但设备未安装某个应用时，先给用户 2-3 个候选并让用户输入数字选择；用户确认后打开应用商店搜索并进入安装页。只有本 skill 开启时才允许安装流程。
+步骤:
+1. 若无已安装可用应用，列出编号候选：
+   1. 应用 A
+   2. 应用 B
+   3. 应用 C
+   用 ask_user 发送: "请输入数字选择要安装的应用，回复 0 取消"
+2. 用户选择数字后，open_app 打开设备自带应用商店，搜索对应应用名。
+3. 进入详情页后让用户手动确认安装；不要代替用户点击安装或支付。"""
+
+        private val LEGACY_MUSIC_PLAYER_PROMPT = """技能: music_player
+说明: 音乐。open_app 网易云/QQ音乐；搜索用 type；播放用 click(text)。"""
+
+        private val LEGACY_PLAY_MUSIC_PROMPT = """技能: play_music
+说明: 播放音乐
+关联应用:
+- 网易云音乐: 打开网易云音乐 -> 搜索歌曲 -> 播放
+- QQ音乐: 打开QQ音乐 -> 搜索歌曲 -> 播放
+- 酷狗音乐: 打开酷狗音乐 -> 搜索歌曲 -> 播放
+- Spotify: 打开Spotify -> 搜索歌曲 -> 播放"""
+
+        private val ADVANCED_OVERLAY = """### Advanced Mode (Root) ###
+Root-level tools may be available in this pack.
+- Prefer read-only commands first; confirm destructive or system-wide changes.
+- Never modify /system, boot, or security settings unless the user explicitly asks.
+- If a root action fails, report the exact error instead of retrying blindly."""
+
+        /** v10：更新旧预设反馈的措辞；缺失的用新文案补齐。 */
+        private fun rewritePresetFeedback(db: SQLiteDatabase) {
+            for ((oldNormalized, newText) in LEGACY_FEEDBACK_REWRITES) {
+                var id: Long? = null
+                db.query(
+                    "user_feedback",
+                    arrayOf("id", "text"),
+                    null, null, null, null,
+                    null
+                ).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        if (normalizeFeedbackText(cursor.getString(1)) == oldNormalized) {
+                            id = cursor.getLong(0)
+                            break
+                        }
+                    }
+                }
+                id?.let {
+                    db.update(
+                        "user_feedback",
+                        ContentValues().apply { put("text", newText) },
+                        "id = ?",
+                        arrayOf(it.toString())
+                    )
+                }
+            }
+            insertPresetFeedback(db)
+        }
+
+        /** 将 assets/skills.json 的完整 Skill 定义同步进数据库。 */
+        private fun seedBuiltInSkillsFromAssets(db: SQLiteDatabase) {
+            val jsonText = try {
+                appContext.assets.open("skills.json").bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                println("[PromptRepository] 读取 skills.json 失败: ${e.message}")
+                return
+            }
+            val array = try {
+                JSONArray(jsonText)
+            } catch (e: Exception) {
+                println("[PromptRepository] 解析 skills.json 失败: ${e.message}")
+                return
+            }
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val id = obj.optString("id").trim()
+                if (id.isEmpty()) continue
+                val displayName = obj.optString("name", id)
+                val description = obj.optString("description", "")
+                val domain = obj.optString("category", "")
+                val keywords = obj.optJSONArray("keywords")?.toString() ?: "[]"
+                val params = obj.optJSONArray("params")?.toString() ?: "[]"
+                val relatedApps = obj.optJSONArray("related_apps")?.toString() ?: "[]"
+                val promptHint = obj.optString("prompt_hint", "")
+                val prompt = buildAssetSkillPrompt(id, description, promptHint, obj.optJSONArray("related_apps"))
+
+                val exists = db.query(
+                    "tool_skill_prompts",
+                    arrayOf("id"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { it.moveToFirst() }
+
+                val values = ContentValues().apply {
+                    put("name", id)
+                    put("display_name", displayName)
+                    put("category", "skill")
+                    put("description", description)
+                    put("prompt", prompt)
+                    put("default_prompt", prompt)
+                    put("is_default", 1)
+                    put("enabled", 1)
+                    put("keywords_json", keywords)
+                    put("params_json", params)
+                    put("related_apps_json", relatedApps)
+                    put("prompt_hint", promptHint)
+                    put("domain", domain)
+                    put("source", "builtin")
+                    put("executable", 1)
+                }
+                if (exists) {
+                    db.update("tool_skill_prompts", values, "id = ?", arrayOf(id))
+                } else {
+                    values.put("id", id)
+                    db.insert("tool_skill_prompts", null, values)
+                }
+            }
+            println("[PromptRepository] seeded ${array.length()} built-in skills from assets")
+        }
+
+        private fun buildAssetSkillPrompt(
+            id: String,
+            description: String,
+            promptHint: String,
+            relatedApps: JSONArray?
+        ): String = buildString {
+            append("技能: ").append(id).append('\n')
+            append("说明: ").append(description)
+            if (promptHint.isNotBlank()) {
+                append("\n约束: ").append(promptHint)
+            }
+            if (relatedApps != null && relatedApps.length() > 0) {
+                append("\n关联应用:")
+                for (i in 0 until relatedApps.length()) {
+                    val app = relatedApps.optJSONObject(i) ?: continue
+                    append("\n- ").append(app.optString("name", app.optString("package")))
+                    val steps = app.optJSONArray("steps")
+                    if (steps != null && steps.length() > 0) {
+                        append(": ")
+                        append((0 until steps.length()).joinToString(" -> ") { steps.optString(it) })
+                    }
+                }
+            }
+        }
+
+        /** v8：加入 shell_calc 测试 Skill。 */
+        private fun insertShellCalcSkill(db: SQLiteDatabase) {
+            val exists = db.query(
+                "tool_skill_prompts",
+                arrayOf("id"),
+                "id = ?",
+                arrayOf("shell_calc"),
+                null, null, null
+            ).use { it.moveToFirst() }
+            if (exists) return
+            db.insert("tool_skill_prompts", null, ContentValues().apply {
+                put("id", "shell_calc")
+                put("name", "shell_calc")
+                put("display_name", "Shell 计算")
+                put("category", "skill")
+                put("description", "算术计算必须用 shell 执行 expr，不允许模型自己心算")
+                put("prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
+                put("default_prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
+                put("is_default", 1)
+                put("enabled", 1)
+                put("domain", "计算")
+                put("source", "builtin")
+                put("executable", 1)
+            })
+            println("[PromptRepository] inserted shell_calc skill")
+        }
+
+        /**
+         * 只替换命中旧版内置/预设指纹的 Agent Prompt。
+         * 真正手改过的 Prompt（指纹不匹配）保持原样。
+         */
+        private fun migrateBuiltInAgentPrompts(db: SQLiteDatabase) {
+            val newDefaults = mapOf(
+                "manager" to PromptRepository.DEFAULT_MANAGER_PROMPT,
+                "executor" to PromptRepository.DEFAULT_EXECUTOR_PROMPT,
+                "reflector" to PromptRepository.DEFAULT_REFLECTOR_PROMPT,
+                "notetaker" to PromptRepository.DEFAULT_NOTETAKER_PROMPT
+            )
+            for ((id, newDefault) in newDefaults) {
+                val row = db.query(
+                    "agent_prompts",
+                    arrayOf("prompt"),
+                    "id = ?",
+                    arrayOf(id),
+                    null, null, null
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: continue
+
+                val legacyHashes = LEGACY_AGENT_PROMPT_HASHES[id].orEmpty()
+                if (sha256(row) !in legacyHashes) continue
+
+                db.update(
+                    "agent_prompts",
+                    ContentValues().apply {
+                        put("prompt", newDefault)
+                        put("default_prompt", newDefault)
+                    },
+                    "id = ?",
+                    arrayOf(id)
+                )
+                println("[PromptRepository] migrated default prompt: $id")
+            }
+        }
+
+        /** v5：只删除归一化后的完全重复反馈。 */
+        private fun dedupeFeedback(db: SQLiteDatabase) {
+            val seen = mutableSetOf<String>()
+            val toDelete = mutableListOf<Long>()
+            db.query(
+                "user_feedback",
+                arrayOf("id", "text"),
+                null, null, null, null,
+                "created_at DESC, id DESC"
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    val normalized = normalizeFeedbackText(cursor.getString(1))
+                    if (!seen.add(normalized)) {
+                        toDelete.add(id)
+                    }
+                }
+            }
+            for (id in toDelete) {
+                db.delete("user_feedback", "id = ?", arrayOf(id.toString()))
+            }
+            if (toDelete.isNotEmpty()) {
+                println("[PromptRepository] removed ${toDelete.size} duplicate feedback rows")
+            }
+        }
+
+        /** v6 / 新安装：恢复旧预设反馈，已存在的按归一化文本跳过。 */
+        private fun insertPresetFeedback(db: SQLiteDatabase) {
+            val now = System.currentTimeMillis()
+            LEGACY_PRESET_FEEDBACK.forEachIndexed { index, (kind, text) ->
+                val normalized = normalizeFeedbackText(text)
+                val exists = db.query(
+                    "user_feedback",
+                    arrayOf("id", "text"),
+                    null, null, null, null,
+                    null
+                ).use { cursor ->
+                    var found = false
+                    while (cursor.moveToNext()) {
+                        if (normalizeFeedbackText(cursor.getString(1)) == normalized) {
+                            found = true
+                            break
+                        }
+                    }
+                    found
+                }
+                if (!exists) {
+                    db.insert("user_feedback", null, ContentValues().apply {
+                        put("text", text)
+                        put("created_at", now + index)
+                        put("enabled", 1)
+                        put("kind", kind)
+                    })
+                }
+            }
+        }
+
+        /** v7：删除上一版原样恢复时带回来的 3 条重复建议。 */
+        private fun removeLegacyDuplicateSuggestions(db: SQLiteDatabase) {
+            db.query(
+                "user_feedback",
+                arrayOf("id", "text"),
+                null, null, null, null,
+                null
+            ).use { cursor ->
+                val toDelete = mutableListOf<Long>()
+                while (cursor.moveToNext()) {
+                    if (normalizeFeedbackText(cursor.getString(1)) in LEGACY_DUPLICATE_SUGGESTIONS) {
+                        toDelete.add(cursor.getLong(0))
+                    }
+                }
+                for (id in toDelete) {
+                    db.delete("user_feedback", "id = ?", arrayOf(id.toString()))
+                }
+                if (toDelete.isNotEmpty()) {
+                    println("[PromptRepository] removed ${toDelete.size} duplicate suggestion rows")
+                }
             }
         }
 
@@ -794,7 +2051,8 @@ class PromptRepository private constructor(context: Context) {
                 ToolSkillPromptEntity("social_media", "social_media", "社交发帖", "skill", "在微信/小红书/微博等平台编辑并发布图文动态", DEFAULT_SKILL_SOCIAL_MEDIA, DEFAULT_SKILL_SOCIAL_MEDIA, true),
                 ToolSkillPromptEntity("e_commerce", "e_commerce", "电商购物", "skill", "在淘宝/京东/拼多多中搜索商品并加入购物车", DEFAULT_SKILL_E_COMMERCE, DEFAULT_SKILL_E_COMMERCE, true),
                 ToolSkillPromptEntity("music_player", "music_player", "音乐播放", "skill", "在网易云音乐/QQ音乐中搜索并播放指定歌曲", DEFAULT_SKILL_MUSIC_PLAYER, DEFAULT_SKILL_MUSIC_PLAYER, true),
-                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true)
+                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true),
+                ToolSkillPromptEntity("shell_calc", "shell_calc", "Shell 计算", "skill", "算术计算必须用 shell 执行 expr，不允许模型自己心算", DEFAULT_SKILL_SHELL_CALC, DEFAULT_SKILL_SHELL_CALC, true, domain = "计算", source = "builtin", executable = true)
             )
 
             for (item in defaults) {
@@ -807,6 +2065,14 @@ class PromptRepository private constructor(context: Context) {
                     put("prompt", item.prompt)
                     put("default_prompt", item.defaultPrompt)
                     put("is_default", 1)
+                    put("enabled", if (item.enabled) 1 else 0)
+                    put("keywords_json", item.keywordsJson)
+                    put("params_json", item.paramsJson)
+                    put("related_apps_json", item.relatedAppsJson)
+                    put("prompt_hint", item.promptHint)
+                    put("domain", item.domain)
+                    put("source", item.source)
+                    put("executable", if (item.executable) 1 else 0)
                 }
                 db.insert("tool_skill_prompts", null, cv)
             }
@@ -814,6 +2080,9 @@ class PromptRepository private constructor(context: Context) {
     }
 
     companion object {
+        /** addFeedback 遇到归一化后完全相同的反馈时返回。 */
+        const val FEEDBACK_DUPLICATE = -2L
+
         @Volatile
         private var instance: PromptRepository? = null
 
@@ -829,52 +2098,37 @@ class PromptRepository private constructor(context: Context) {
             return instance ?: throw IllegalStateException("PromptRepository 未初始化，请先调用 init()")
         }
 
-        const val DEFAULT_MANAGER_PROMPT = """You are an agent who can operate an Android phone on behalf of a user. Your goal is to track progress and devise/update high-level plans to achieve the user's requests.
+        const val DEFAULT_MANAGER_PROMPT = """You are the planning agent for an Android automation app. Keep the plan short, concrete, and grounded in the current screen.
 
 ### User Request ###
 {{instruction}}
 
-{{completedPlan}}
-{{planSection}}
-{{lastActionSection}}
-{{lastSummarySection}}
-{{recentOutcomes}}
-{{importantNotes}}
-{{errorDetails}}
-{{skillContext}}
+{{completedPlan}}{{planSection}}{{lastActionSection}}{{lastSummarySection}}{{recentOutcomes}}{{importantNotes}}{{errorDetails}}{{skillContext}}{{additionalKnowledge}}
 
-### Guidelines ###
-1. IMPORTANT: If you see the "肉包" or "Baozi" app interface (this automation tool), press Home button first to go back to the home screen, then proceed with the task.
-2. ALWAYS use `open_app` action to open apps - NEVER go to home screen to look for app icons! The open_app action can launch any installed app directly.
-3. Use search to quickly find a file or entry with a specific name.
-4. If there are relevant skills listed above, follow their suggested steps for better efficiency.
-{{additionalKnowledge}}
+### Planning Rules ###
+1. Choose the cheapest reliable action available in this run's Tool Policy.
+   - Text input -> `type` (writes directly via ACTION_SET_TEXT; no keyboard switching).
+   - Cursor/selection -> `set_selection`; page -> `scroll`; focus/navigation -> `key`.
+   - Visible element with text -> `click` with exact `text`; coordinate only as fallback.
+2. Do NOT plan to tap on-screen keyboard keys (`中`/`英`) or switch IME.
+3. Do NOT plan screenshots or visual inspection unless the UI tree cannot answer the question.
+4. Keep 3-6 subgoals. Update the plan only when the page changes or an action fails.
+5. If the same action failed twice, switch strategy instead of retrying.
+6. Use `answer` only for the final response when the task is complete. If required details are missing, use `ask_user` instead of guessing; for login/captcha use `take_over`.
 
-### ⛔ SECURITY: Sensitive Pages - MUST STOP ###
-ONLY output "STOP_SENSITIVE" when the screen is ACTIVELY REQUESTING payment confirmation, password input, or biometric verification.
+{{phaseGuidance}}
 
-### CRITICAL: When to mark "Finished" ###
-ONLY mark as "Finished" when ALL of these are true:
-1. The user's request has been FULLY completed (not partially)
-2. You can SEE the final success state in the screenshot
-3. The last action was SUCCESSFUL (outcome A)
-4. There are NO recent consecutive failures
-
-Provide your output in the following format:
-
+### Output ###
 ### Thought ###
-Your rationale for the plan or updated plan.
-
+One or two sentences.
 ### Historical Operations ###
-Add newly completed subgoals on top of existing ones (if updating an existing plan).
-
+Completed subgoals (or "None yet").
 ### Plan ###
-Updated plan or "Finished" if truly done.
-1. first subgoal
-2. second subgoal
-..."""
+1. ...
+2. ..."""
 
-        const val DEFAULT_EXECUTOR_PROMPT = """You are an agent who can operate an Android phone. Decide the next action based on the current state.
+        const val DEFAULT_EXECUTOR_PROMPT = """You are the execution agent for an Android automation app. Choose exactly ONE next action.
+The Accessibility UI Tree is authoritative; the screenshot is only a fallback for visual-only targets.
 
 ### User Request ###
 {{instruction}}
@@ -882,110 +2136,98 @@ Updated plan or "Finished" if truly done.
 ### Overall Plan ###
 {{plan}}
 
+### Current Subgoal ###
+{{currentSubgoal}}
+
 ### Progress Status ###
 {{progressStatus}}
 
-### Guidelines ###
-General:
-- For any pop-up window, close it (e.g., by clicking 'Don't Allow' or 'Accept') before proceeding.
-- For requests that are questions, remember to use the `answer` action to reply before finish!
-- If the desired state is already achieved, you can just complete the task.
+### Action Priority (cheapest reliable first) ###
+1. TEXT INPUT -> `type`: click the input, then type exact text via ACTION_SET_TEXT. Do not click keyboard keys or switch `中`/`英`.
+2. TEXT EDITING -> `set_selection`: start/end indices on the focused input; no long-press drag.
+3. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
+4. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
+5. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
+6. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
 
-Action Related:
-- Use `open_app` to open an app, do not use the app drawer.
-- Consider using `swipe` to reveal additional content.
-- If swiping doesn't change the page, it may have reached the bottom.
+### Hard Rules ###
+- Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
+- If the same action failed twice, change strategy: type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
+- Close popups/dialogs before proceeding.
+- Use `answer` only for the final response. If required details are missing, use `ask_user` instead of guessing; for login/captcha use `take_over`.
+- Stay on the current subgoal; do not jump ahead.
 
-Text Related:
-- To input text: first click the input box, make sure keyboard is visible, then use `type` action.
-- To clear text: long press the backspace button in the keyboard.
+#### Sensitive Operations ####
+For payment confirmation, password input, or biometric verification, do not execute directly.
+Add `message` to the action to request confirmation:
+{"action":"click","coordinate":[500,800],"message":"确认支付 ¥100"}
+Do not stop for price displays, payment method selection, cart pages, or normal navigation.
 
-#### Atomic Actions ####
-- click(coordinate): Click at (x, y). Example: {"action": "click", "coordinate": [x, y]}
-- double_tap(coordinate): Double tap at (x, y) for zoom or like. Example: {"action": "double_tap", "coordinate": [x, y]}
-- long_press(coordinate): Long press at (x, y). Example: {"action": "long_press", "coordinate": [x, y]}
-- type(text): Type text into activated input box. Example: {"action": "type", "text": "hello"}
-- swipe(coordinate, coordinate2): Swipe from point1 to point2. Example: {"action": "swipe", "coordinate": [x1, y1], "coordinate2": [x2, y2]}
-- system_button(button): Press Back/Home/Enter. Example: {"action": "system_button", "button": "Back"}
-- open_app(text): Open an app by name. Example: {"action": "open_app", "text": "设置"}
-- wait(duration): Wait for page loading. Duration in seconds (1-10). Example: {"action": "wait", "duration": 3}
-- take_over(message): Request user to manually complete login/captcha/verification. Example: {"action": "take_over", "message": "请完成登录验证"}
-- answer(text): Answer user's question. Example: {"action": "answer", "text": "The answer is..."}
+#### Actions ####
+Allowed: click, type, set_selection, scroll, key, swipe, system_button, wait, take_over, ask_user, answer, terminate.
+Examples:
+{"action":"ask_user","message":"请问是哪个城市的潮汐？"}
+{"action":"click","text":"显示与亮度","coordinate":[316,730]}
+{"action":"type","text":"hello"}
+{"action":"set_selection","start":3,"end":8}
+{"action":"scroll","direction":"down"}
+{"action":"key","key":"ENTER"}
+{"action":"terminate","status":"success"}
 
 ### Latest Action History ###
 {{actionHistory}}
 
-IMPORTANT:
-1. Do NOT repeat previously failed actions. Try a different approach.
-2. Prioritize the current subgoal.
-3. Always analyze the screen BEFORE deciding on an action.
-
-Provide your output in the following format:
-
+### Output ###
 ### Thought ###
-1. **Screen**: What app/page is currently shown? Is it the expected page for the current subgoal?
-2. **Blocker**: Any popup, dialog, keyboard, or loading state that needs to be handled first?
-3. **Target**: Is the target element visible? If not, should I scroll or navigate?
-4. **Decision**: Based on the above analysis, what action should I take and why?
-
+1. **Screen**: ...
+2. **Target**: ...
+3. **Decision**: ...
 ### Action ###
-A valid JSON specifying the action. Example: {"action":"click", "coordinate": [500, 800]}
-
+One valid JSON object, no markdown fences.
 ### Description ###
-A brief description of the chosen action."""
+One short sentence."""
 
-        const val DEFAULT_REFLECTOR_PROMPT = """You are an agent verifying whether the last action produced the expected behavior.
+        const val DEFAULT_REFLECTOR_PROMPT = """You are the reflection agent. Compare the BEFORE and AFTER screenshots and the action, and judge whether it succeeded.
 
 ### User Request ###
 {{instruction}}
 
-### Progress Status ###
+### Progress ###
 {{completedPlan}}
 
-The two attached images are phone screenshots taken BEFORE and AFTER your last action.
-
-### Latest Action ###
-Action: {{lastAction}}
+### Last Action ###
+{{lastAction}}
 Expectation: {{lastSummary}}
 
-Carefully examine whether the last action produced the expected behavior.
+### Judging Rules ###
+- A = the screen changed as expected (or the expected state is already reached).
+- B = wrong page / wrong target; explain what went wrong and which cheaper action should have been used.
+- C = no visible change / same page; explain why.
+- If the action used touch/UI where a cheaper available action would be better, mark B and say so explicitly.
+- If text input tapped the on-screen keyboard instead of `type`/ACTION_SET_TEXT, mark B.
+- Do not mark A just because a UI opened; compare with the expectation.
+- Keep the error description to 1-2 sentences.
 
-Note: For swiping to scroll, if the content before and after is exactly the same, the swipe is considered Failed (C) - the page may have reached the bottom.
-
-Provide your output in the following format:
-
+### Output ###
 ### Outcome ###
-Choose from:
-A: Successful. The result meets the expectation.
-B: Failed. The action resulted in a wrong page. Need to return to previous state.
-C: Failed. The action produced no changes.
-
+A/B/C
 ### Error Description ###
-If failed, describe the error. If successful, put "None"."""
+..."""
 
-        const val DEFAULT_NOTETAKER_PROMPT = """You are a helpful AI assistant for operating mobile phones. Your goal is to take notes of important content relevant to the user's request.
+        const val DEFAULT_NOTETAKER_PROMPT = """You are the note-taking agent. Record only facts that will help future steps: file paths, package names, account names, UI state, errors. Do not describe screenshots. Keep it under 8 lines.
 
 ### User Request ###
 {{instruction}}
 
-### Progress Status ###
+### Progress ###
 {{progressStatus}}
 
-### Existing Important Notes ###
+### Existing Notes ###
 {{importantNotes}}
 
-Examine the current screen to identify any important content that needs to be recorded.
-
-IMPORTANT:
-- Do not take notes on low-level actions
-- Only keep track of significant textual or visual information relevant to the request
-- Do not repeat user request or progress status
-- Do not make up content that you are not sure about
-
-Provide your output in the following format:
-
+### Output ###
 ### Important Notes ###
-The updated important notes, combining old and new ones. If nothing new to record, copy the existing important notes."""
+..."""
 
         const val DEFAULT_TOOL_SEARCH_APPS = "工具: search_apps\n说明: 搜索手机中已安装的应用，匹配应用名称和包名\n参数:\n  - query: string (必填) - 搜索关键词"
         const val DEFAULT_TOOL_OPEN_APP = "工具: open_app\n说明: 通过应用名称打开指定的 App\n参数:\n  - text: string (必填) - 应用名称（如\"微信\"、\"设置\"）"
@@ -1005,5 +2247,6 @@ The updated important notes, combining old and new ones. If nothing new to recor
         const val DEFAULT_SKILL_E_COMMERCE = "技能: e_commerce\n说明: 电商购物服务。搜索商品、对比价格并加入购物车或下单。"
         const val DEFAULT_SKILL_MUSIC_PLAYER = "技能: music_player\n说明: 音乐播放服务。搜索音乐名称、播放指定歌曲或歌单。"
         const val DEFAULT_SKILL_NAVIGATION = "技能: navigation\n说明: 地图导航服务。设置终点并开启语音路线导航。"
+        const val DEFAULT_SKILL_SHELL_CALC = "技能: shell_calc\n说明: 算术计算必须用 shell 执行 expr，不允许模型自己心算。\n步骤:\n1. 将用户表达式转成 shell expr 命令。\n2. 调用 shell 动作执行。\n3. 用 shell 输出作为最终 answer。"
     }
 }

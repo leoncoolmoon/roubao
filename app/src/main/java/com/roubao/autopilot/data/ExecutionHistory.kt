@@ -152,6 +152,32 @@ class ExecutionRepository(private val context: Context) {
     }
 
     /**
+     * 应用被杀/退出时不会有 finally，留下的 RUNNING 记录要在下次启动时收敛。
+     */
+    suspend fun markStaleRunningAsStopped() = withContext(Dispatchers.IO) {
+        try {
+            val records = getAllRecords()
+            if (records.none { it.status == ExecutionStatus.RUNNING }) return@withContext
+            val now = System.currentTimeMillis()
+            val fixed = records.map { r ->
+                if (r.status == ExecutionStatus.RUNNING) {
+                    r.copy(
+                        endTime = now,
+                        status = ExecutionStatus.STOPPED,
+                        resultMessage = "应用已退出，执行中断"
+                    )
+                } else r
+            }
+            val array = JSONArray().apply {
+                fixed.forEach { put(it.toJson()) }
+            }
+            historyFile.writeText(array.toString())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
      * 获取单条记录
      */
     suspend fun getRecord(id: String): ExecutionRecord? = withContext(Dispatchers.IO) {

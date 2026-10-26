@@ -1,0 +1,70 @@
+{
+  "id": "post_social",
+  "kind": "skill",
+  "name": "post_social",
+  "display_name": "发动态",
+  "description": "发布社交动态",
+  "prompt": "技能: post_social\n说明: 发布社交动态\n关联应用:\n- 微信: 打开微信 -> 进入朋友圈 -> 点击发布 -> 输入内容 -> 发布\n- 微博: 打开微博 -> 点击发布 -> 输入内容 -> 发布\n- 抖音: 打开抖音 -> 点击发布 -> 录制或选择视频 -> 发布",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "content",
+      "type": "string",
+      "description": "内容",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "发微博",
+    "发朋友圈",
+    "发动态",
+    "发状态"
+  ],
+  "related_apps": [
+    {
+      "package": "com.tencent.mm",
+      "name": "微信",
+      "type": "gui_automation",
+      "priority": 100,
+      "description": "发朋友圈",
+      "steps": [
+        "打开微信",
+        "进入朋友圈",
+        "点击发布",
+        "输入内容",
+        "发布"
+      ]
+    },
+    {
+      "package": "com.sina.weibo",
+      "name": "微博",
+      "type": "gui_automation",
+      "priority": 90,
+      "steps": [
+        "打开微博",
+        "点击发布",
+        "输入内容",
+        "发布"
+      ]
+    },
+    {
+      "package": "com.ss.android.ugc.aweme",
+      "name": "抖音",
+      "type": "gui_automation",
+      "priority": 80,
+      "description": "发抖音",
+      "steps": [
+        "打开抖音",
+        "点击发布",
+        "录制或选择视频",
+        "发布"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "社交"
+}

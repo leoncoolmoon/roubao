@@ -1,0 +1,79 @@
+{
+  "id": "watch_video",
+  "kind": "skill",
+  "name": "watch_video",
+  "display_name": "看视频",
+  "description": "看视频/刷视频",
+  "prompt": "技能: watch_video\n说明: 看视频/刷视频\n关联应用:\n- 哔哩哔哩: 打开B站 -> 搜索或浏览视频 -> 播放\n- 抖音\n- 快手\n- 优酷: 打开优酷 -> 搜索视频 -> 播放\n- 爱奇艺: 打开爱奇艺 -> 搜索视频 -> 播放",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "keyword",
+      "type": "string",
+      "description": "搜索关键词",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "看视频",
+    "刷视频",
+    "追剧",
+    "看电影",
+    "视频"
+  ],
+  "related_apps": [
+    {
+      "package": "tv.danmaku.bili",
+      "name": "哔哩哔哩",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开B站",
+        "搜索或浏览视频",
+        "播放"
+      ]
+    },
+    {
+      "package": "com.ss.android.ugc.aweme",
+      "name": "抖音",
+      "type": "delegation",
+      "deep_link": "snssdk1128://",
+      "priority": 90
+    },
+    {
+      "package": "com.smile.gifmaker",
+      "name": "快手",
+      "type": "delegation",
+      "deep_link": "kwai://",
+      "priority": 80
+    },
+    {
+      "package": "com.youku.phone",
+      "name": "优酷",
+      "type": "gui_automation",
+      "priority": 70,
+      "steps": [
+        "打开优酷",
+        "搜索视频",
+        "播放"
+      ]
+    },
+    {
+      "package": "com.qiyi.video",
+      "name": "爱奇艺",
+      "type": "gui_automation",
+      "priority": 70,
+      "steps": [
+        "打开爱奇艺",
+        "搜索视频",
+        "播放"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "视频"
+}

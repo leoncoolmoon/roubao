@@ -29,10 +29,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.lifecycleScope
 import android.net.Uri
 import android.provider.Settings
+import com.roubao.autopilot.agent.AccessLevelManager
 import com.roubao.autopilot.agent.MobileAgent
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.*
+import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.ui.screens.*
 import com.roubao.autopilot.ui.theme.*
 import androidx.compose.ui.graphics.toArgb
@@ -111,6 +113,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
         scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        applyOverlayIntent(intent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -126,11 +129,12 @@ class MainActivity : ComponentActivity() {
 
         deviceController = DeviceController(this)
         deviceController.setCacheDir(cacheDir)
-        settingsManager = SettingsManager(this)
+        settingsManager = App.getInstance().settingsManager
         executionRepository = ExecutionRepository(this)
 
-        // 加载执行记录
+        // 加载执行记录；上次进程被杀留下的 RUNNING 记录先收敛为 STOPPED
         lifecycleScope.launch {
+            executionRepository.markStaleRunningAsStopped()
             executionRecords.value = executionRepository.getAllRecords()
         }
 
@@ -145,6 +149,11 @@ class MainActivity : ComponentActivity() {
         // 预加载已安装应用
         lifecycleScope.launch(Dispatchers.IO) {
             AppScanner(this@MainActivity).getApps()
+        }
+
+        // 非工作状态：桌面常驻肉包图标
+        if (Settings.canDrawOverlays(this)) {
+            OverlayService.showIdle(this)
         }
 
         setContent {
@@ -188,6 +197,34 @@ class MainActivity : ComponentActivity() {
         val colors = BaoziTheme.colors
         val agent = mobileAgent.value
         val agentState by agent?.state?.collectAsState() ?: remember { mutableStateOf(null) }
+        var pausedModelApplied by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(
+            settings.currentProviderId,
+            settings.model,
+            settings.baseUrl,
+            settings.apiKey
+        ) {
+            // 只在“暂停期间用户真的改了模型/服务商”时替换客户端。
+            // 进入暂停本身不应该触发“已切换模型客户端”。
+            if (agentState?.isPaused == true) {
+                val key = "${settings.currentProviderId}|${settings.baseUrl}|${settings.apiKey}|${settings.model}"
+                if (pausedModelApplied != key && !settings.currentProvider.isGUIAgent && settings.currentProviderId != "mai_ui") {
+                    val client = VLMClient(
+                        apiKey = settings.apiKey,
+                        baseUrl = settings.baseUrl,
+                        model = settings.model
+                    )
+                    mobileAgent.value?.updateVlmClient(client)
+                    pausedModelApplied = key
+                }
+            }
+        }
+
+        LaunchedEffect(agentState?.isPaused) {
+            if (agentState?.isPaused != true) {
+                pausedModelApplied = null
+            }
+        }
         val logs by agent?.logs?.collectAsState() ?: remember { mutableStateOf(emptyList<String>()) }
         val records by remember { executionRecords }
         val isShizukuAvailable = shizukuAvailable.value && checkShizukuPermission()
@@ -208,13 +245,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 首次进入且 Shizuku 未连接时，显示帮助引导（只显示一次）
-        LaunchedEffect(Unit) {
-            if (!isShizukuAvailable && settings.hasSeenOnboarding && !hasShownShizukuHelp) {
-                hasShownShizukuHelp = true
-                showShizukuHelpDialog = true
-            }
-        }
+        // 不再自动弹 Shizuku 使用指南：basic/无障碍模式不需要 Shizuku。
+        // 需要时从“设置 → Shizuku 连接 / 授权”手动发起。
 
         Scaffold(
             modifier = Modifier.background(colors.background),
@@ -331,6 +363,17 @@ class MainActivity : ComponentActivity() {
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
                                 onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
+                                onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
+                                onUpdateAdvancedModeEnabled = { enabled ->
+                                    settingsManager.updateAdvancedModeEnabled(enabled)
+                                    if (enabled) {
+                                        AccessLevelManager.ensureRoot(this@MainActivity)
+                                    } else {
+                                        AccessLevelManager.invalidateSuCache()
+                                        AccessLevelManager.refresh(this@MainActivity)
+                                    }
+                                },
+                                onRefreshShizuku = { refreshShizukuStatus() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
@@ -340,6 +383,8 @@ class MainActivity : ComponentActivity() {
                                         else -> "NONE"
                                     }
                                 } else "NONE",
+                                isExecuting = executing,
+                                isPaused = agentState?.isPaused == true,
                                 onFetchModels = { onSuccess, onError ->
                                     lifecycleScope.launch {
                                         val result = VLMClient.fetchModels(settings.baseUrl, settings.apiKey)
@@ -371,6 +416,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // 用户退出/划掉 App：取消任务并收起悬浮窗，避免残留“执行中”。
+        if (isFinishing) {
+            currentExecutionJob?.cancel()
+            mobileAgent.value?.stop()
+            OverlayService.idle(this)
+            isExecuting.value = false
+        }
         super.onDestroy()
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
@@ -389,23 +441,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkAndUpdateShizukuStatus() {
-        Log.d(TAG, "checkAndUpdateShizukuStatus called")
+    private fun checkAndUpdateShizukuStatus(requestIfNeeded: Boolean = false) {
+        Log.d(TAG, "checkAndUpdateShizukuStatus called, requestIfNeeded=$requestIfNeeded")
         try {
             val binderAlive = Shizuku.pingBinder()
             Log.d(TAG, "Shizuku pingBinder: $binderAlive")
 
             if (binderAlive) {
-                shizukuAvailable.value = true
                 val hasPermission = checkShizukuPermission()
                 Log.d(TAG, "Shizuku hasPermission: $hasPermission")
 
                 if (hasPermission) {
+                    shizukuAvailable.value = true
                     Log.d(TAG, "Binding Shizuku service")
                     deviceController.bindService()
                 } else {
-                    Log.d(TAG, "Requesting Shizuku permission")
-                    requestShizukuPermission()
+                    // 不自动弹 Shizuku 授权：basic/无障碍模式不需要 Shizuku。
+                    // 只有用户主动点“授权/刷新”时才 requestPermission。
+                    shizukuAvailable.value = false
+                    if (requestIfNeeded) {
+                        Log.d(TAG, "Requesting Shizuku permission by user action")
+                        requestShizukuPermission()
+                    } else {
+                        Log.d(TAG, "Shizuku permission missing; skip auto request")
+                    }
                 }
             } else {
                 Log.d(TAG, "Shizuku binder not alive")
@@ -420,7 +479,7 @@ class MainActivity : ComponentActivity() {
     private fun refreshShizukuStatus() {
         Log.d(TAG, "refreshShizukuStatus called by user")
         Toast.makeText(this, "正在检查 Shizuku 状态...", Toast.LENGTH_SHORT).show()
-        checkAndUpdateShizukuStatus()
+        checkAndUpdateShizukuStatus(requestIfNeeded = true)
 
         if (shizukuAvailable.value && checkShizukuPermission()) {
             Toast.makeText(this, "Shizuku 已连接", Toast.LENGTH_SHORT).show()
@@ -657,11 +716,28 @@ class MainActivity : ComponentActivity() {
         return if (instruction.length > 10) instruction.take(10) + "..." else instruction
     }
 
+    private fun applyOverlayIntent(intent: Intent?) {
+        val command = intent?.getStringExtra("overlay_prompt") ?: return
+        if (command.isBlank()) return
+        intent.removeExtra("overlay_prompt")
+        scheduledPrompt.value = command
+        scheduledAutoRun.value = true
+        if (intent.getBooleanExtra("hide_after_start", false)) {
+            window.decorView.postDelayed({ moveTaskToBack(true) }, 1200)
+        }
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
         scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
         scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        applyOverlayIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AccessLevelManager.refresh(this)
     }
 
     companion object {

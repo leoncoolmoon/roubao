@@ -1,0 +1,6 @@
+{
+  "text": "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。",
+  "kind": "complaint",
+  "enabled": true,
+  "dependence": []
+}

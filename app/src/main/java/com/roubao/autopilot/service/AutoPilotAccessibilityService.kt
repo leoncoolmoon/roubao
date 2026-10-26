@@ -1,9 +1,18 @@
 package com.roubao.autopilot.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
+import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
+import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * 无障碍服务 - 提取 UI 元素树、坐标精确定位及截图失败盲操
@@ -23,6 +32,11 @@ class AutoPilotAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         println("[AccessibilityService] 无障碍服务已连接")
+        try {
+            com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        } catch (e: Exception) {
+            println("[AccessibilityService] refresh access level failed: ${e.message}")
+        }
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
@@ -42,6 +56,97 @@ class AutoPilotAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         println("[AccessibilityService] 无障碍服务中断")
+    }
+
+    // ==================== 无障碍手势 ====================
+
+    /** 单击坐标；basic 模式不依赖 shell input tap。 */
+    fun tapAt(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        return dispatchPath(path, 60L)
+    }
+
+    /** 长按坐标。 */
+    fun longPressAt(x: Int, y: Int, durationMs: Long = 600L): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        return dispatchPath(path, durationMs)
+    }
+
+    /** 双击坐标。 */
+    fun doubleTapAt(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val first = GestureDescription.StrokeDescription(path, 0L, 50L)
+        val second = GestureDescription.StrokeDescription(path, 120L, 50L)
+        return try {
+            dispatchGesture(GestureDescription.Builder().addStroke(first).addStroke(second).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 滑动；basic 模式不依赖 shell input swipe。 */
+    fun swipeAt(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 500L): Boolean {
+        val path = Path().apply {
+            moveTo(x1.toFloat(), y1.toFloat())
+            lineTo(x2.toFloat(), y2.toFloat())
+        }
+        return dispatchPath(path, durationMs)
+    }
+
+    /** 无障碍全局动作：BACK / HOME / RECENTS。 */
+    fun pressBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
+
+    fun pressHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+
+    fun pressRecents(): Boolean = performGlobalAction(GLOBAL_ACTION_RECENTS)
+
+    private fun dispatchPath(path: Path, durationMs: Long): Boolean {
+        return try {
+            val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
+            dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * API 30+ 的无障碍截图：全屏（含其他 App），不需要 MediaProjection 授权，
+     * 但有最小调用间隔。失败返回 null，由 DeviceController 回退到 shell/tree-only。
+     */
+    fun takeScreenshotBitmap(timeoutMs: Long = 2500L): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val latch = CountDownLatch(1)
+        var bitmap: Bitmap? = null
+        return try {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        try {
+                            val buffer = result.hardwareBuffer
+                            val wrapped = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
+                            bitmap = wrapped?.copy(Bitmap.Config.ARGB_8888, false)
+                            buffer.close()
+                        } catch (e: Exception) {
+                            println("[AccessibilityService] takeScreenshot decode failed: ${e.message}")
+                        } finally {
+                            latch.countDown()
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        println("[AccessibilityService] takeScreenshot failed: $errorCode")
+                        latch.countDown()
+                    }
+                }
+            )
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            bitmap
+        } catch (e: Exception) {
+            println("[AccessibilityService] takeScreenshot exception: ${e.message}")
+            null
+        }
     }
 
     /**

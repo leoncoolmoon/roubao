@@ -1,0 +1,37 @@
+{
+  "id": "scan",
+  "kind": "skill",
+  "name": "scan",
+  "display_name": "扫码",
+  "description": "扫描二维码",
+  "prompt": "技能: scan\n说明: 扫描二维码\n关联应用:\n- 支付宝\n- 微信",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [
+    "扫码",
+    "扫一扫",
+    "扫描"
+  ],
+  "related_apps": [
+    {
+      "package": "com.eg.android.AlipayGphone",
+      "name": "支付宝",
+      "type": "delegation",
+      "deep_link": "alipays://platformapi/startapp?appId=10000007",
+      "priority": 100
+    },
+    {
+      "package": "com.tencent.mm",
+      "name": "微信",
+      "type": "delegation",
+      "deep_link": "weixin://scanqrcode",
+      "priority": 90
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "支付"
+}

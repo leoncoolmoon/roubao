@@ -1,0 +1,21 @@
+{
+  "id": "install_app",
+  "kind": "skill",
+  "name": "install_app",
+  "display_name": "安装应用",
+  "description": "当任务需要的应用未安装时，列出候选并让用户用数字选择，再打开应用商店。",
+  "prompt": "技能: install_app\n说明: 当任务需要但设备未安装某个应用时，先给用户 2-3 个候选并让用户输入数字选择；用户确认后打开应用商店搜索并进入安装页。只有本 skill 开启时才允许安装流程。\n步骤:\n1. 若无已安装可用应用，列出编号候选：\n   1. 应用 A\n   2. 应用 B\n   3. 应用 C\n   用 ask_user 发送: \"请输入数字选择要安装的应用，回复 0 取消\"\n2. 用户选择数字后，open_app 打开设备自带应用商店，搜索对应应用名。\n3. 进入详情页后让用户手动确认安装；不要代替用户点击安装或支付。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "medium",
+  "requires_confirmation": 1,
+  "executable": 0,
+  "params": [],
+  "keywords": ["安装", "下载", "应用商店", "没装"],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": "系统",
+  "source": "builtin",
+  "is_default": true,
+  "enabled": false
+}

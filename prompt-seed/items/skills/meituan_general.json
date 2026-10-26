@@ -1,0 +1,41 @@
+{
+  "id": "meituan_general",
+  "kind": "skill",
+  "name": "meituan_general",
+  "display_name": "问小美",
+  "description": "让美团 AI 助手帮忙处理各种生活服务",
+  "prompt": "技能: meituan_general\n说明: 让美团 AI 助手帮忙处理各种生活服务\n关联应用:\n- 小美",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "message",
+      "type": "string",
+      "description": "问题或需求",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "问小美",
+    "小美",
+    "美团",
+    "帮我查",
+    "帮我找",
+    "帮我订"
+  ],
+  "related_apps": [
+    {
+      "package": "com.meituan.android.beam",
+      "name": "小美",
+      "type": "delegation",
+      "deep_link": "beam://www.meituan.com/home",
+      "priority": 100,
+      "description": "美团 AI 助手，支持外卖、酒店、电影、美食推荐等"
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "生活"
+}

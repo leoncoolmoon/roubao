@@ -41,14 +41,22 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.roubao.autopilot.BuildConfig
+import com.roubao.autopilot.agent.AccessLevel
+import com.roubao.autopilot.agent.AccessLevelManager
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.ThemeMode
 import com.roubao.autopilot.utils.CrashHandler
+
+/** 是否显示「反馈与调试」分组（云端崩溃上报 / 导出日志 / 清除日志），目前隐藏 */
+private const val SHOW_FEEDBACK_DEBUG = false
 
 @Composable
 fun SettingsScreen(
@@ -63,9 +71,14 @@ fun SettingsScreen(
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
+    onUpdatePromptPackMode: (String) -> Unit = {},
+    onUpdateAdvancedModeEnabled: (Boolean) -> Unit = {},
+    onRefreshShizuku: () -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
     shizukuAvailable: Boolean,
     shizukuPrivilegeLevel: String = "ADB", // "ADB", "ROOT", "NONE"
+    isExecuting: Boolean = false,
+    isPaused: Boolean = false,
     onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
@@ -78,9 +91,21 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
+    var showPackDialog by remember { mutableStateOf(false) }
+    val currentLevel by AccessLevelManager.level.collectAsState()
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
         mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityServiceRunning = AutoPilotAccessibilityService.isServiceRunning()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LazyColumn(
@@ -109,11 +134,6 @@ fun SettingsScreen(
                     )
                 }
             }
-        }
-
-        // 连接状态卡片
-        item {
-            StatusCard(shizukuAvailable = shizukuAvailable)
         }
 
         // 外观设置分组
@@ -148,6 +168,11 @@ fun SettingsScreen(
                 subtitle = "${settings.maxSteps} 步",
                 onClick = { showMaxStepsDialog = true }
             )
+        }
+
+        // 权限与服务：无障碍 / Shizuku / Root 相邻
+        item {
+            SettingsSection(title = "权限与服务")
         }
 
         // 无障碍支持开关
@@ -218,16 +243,17 @@ fun SettingsScreen(
                                 ) {
                                     Text("去开启", fontSize = 11.sp)
                                 }
-                                TextButton(
-                                    onClick = {
-                                        accessibilityServiceRunning =
-                                            AutoPilotAccessibilityService.isServiceRunning()
-                                    },
-                                    contentPadding = PaddingValues(horizontal = 6.dp)
-                                ) {
-                                    Text("刷新", fontSize = 11.sp)
-                                }
                             }
+                             TextButton(
+                                 onClick = {
+                                     accessibilityServiceRunning =
+                                         AutoPilotAccessibilityService.isServiceRunning()
+                                     AccessLevelManager.refresh(context)
+                                 },
+                                 contentPadding = PaddingValues(horizontal = 6.dp)
+                             ) {
+                                 Text("刷新", fontSize = 11.sp)
+                             }
                         }
                     }
                     Switch(
@@ -244,264 +270,18 @@ fun SettingsScreen(
             }
         }
 
-        // Shizuku 高级设置分组（仅在 Shizuku 可用时显示）
-        if (shizukuAvailable) {
-            item {
-                SettingsSection(title = "Shizuku 高级选项")
-            }
-
-            // 显示当前权限级别
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    when (shizukuPrivilegeLevel) {
-                                        "ROOT" -> colors.error.copy(alpha = 0.15f)
-                                        else -> colors.primary.copy(alpha = 0.15f)
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = when (shizukuPrivilegeLevel) {
-                                    "ROOT" -> colors.error
-                                    else -> colors.primary
-                                },
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "当前权限级别",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.textPrimary
-                            )
-                            Text(
-                                text = when (shizukuPrivilegeLevel) {
-                                    "ROOT" -> "Root 模式 (UID 0)"
-                                    "ADB" -> "ADB 模式 (UID 2000)"
-                                    else -> "未连接"
-                                },
-                                fontSize = 13.sp,
-                                color = when (shizukuPrivilegeLevel) {
-                                    "ROOT" -> colors.error
-                                    else -> colors.textSecondary
-                                },
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Root 模式开关（仅在 Shizuku 以 Root 权限运行时可用）
-            item {
-                val isShizukuRoot = shizukuPrivilegeLevel == "ROOT"
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isShizukuRoot) colors.error.copy(alpha = 0.15f)
-                                    else colors.textHint.copy(alpha = 0.15f)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = if (isShizukuRoot) colors.error else colors.textHint,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Root 模式",
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = if (isShizukuRoot) colors.textPrimary else colors.textHint
-                            )
-                            Text(
-                                text = when {
-                                    !isShizukuRoot -> "需要 Shizuku 以 Root 权限运行"
-                                    settings.rootModeEnabled -> "已启用高级权限"
-                                    else -> "启用后可使用 Root 功能"
-                                },
-                                fontSize = 13.sp,
-                                color = when {
-                                    !isShizukuRoot -> colors.textHint
-                                    settings.rootModeEnabled -> colors.error
-                                    else -> colors.textSecondary
-                                },
-                                maxLines = 1
-                            )
-                        }
-                        Switch(
-                            checked = settings.rootModeEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
-                                    showRootModeWarningDialog = true
-                                } else {
-                                    onUpdateRootModeEnabled(false)
-                                }
-                            },
-                            enabled = isShizukuRoot,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = colors.error,
-                                checkedTrackColor = colors.error.copy(alpha = 0.5f),
-                                uncheckedThumbColor = colors.textHint,
-                                uncheckedTrackColor = colors.backgroundInput,
-                                disabledCheckedThumbColor = colors.textHint,
-                                disabledCheckedTrackColor = colors.backgroundInput,
-                                disabledUncheckedThumbColor = colors.textHint.copy(alpha = 0.5f),
-                                disabledUncheckedTrackColor = colors.backgroundInput.copy(alpha = 0.5f)
-                            )
-                        )
-                    }
-                }
-            }
-
-            // su -c 开关（仅在 Root 模式开启时显示）
-            if (settings.rootModeEnabled) {
-                item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(colors.error.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = null,
-                                    tint = colors.error,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "允许 su -c 命令",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colors.textPrimary
-                                )
-                                Text(
-                                    text = if (settings.suCommandEnabled) "AI 可执行 Root 命令" else "禁止执行 su -c",
-                                    fontSize = 13.sp,
-                                    color = if (settings.suCommandEnabled) colors.error else colors.textSecondary,
-                                    maxLines = 1
-                                )
-                            }
-                            Switch(
-                                checked = settings.suCommandEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        showSuCommandWarningDialog = true
-                                    } else {
-                                        onUpdateSuCommandEnabled(false)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = colors.error,
-                                    checkedTrackColor = colors.error.copy(alpha = 0.5f),
-                                    uncheckedThumbColor = colors.textHint,
-                                    uncheckedTrackColor = colors.backgroundInput
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // API 设置分组
-        item {
-            SettingsSection(title = "API 配置")
-        }
-
-        // Base URL 设置
-        item {
-            SettingsItem(
-                icon = Icons.Default.Settings,
-                title = "API 服务商",
-                subtitle = settings.currentProvider.name,
-                onClick = { showBaseUrlDialog = true }
-            )
-        }
-
-        // API Key 设置
-        item {
-            SettingsItem(
-                icon = Icons.Default.Lock,
-                title = "API Key",
-                subtitle = if (settings.apiKey.isNotEmpty()) "已设置 (${maskApiKey(settings.apiKey)})" else "未设置",
-                onClick = { showApiKeyDialog = true }
-            )
-        }
-
-        // 模型设置
+        // Shizuku 连接 / 授权
         item {
             SettingsItem(
                 icon = Icons.Default.Build,
-                title = "模型",
-                subtitle = settings.model,
-                onClick = { showModelDialog = true }
+                title = "Shizuku 连接 / 授权",
+                subtitle = if (shizukuAvailable) "已连接" else "未连接或未授权；basic 模式不需要 Shizuku",
+                onClick = { onRefreshShizuku() }
             )
         }
 
-        // 反馈分组
-        item {
-            SettingsSection(title = "反馈与调试")
-        }
-
-        // 云端崩溃上报开关
+        // Root 模式 / 高级权限（并入「权限与服务」，不再单独分组）
+        // 显示当前权限级别
         item {
             Card(
                 modifier = Modifier
@@ -520,91 +300,385 @@ fun SettingsScreen(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(colors.primary.copy(alpha = 0.15f)),
+                            .background(
+                                when (shizukuPrivilegeLevel) {
+                                    "ROOT" -> colors.error.copy(alpha = 0.15f)
+                                    else -> colors.primary.copy(alpha = 0.15f)
+                                }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = null,
-                            tint = colors.primary,
+                            tint = when (shizukuPrivilegeLevel) {
+                                "ROOT" -> colors.error
+                                else -> colors.primary
+                            },
                             modifier = Modifier.size(22.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "云端崩溃上报",
+                            text = "当前权限级别",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary
                         )
                         Text(
-                            text = if (settings.cloudCrashReportEnabled) "已开启，帮助我们改进应用" else "已关闭",
+                            text = when (shizukuPrivilegeLevel) {
+                                "ROOT" -> "Root 模式 (UID 0)"
+                                "ADB" -> "ADB 模式 (UID 2000)"
+                                else -> "未连接"
+                            },
                             fontSize = 13.sp,
-                            color = colors.textSecondary,
+                            color = when (shizukuPrivilegeLevel) {
+                                "ROOT" -> colors.error
+                                else -> colors.textSecondary
+                            },
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+
+        // Root 模式开关（仅在 Shizuku 以 Root 权限运行时可用）
+        item {
+            val isShizukuRoot = shizukuPrivilegeLevel == "ROOT"
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isShizukuRoot) colors.error.copy(alpha = 0.15f)
+                                else colors.textHint.copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = if (isShizukuRoot) colors.error else colors.textHint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Root 模式",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isShizukuRoot) colors.textPrimary else colors.textHint
+                        )
+                        Text(
+                            text = when {
+                                !isShizukuRoot -> "需要 Shizuku 以 Root 权限运行"
+                                settings.rootModeEnabled -> "已启用高级权限"
+                                else -> "启用后可使用 Root 功能"
+                            },
+                            fontSize = 13.sp,
+                            color = when {
+                                !isShizukuRoot -> colors.textHint
+                                settings.rootModeEnabled -> colors.error
+                                else -> colors.textSecondary
+                            },
                             maxLines = 1
                         )
                     }
                     Switch(
-                        checked = settings.cloudCrashReportEnabled,
-                        onCheckedChange = { onUpdateCloudCrashReport(it) },
+                        checked = settings.rootModeEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showRootModeWarningDialog = true
+                            } else {
+                                onUpdateRootModeEnabled(false)
+                            }
+                        },
+                        enabled = isShizukuRoot,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = colors.primary,
-                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                            checkedThumbColor = colors.error,
+                            checkedTrackColor = colors.error.copy(alpha = 0.5f),
                             uncheckedThumbColor = colors.textHint,
-                            uncheckedTrackColor = colors.backgroundInput
+                            uncheckedTrackColor = colors.backgroundInput,
+                            disabledCheckedThumbColor = colors.textHint,
+                            disabledCheckedTrackColor = colors.backgroundInput,
+                            disabledUncheckedThumbColor = colors.textHint.copy(alpha = 0.5f),
+                            disabledUncheckedTrackColor = colors.backgroundInput.copy(alpha = 0.5f)
                         )
                     )
                 }
             }
         }
 
-        item {
-            val context = LocalContext.current
-            val logStats = remember { mutableStateOf(CrashHandler.getLogStats(context)) }
-
-            SettingsItem(
-                icon = Icons.Default.Info,
-                title = "导出日志",
-                subtitle = logStats.value,
-                onClick = {
-                    CrashHandler.shareLogs(context)
+        // su -c 开关（仅在 Root 模式开启时显示）
+        if (settings.rootModeEnabled) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.error.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = colors.error,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "允许 su -c 命令",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textPrimary
+                            )
+                            Text(
+                                text = if (settings.suCommandEnabled) "AI 可执行 Root 命令" else "禁止执行 su -c",
+                                fontSize = 13.sp,
+                                color = if (settings.suCommandEnabled) colors.error else colors.textSecondary,
+                                maxLines = 1
+                            )
+                        }
+                        Switch(
+                            checked = settings.suCommandEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    showSuCommandWarningDialog = true
+                                } else {
+                                    onUpdateSuCommandEnabled(false)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = colors.error,
+                                checkedTrackColor = colors.error.copy(alpha = 0.5f),
+                                uncheckedThumbColor = colors.textHint,
+                                uncheckedTrackColor = colors.backgroundInput
+                            )
+                        )
+                    }
                 }
+            }
+        }
+
+        // 提示词包选择
+        item {
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "提示词包",
+                subtitle = when (settings.promptPackMode) {
+                    "basic" -> "基础包（仅无障碍）"
+                    "standard" -> "标准包（Shizuku / su-user）"
+                    "advanced" -> "高级包（Root）"
+                    else -> "自动（当前等级：${currentLevel.label}）"
+                },
+                onClick = { showPackDialog = true }
             )
         }
 
+        // API 设置分组
         item {
-            val context = LocalContext.current
-            var showClearDialog by remember { mutableStateOf(false) }
+            SettingsSection(title = "API 配置")
+        }
 
+        if (isExecuting) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.error.copy(alpha = 0.08f))
+                ) {
+                    Text(
+                        text = if (isPaused) {
+                            "任务已暂停：模型可切换并立即生效；服务商和 API Key 需停止任务后修改。"
+                        } else {
+                            "任务执行中：先暂停才能切换模型；服务商和 API Key 需停止任务后修改。"
+                        },
+                        fontSize = 12.sp,
+                        color = colors.error,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+
+        // Base URL 设置
+        item {
             SettingsItem(
-                icon = Icons.Default.Close,
-                title = "清除日志",
-                subtitle = "删除所有本地日志文件",
-                onClick = { showClearDialog = true }
+                icon = Icons.Default.Settings,
+                title = "API 服务商",
+                subtitle = settings.currentProvider.name,
+                onClick = { showBaseUrlDialog = true },
+                enabled = !isExecuting
             )
+        }
 
-            if (showClearDialog) {
-                AlertDialog(
-                    onDismissRequest = { showClearDialog = false },
-                    containerColor = BaoziTheme.colors.backgroundCard,
-                    title = { Text("确认清除", color = BaoziTheme.colors.textPrimary) },
-                    text = { Text("确定要删除所有日志文件吗？", color = BaoziTheme.colors.textSecondary) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            CrashHandler.clearLogs(context)
-                            showClearDialog = false
-                            android.widget.Toast.makeText(context, "日志已清除", android.widget.Toast.LENGTH_SHORT).show()
-                        }) {
-                            Text("确定", color = BaoziTheme.colors.error)
+        // API Key 设置
+        item {
+            SettingsItem(
+                icon = Icons.Default.Lock,
+                title = "API Key",
+                subtitle = if (settings.apiKey.isNotEmpty()) "已设置 (${maskApiKey(settings.apiKey)})" else "未设置",
+                onClick = { showApiKeyDialog = true },
+                enabled = !isExecuting
+            )
+        }
+
+        // 模型设置
+        item {
+            SettingsItem(
+                icon = Icons.Default.Build,
+                title = "模型",
+                subtitle = settings.model,
+                onClick = { showModelDialog = true },
+                enabled = !isExecuting || isPaused
+            )
+        }
+
+        // 反馈与调试：云端崩溃上报 / 导出日志 / 清除日志 暂时隐藏（把 SHOW_FEEDBACK_DEBUG 改为 true 可恢复）
+        if (SHOW_FEEDBACK_DEBUG) {
+            // 反馈分组
+            item {
+                SettingsSection(title = "反馈与调试")
+            }
+
+            // 云端崩溃上报开关
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = colors.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showClearDialog = false }) {
-                            Text("取消", color = BaoziTheme.colors.textSecondary)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "云端崩溃上报",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.textPrimary
+                            )
+                            Text(
+                                text = if (settings.cloudCrashReportEnabled) "已开启，帮助我们改进应用" else "已关闭",
+                                fontSize = 13.sp,
+                                color = colors.textSecondary,
+                                maxLines = 1
+                            )
                         }
+                        Switch(
+                            checked = settings.cloudCrashReportEnabled,
+                            onCheckedChange = { onUpdateCloudCrashReport(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = colors.primary,
+                                checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                                uncheckedThumbColor = colors.textHint,
+                                uncheckedTrackColor = colors.backgroundInput
+                            )
+                        )
+                    }
+                }
+            }
+
+            item {
+                val context = LocalContext.current
+                val logStats = remember { mutableStateOf(CrashHandler.getLogStats(context)) }
+
+                SettingsItem(
+                    icon = Icons.Default.Info,
+                    title = "导出日志",
+                    subtitle = logStats.value,
+                    onClick = {
+                        CrashHandler.shareLogs(context)
                     }
                 )
+            }
+
+            item {
+                val context = LocalContext.current
+                var showClearDialog by remember { mutableStateOf(false) }
+
+                SettingsItem(
+                    icon = Icons.Default.Close,
+                    title = "清除日志",
+                    subtitle = "删除所有本地日志文件",
+                    onClick = { showClearDialog = true }
+                )
+
+                if (showClearDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showClearDialog = false },
+                        containerColor = BaoziTheme.colors.backgroundCard,
+                        title = { Text("确认清除", color = BaoziTheme.colors.textPrimary) },
+                        text = { Text("确定要删除所有日志文件吗？", color = BaoziTheme.colors.textSecondary) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                CrashHandler.clearLogs(context)
+                                showClearDialog = false
+                                android.widget.Toast.makeText(context, "日志已清除", android.widget.Toast.LENGTH_SHORT).show()
+                            }) {
+                                Text("确定", color = BaoziTheme.colors.error)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showClearDialog = false }) {
+                                Text("取消", color = BaoziTheme.colors.textSecondary)
+                            }
+                        }
+                    )
+                }
             }
         }
 
@@ -738,6 +812,72 @@ fun SettingsScreen(
         OverlayHelpDialog(onDismiss = { showOverlayHelpDialog = false })
     }
 
+    // 提示词包选择
+    if (showPackDialog) {
+        val options = listOf(
+            "auto" to "自动（按当前等级选最高可用包）",
+            "basic" to "基础包 · 仅无障碍",
+            "standard" to "标准包 · Shizuku / su-user",
+            "advanced" to "高级包 · Root"
+        )
+        AlertDialog(
+            onDismissRequest = { showPackDialog = false },
+            title = { Text("提示词包") },
+            text = {
+                Column {
+                    Text(
+                        "当前访问等级：${currentLevel.label}（${currentLevel.id}）",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    options.forEach { (mode, label) ->
+                        val enabled = when (mode) {
+                            "standard" -> currentLevel.rank >= AccessLevel.ADB.rank
+                            "advanced" -> currentLevel.rank >= AccessLevel.ROOT.rank
+                            else -> true
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = enabled) {
+                                    onUpdatePromptPackMode(mode)
+                                    showPackDialog = false
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = settings.promptPackMode == mode,
+                                onClick = {
+                                    if (enabled) {
+                                        onUpdatePromptPackMode(mode)
+                                        showPackDialog = false
+                                    }
+                                },
+                                enabled = enabled
+                            )
+                            Text(
+                                text = label,
+                                fontSize = 14.sp,
+                                color = if (enabled) colors.textPrimary else colors.textHint
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "提示：标准/高级包需要相应权限；等级不够时选择不会生效，会自动回退到可用包。",
+                        fontSize = 11.sp,
+                        color = colors.textHint
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPackDialog = false }) { Text("关闭") }
+            }
+        )
+    }
+
     // Root 模式警告对话框
     if (showRootModeWarningDialog) {
         RootModeWarningDialog(
@@ -821,14 +961,15 @@ fun SettingsItem(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    trailing: @Composable (() -> Unit)? = null
+    trailing: @Composable (() -> Unit)? = null,
+    enabled: Boolean = true
 ) {
     val colors = BaoziTheme.colors
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
     ) {
@@ -1464,6 +1605,7 @@ fun ShizukuHelpDialog(onDismiss: () -> Unit) {
 @Composable
 fun OverlayHelpDialog(onDismiss: () -> Unit) {
     val colors = BaoziTheme.colors
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.backgroundCard,
@@ -1522,8 +1664,34 @@ fun OverlayHelpDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
+            TextButton(onClick = {
+                // 直达「显示在其他应用上层」页面；部分 ROM 不支持时回退到应用详情页
+                val pkg = android.net.Uri.parse("package:${context.packageName}")
+                try {
+                    context.startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (e: Exception) {
+                    try {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (_: Exception) {
+                        android.widget.Toast.makeText(
+                            context, "无法打开设置，请手动前往系统设置开启", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                onDismiss()
+            }) {
+                Text("去开启", color = colors.primary)
+            }
+        },
+        dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("知道了", color = colors.primary)
+                Text("知道了", color = colors.textSecondary)
             }
         }
     )

@@ -4,14 +4,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
+import com.roubao.autopilot.service.AutoPilotAccessibilityService
 import com.roubao.autopilot.service.ShellService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -326,6 +329,21 @@ class DeviceController(private val context: Context? = null) {
         exec("input keyevent 3")
     }
 
+    /** user 级 HOME 兜底：直接发 HOME Intent，不需要 Shizuku。 */
+    fun homeViaIntent(): Boolean {
+        return try {
+            val ctx = context ?: App.getInstance()
+            val intent = Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            println("[DeviceController] homeViaIntent failed: ${e.message}")
+            false
+        }
+    }
+
     /**
      * 回车键
      */
@@ -401,6 +419,20 @@ class DeviceController(private val context: Context? = null) {
      * 失败时返回黑屏占位图（降级处理）
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
+        // 优先无障碍截图（API 30+）：全屏、无 shell 也能用，basic 包的关键路径。
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val service = AutoPilotAccessibilityService.getInstance()
+                val bitmap = service?.takeScreenshotBitmap()
+                if (bitmap != null) {
+                    println("[DeviceController] Screenshot via accessibility takeScreenshot")
+                    return@withContext ScreenshotResult(bitmap)
+                }
+            } catch (e: Exception) {
+                println("[DeviceController] Accessibility screenshot failed: ${e.message}")
+            }
+        }
+
         try {
             // 截图到 /data/local/tmp 并设置权限让 App 可读
             val output = exec("screencap -p $SCREENSHOT_PATH && chmod 666 $SCREENSHOT_PATH")
@@ -577,7 +609,12 @@ class DeviceController(private val context: Context? = null) {
         } else {
             // 使用 AppScanner 搜索应用
             val appScanner = App.getInstance().appScanner
-            val searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            var searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            if (searchResults.isEmpty()) {
+                // 可能是刚安装/缓存过期：强制刷新一次再找。
+                appScanner.refreshApps()
+                searchResults = appScanner.searchApps(appNameOrPackage, topK = 1)
+            }
             if (searchResults.isNotEmpty()) {
                 finalPackage = searchResults[0].app.packageName
                 println("[DeviceController] AppScanner found: ${searchResults[0].app.appName} -> $finalPackage")
@@ -588,9 +625,34 @@ class DeviceController(private val context: Context? = null) {
             }
         }
 
-        // 使用 monkey 命令启动应用 (最可靠)
-        val result = exec("monkey -p $finalPackage -c android.intent.category.LAUNCHER 1 2>/dev/null")
-        println("[DeviceController] openApp: $appNameOrPackage -> $finalPackage, result: $result")
+        // 优先沿用旧版直接启动方式（monkey），只有 Shizuku 不可用时才用 Intent 兜底。
+        // 这样在 adb/root 环境不会触发系统的“是否允许打开”确认。
+        if (isAvailable()) {
+            val result = exec("monkey -p $finalPackage -c android.intent.category.LAUNCHER 1 2>/dev/null")
+            println("[DeviceController] openApp via monkey: $appNameOrPackage -> $finalPackage, result: $result")
+            if (!result.contains("No activities", ignoreCase = true) &&
+                !result.contains("Error", ignoreCase = true)
+            ) {
+                return
+            }
+            println("[DeviceController] monkey failed, fallback to Intent")
+        }
+
+        // 兜底：普通 launch Intent，user 级即可启动。
+        val launchContext = context ?: App.getInstance()
+        try {
+            val launchIntent = launchContext.packageManager
+                .getLaunchIntentForPackage(finalPackage)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                launchContext.startActivity(launchIntent)
+                println("[DeviceController] openApp via Intent fallback: $appNameOrPackage -> $finalPackage")
+                return
+            }
+            println("[DeviceController] no launch intent for $finalPackage")
+        } catch (e: Exception) {
+            println("[DeviceController] openApp Intent fallback failed: ${e.message}")
+        }
     }
 
     /**
@@ -610,6 +672,14 @@ class DeviceController(private val context: Context? = null) {
      * 打开 DeepLink
      */
     fun openDeepLink(uri: String) {
-        exec("am start -a android.intent.action.VIEW -d \"$uri\"")
+        // 优先用普通 Intent，user 级即可打开；失败再回退 shell（需要 adb）。
+        try {
+            val ctx = context ?: App.getInstance()
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            exec("am start -a android.intent.action.VIEW -d \"$uri\"")
+        }
     }
 }

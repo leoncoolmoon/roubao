@@ -1,8 +1,13 @@
 package com.roubao.autopilot.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,6 +38,13 @@ import com.roubao.autopilot.data.ExecutionStep
 import com.roubao.autopilot.ui.theme.BaoziTheme
 import com.roubao.autopilot.ui.theme.Primary
 import com.roubao.autopilot.ui.theme.Secondary
+
+private fun copyToClipboard(context: Context, label: String, text: String) {
+    if (text.isBlank()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    Toast.makeText(context, "已复制$label", Toast.LENGTH_SHORT).show()
+}
 
 @Composable
 fun HistoryScreen(
@@ -293,6 +307,7 @@ fun HistoryDetailScreen(
     onBack: () -> Unit
 ) {
     val colors = BaoziTheme.colors
+    val context = LocalContext.current
     // Tab 状态：0 = 时间线，1 = 日志
     var selectedTab by remember { mutableStateOf(0) }
 
@@ -350,7 +365,12 @@ fun HistoryDetailScreen(
                 Text(
                     text = record.instruction,
                     fontSize = 15.sp,
-                    color = colors.textPrimary
+                    color = colors.textPrimary,
+                    modifier = Modifier.pointerInput(record.instruction) {
+                        detectTapGestures(onLongPress = {
+                            copyToClipboard(context, "任务指令", record.instruction)
+                        })
+                    }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
@@ -500,7 +520,13 @@ fun HistoryDetailScreen(
                                 text = log,
                                 fontSize = 12.sp,
                                 color = logColor,
-                                modifier = Modifier.padding(vertical = 2.dp)
+                                modifier = Modifier
+                                    .padding(vertical = 2.dp)
+                                    .pointerInput(log) {
+                                        detectTapGestures(onLongPress = {
+                                            copyToClipboard(context, "执行日志", record.logs.joinToString("\n"))
+                                        })
+                                    }
                             )
                         }
                     }
@@ -516,6 +542,7 @@ fun TimelineItem(
     isLast: Boolean
 ) {
     val colors = BaoziTheme.colors
+    val context = LocalContext.current
     Row(modifier = Modifier.fillMaxWidth()) {
         // 时间线指示器
         Column(
@@ -552,7 +579,19 @@ fun TimelineItem(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = if (isLast) 0.dp else 8.dp),
+                .padding(bottom = if (isLast) 0.dp else 8.dp)
+                .pointerInput(step) {
+                    detectTapGestures(onLongPress = {
+                        val content = buildString {
+                            appendLine("Step ${step.stepNumber}")
+                            appendLine("动作: ${step.action}")
+                            appendLine("描述: ${step.description}")
+                            if (step.thought.isNotBlank()) appendLine("思考: ${step.thought}")
+                            append("结果: ${step.outcome}")
+                        }
+                        copyToClipboard(context, "执行时间线", content)
+                    })
+                },
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
         ) {

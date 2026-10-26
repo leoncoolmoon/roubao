@@ -1,5 +1,8 @@
 package com.roubao.autopilot.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -20,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,6 +63,19 @@ val onboardingPages = listOf(
         title = "安全可靠",
         description = "遇到敏感页面（如支付、密码）会自动停止，\n保护你的账户安全",
         iconColor = Color(0xFF10B981) // Emerald
+    ),
+    OnboardingPage(
+        icon = Icons.Outlined.Build,
+        title = "三层权限控制",
+        description = "基础权限：无障碍功能权限\n高级权限：Shizuku\n最高权限：Root\n\n三者至少需要开启一个才能使用\n\n" +
+                "提示：Android 13 及以上的侧载安装应用，\n需先在应用详情页右上角选择\n「允许受限制的设置」，才能开启无障碍",
+        iconColor = Color(0xFFF59E0B) // Amber
+    ),
+    OnboardingPage(
+        icon = Icons.Outlined.Info,
+        title = "悬浮窗权限",
+        description = "肉包需要悬浮窗权限来执行操作，\n会在你第一次输入内容时提醒开启",
+        iconColor = Color(0xFFEF4444) // Red
     )
 )
 
@@ -68,6 +85,7 @@ fun OnboardingScreen(
     onComplete: () -> Unit
 ) {
     val colors = BaoziTheme.colors
+    val context = LocalContext.current
     val pagerState = rememberPagerState(pageCount = { onboardingPages.size })
     val coroutineScope = rememberCoroutineScope()
 
@@ -142,7 +160,7 @@ fun OnboardingScreen(
 
                 Spacer(modifier = Modifier.width(16.dp))
 
-                // 下一步/开始按钮
+                // 下一步/完成并跳转设置按钮
                 Button(
                     onClick = {
                         if (pagerState.currentPage < onboardingPages.size - 1) {
@@ -151,6 +169,7 @@ fun OnboardingScreen(
                             }
                         } else {
                             onComplete()
+                            openAccessibilitySettings(context)
                         }
                     },
                     modifier = Modifier
@@ -162,7 +181,7 @@ fun OnboardingScreen(
                     )
                 ) {
                     Text(
-                        text = if (pagerState.currentPage < onboardingPages.size - 1) "下一步" else "开始使用",
+                        text = if (pagerState.currentPage < onboardingPages.size - 1) "下一步" else "完成并跳转设置",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White
@@ -243,5 +262,25 @@ fun OnboardingPageContent(
             textAlign = TextAlign.Center,
             lineHeight = 26.sp
         )
+    }
+}
+
+/**
+ * 跳转到系统“无障碍”总页面（官方公开 API，所有设备通用）
+ */
+fun openAccessibilitySettings(context: Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (_: Exception) {
+        // 极少数定制系统找不到该页面时，退回到系统设置首页
+        try {
+            context.startActivity(
+                Intent(Settings.ACTION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) { }
     }
 }

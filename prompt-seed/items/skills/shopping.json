@@ -1,0 +1,68 @@
+{
+  "id": "shopping",
+  "kind": "skill",
+  "name": "shopping",
+  "display_name": "购物",
+  "description": "网上购物",
+  "prompt": "技能: shopping\n说明: 网上购物\n关联应用:\n- 淘宝: 打开淘宝 -> 搜索商品 -> 选择 -> 下单\n- 京东: 打开京东 -> 搜索商品 -> 选择 -> 下单\n- 拼多多: 打开拼多多 -> 搜索商品 -> 选择 -> 下单",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "item",
+      "type": "string",
+      "description": "商品",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "买",
+    "购物",
+    "下单",
+    "网购",
+    "买东西"
+  ],
+  "related_apps": [
+    {
+      "package": "com.taobao.taobao",
+      "name": "淘宝",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开淘宝",
+        "搜索商品",
+        "选择",
+        "下单"
+      ]
+    },
+    {
+      "package": "com.jingdong.app.mall",
+      "name": "京东",
+      "type": "gui_automation",
+      "priority": 90,
+      "steps": [
+        "打开京东",
+        "搜索商品",
+        "选择",
+        "下单"
+      ]
+    },
+    {
+      "package": "com.xunmeng.pinduoduo",
+      "name": "拼多多",
+      "type": "gui_automation",
+      "priority": 80,
+      "steps": [
+        "打开拼多多",
+        "搜索商品",
+        "选择",
+        "下单"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "购物"
+}

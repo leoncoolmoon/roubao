@@ -1,0 +1,6 @@
+{
+  "text": "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
+  "kind": "complaint",
+  "enabled": true,
+  "dependence": []
+}

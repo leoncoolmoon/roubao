@@ -1,0 +1,123 @@
+{
+  "note": "id -> {dependence, risk, executable}; generated from v13 device DB",
+  "ai_chat": {
+    "dependence": []
+  },
+  "book_hotel": {
+    "dependence": []
+  },
+  "book_movie": {
+    "dependence": []
+  },
+  "call_taxi": {
+    "dependence": []
+  },
+  "e_commerce": {
+    "dependence": []
+  },
+  "find_food": {
+    "dependence": []
+  },
+  "find_fun": {
+    "dependence": []
+  },
+  "generate_image": {
+    "dependence": []
+  },
+  "meituan_general": {
+    "dependence": []
+  },
+  "music_player": {
+    "dependence": []
+  },
+  "navigate": {
+    "dependence": []
+  },
+  "navigation": {
+    "dependence": []
+  },
+  "order_food": {
+    "dependence": []
+  },
+  "pay": {
+    "dependence": []
+  },
+  "play_music": {
+    "dependence": []
+  },
+  "post_social": {
+    "dependence": []
+  },
+  "post_xiaohongshu": {
+    "dependence": []
+  },
+  "read_book": {
+    "dependence": []
+  },
+  "ride_hailing": {
+    "dependence": []
+  },
+  "scan": {
+    "dependence": []
+  },
+  "send_message": {
+    "dependence": []
+  },
+  "set_alarm": {
+    "dependence": []
+  },
+  "shell_calc": {
+    "dependence": [
+      "adb"
+    ]
+  },
+  "shopping": {
+    "dependence": []
+  },
+  "social_media": {
+    "dependence": []
+  },
+  "take_photo": {
+    "dependence": []
+  },
+  "watch_video": {
+    "dependence": []
+  },
+  "clipboard": {
+    "dependence": []
+  },
+  "deep_link": {
+    "dependence": []
+  },
+  "http": {
+    "dependence": []
+  },
+  "open_app": {
+    "dependence": []
+  },
+  "press_key": {
+    "dependence": [
+      "adb"
+    ]
+  },
+  "screenshot": {
+    "dependence": []
+  },
+  "search_apps": {
+    "dependence": []
+  },
+  "shell": {
+    "dependence": [
+      "adb"
+    ]
+  },
+  "swipe": {
+    "dependence": []
+  },
+  "tap": {
+    "dependence": []
+  },
+  "type": {
+    "dependence": []
+  }
+}

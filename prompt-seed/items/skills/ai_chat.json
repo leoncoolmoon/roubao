@@ -1,0 +1,53 @@
+{
+  "id": "ai_chat",
+  "kind": "skill",
+  "name": "ai_chat",
+  "display_name": "AI对话",
+  "description": "与 AI 助手对话",
+  "prompt": "技能: ai_chat\n说明: 与 AI 助手对话\n关联应用:\n- 豆包\n- Kimi\n- 通义千问",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "message",
+      "type": "string",
+      "description": "问题内容",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "问AI",
+    "AI对话",
+    "AI助手",
+    "问一下",
+    "帮我查"
+  ],
+  "related_apps": [
+    {
+      "package": "com.lark.bot",
+      "name": "豆包",
+      "type": "delegation",
+      "deep_link": "doubao://chat?message={message}",
+      "priority": 100
+    },
+    {
+      "package": "com.moonshot.kimichat",
+      "name": "Kimi",
+      "type": "delegation",
+      "deep_link": "kimi://chat",
+      "priority": 90
+    },
+    {
+      "package": "com.alibaba.tongyi",
+      "name": "通义千问",
+      "type": "delegation",
+      "deep_link": "tongyi://chat",
+      "priority": 80
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "AI"
+}

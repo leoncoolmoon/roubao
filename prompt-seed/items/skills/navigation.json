@@ -1,0 +1,18 @@
+{
+  "id": "navigation",
+  "kind": "skill",
+  "name": "navigation",
+  "display_name": "地图导航",
+  "description": "在高德/百度地图中搜索路线并开始导航",
+  "prompt": "技能: navigation\n说明: 导航。open_app 高德/百度地图；终点用 type；开始导航用 click(text)。",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

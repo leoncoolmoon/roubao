@@ -1,0 +1,6 @@
+{
+  "text": "光标与选区使用 set_selection，不要长按拖拽。",
+  "kind": "complaint",
+  "enabled": true,
+  "dependence": []
+}

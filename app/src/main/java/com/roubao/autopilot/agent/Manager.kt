@@ -7,12 +7,23 @@ import com.roubao.autopilot.data.PromptRepository
  */
 class Manager {
 
+    private val initialPhaseGuidance = """
+        ### Planning Phase: Initial ###
+        Make a high-level plan from the request and current screen. Do not mark "Finished" yet.
+    """.trimIndent()
+
+    private val updatePhaseGuidance = """
+        ### Planning Phase: Update ###
+        Assess progress. Mark "Finished" only when the request is fully complete, the final state is visible, the last outcome was A, and there are no consecutive failures. Otherwise update the plan or change strategy.
+        Stop for payment, password, or biometric pages; do not stop for price displays or cart pages.
+    """.trimIndent()
+
     /**
      * 生成规划 Prompt
      */
     fun getPrompt(infoPool: InfoPool): String {
         val template = try {
-            PromptRepository.getInstance().getAgentPrompt("manager")?.prompt
+            PromptRepository.getInstance().getAgentPrompt("manager", infoPool.packId)?.prompt
                 ?: PromptRepository.DEFAULT_MANAGER_PROMPT
         } catch (e: Exception) {
             PromptRepository.DEFAULT_MANAGER_PROMPT
@@ -20,7 +31,7 @@ class Manager {
 
         val formatted = formatManagerPrompt(infoPool, template)
         val feedback = try {
-            PromptRepository.getInstance().getFeedbackPrompt()
+            PromptRepository.getInstance().getFeedbackPrompt(infoPool.effectiveLevel())
         } catch (e: Exception) {
             ""
         }
@@ -84,8 +95,11 @@ class Manager {
             "5. ${infoPool.additionalKnowledge}\n"
         } else ""
 
-        return template
+        val phaseGuidance = if (infoPool.plan.isEmpty()) initialPhaseGuidance else updatePhaseGuidance
+
+        var result = template
             .replace("{{instruction}}", infoPool.instruction)
+            .replace("{{phaseGuidance}}", phaseGuidance)
             .replace("{{completedPlan}}", completedPlanStr)
             .replace("{{planSection}}", planSectionStr)
             .replace("{{lastActionSection}}", lastActionStr)
@@ -95,6 +109,54 @@ class Manager {
             .replace("{{errorDetails}}", errorDetailsStr)
             .replace("{{skillContext}}", skillContextStr)
             .replace("{{additionalKnowledge}}", additionalKnowledgeStr)
+
+        if (infoPool.userReply.isNotBlank()) {
+            result = "### User Reply ###\n${infoPool.userReply}\n\n$result"
+        }
+
+        if (infoPool.accessibilityTree.isNotBlank()) {
+            result = "### Current UI Tree ###\n${infoPool.accessibilityTree.take(12000)}\n\n$result"
+        }
+
+        if (infoPool.plan.isEmpty() && infoPool.availableSkills.isNotBlank()) {
+            val selectionBlock = """
+
+                ### Selectable Skills ###
+                ${infoPool.availableSkills}
+
+                ### Skill Selection (MANDATORY) ###
+                Choose at most one skill from the list above.
+                If one clearly matches the request, you MUST output its exact id.
+                If none matches, output "None".
+                Put this section before every other output section:
+                ### Selected Skill ###
+                <skill_id or None>
+            """.trimIndent()
+
+            result = "$selectionBlock\n\n$result"
+        }
+
+        result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
+            "Use `ask_user` when required details are missing. Use `answer` only for the final response after the task is complete. This rule overrides any other wording that says to use `answer` for questions.\n"
+
+        val installedApps = infoPool.installedApps.ifBlank { "Unknown" }
+        val installAllowed = try {
+            PromptRepository.getInstance().isToolSkillEnabled("install_app")
+        } catch (e: Exception) {
+            false
+        }
+        result += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
+            "Installed apps: $installedApps\n" +
+            "Only plan or name apps from this list. A skill's related apps are suggestions, not proof that they are installed. " +
+            "If none of a skill's preferred apps are installed, do not plan/open those apps; use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one. " +
+            "Never call open_app for an app that is not in Installed apps.\n" +
+            "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
+            "If the user explicitly names an installed app, call open_app with that exact name first; do not ask the user to confirm the app name unless open_app fails.\n"
+
+        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
+        if (policy.isNotBlank()) result += policy
+
+        return result
     }
 
     /**
@@ -120,15 +182,28 @@ class Manager {
 
         val plan = response
             .substringAfter("### Plan")
+            .substringBefore("### Selected Skill")
             .replace("###", "")
             .trim()
 
-        return PlanResult(thought, completedSubgoal, plan)
+        val selectedSkill = response
+            .substringAfter("### Selected Skill ###", "")
+            .substringBefore("###")
+            .replace("`", "")
+            .trim()
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.substringBefore(" ")
+            ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
+
+        return PlanResult(thought, completedSubgoal, plan, selectedSkill)
     }
 }
 
 data class PlanResult(
     val thought: String,
     val completedSubgoal: String,
-    val plan: String
+    val plan: String,
+    val selectedSkillId: String? = null
 )

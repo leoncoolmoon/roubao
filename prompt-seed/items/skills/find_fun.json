@@ -1,0 +1,60 @@
+{
+  "id": "find_fun",
+  "kind": "skill",
+  "name": "find_fun",
+  "display_name": "找好玩的",
+  "description": "搜索附近好玩的地方、娱乐推荐",
+  "prompt": "技能: find_fun\n说明: 搜索附近好玩的地方、娱乐推荐\n关联应用:\n- 小美\n- 大众点评: 打开大众点评 -> 搜索或浏览娱乐 -> 查看评价",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "keyword",
+      "type": "string",
+      "description": "想玩的类型",
+      "required": false,
+      "examples": [
+        "密室逃脱",
+        "剧本杀",
+        "电影院",
+        "游乐园"
+      ]
+    }
+  ],
+  "keywords": [
+    "附近有什么好玩的",
+    "好玩的",
+    "玩什么",
+    "周末去哪",
+    "附近景点",
+    "有啥好玩的",
+    "去哪玩",
+    "找地方玩"
+  ],
+  "related_apps": [
+    {
+      "package": "com.meituan.android.beam",
+      "name": "小美",
+      "type": "delegation",
+      "deep_link": "beam://www.meituan.com/home",
+      "priority": 100,
+      "description": "美团 AI 助手，智能推荐附近娱乐"
+    },
+    {
+      "package": "com.dianping.v1",
+      "name": "大众点评",
+      "type": "gui_automation",
+      "priority": 70,
+      "steps": [
+        "打开大众点评",
+        "搜索或浏览娱乐",
+        "查看评价"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "生活"
+}

@@ -1,0 +1,53 @@
+{
+  "id": "read_book",
+  "kind": "skill",
+  "name": "read_book",
+  "display_name": "看书",
+  "description": "阅读电子书",
+  "prompt": "技能: read_book\n说明: 阅读电子书\n关联应用:\n- 微信读书: 打开微信读书 -> 搜索或打开书架 -> 阅读\n- 番茄小说: 打开番茄小说 -> 搜索或打开书架 -> 阅读",
+  "usage": "",
+  "dependence": [],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [
+    {
+      "name": "book",
+      "type": "string",
+      "description": "书名",
+      "required": false
+    }
+  ],
+  "keywords": [
+    "看书",
+    "读书",
+    "阅读",
+    "看小说"
+  ],
+  "related_apps": [
+    {
+      "package": "com.tencent.weread",
+      "name": "微信读书",
+      "type": "gui_automation",
+      "priority": 100,
+      "steps": [
+        "打开微信读书",
+        "搜索或打开书架",
+        "阅读"
+      ]
+    },
+    {
+      "package": "com.dragon.read",
+      "name": "番茄小说",
+      "type": "gui_automation",
+      "priority": 80,
+      "steps": [
+        "打开番茄小说",
+        "搜索或打开书架",
+        "阅读"
+      ]
+    }
+  ],
+  "prompt_hint": "",
+  "domain": "阅读"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "shell_calc",
+  "kind": "skill",
+  "name": "shell_calc",
+  "display_name": "Shell 计算",
+  "description": "算术计算必须用 shell 执行 expr，不允许模型自己心算",
+  "prompt": "技能: shell_calc\n说明: 算术计算必须用 shell 执行 expr，不允许模型自己心算。\n步骤:\n1. 将用户表达式转成 shell expr 命令。\n2. 调用 shell 动作执行。\n3. 用 shell 输出作为最终 answer。",
+  "usage": "",
+  "dependence": [
+    "adb"
+  ],
+  "risk_level": "low",
+  "requires_confirmation": 0,
+  "executable": 0,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": ""
+}

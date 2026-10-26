@@ -1,0 +1,8 @@
+{
+  "text": "文件与系统操作优先使用 shell，不要打开文件管理器。",
+  "kind": "complaint",
+  "enabled": false,
+  "dependence": [
+    "adb"
+  ]
+}
