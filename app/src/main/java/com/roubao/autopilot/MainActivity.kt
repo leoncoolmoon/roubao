@@ -201,9 +201,10 @@ class MainActivity : ComponentActivity() {
             settings.currentProviderId,
             settings.model,
             settings.baseUrl,
-            settings.apiKey,
-            agentState?.isPaused
+            settings.apiKey
         ) {
+            // 只在“暂停期间用户真的改了模型/服务商”时替换客户端。
+            // 进入暂停本身不应该触发“已切换模型客户端”。
             if (agentState?.isPaused == true) {
                 val key = "${settings.currentProviderId}|${settings.baseUrl}|${settings.apiKey}|${settings.model}"
                 if (pausedModelApplied != key && !settings.currentProvider.isGUIAgent && settings.currentProviderId != "mai_ui") {
@@ -215,7 +216,11 @@ class MainActivity : ComponentActivity() {
                     mobileAgent.value?.updateVlmClient(client)
                     pausedModelApplied = key
                 }
-            } else {
+            }
+        }
+
+        LaunchedEffect(agentState?.isPaused) {
+            if (agentState?.isPaused != true) {
                 pausedModelApplied = null
             }
         }

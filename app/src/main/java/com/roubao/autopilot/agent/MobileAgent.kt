@@ -482,6 +482,7 @@ class MobileAgent(
                 }
 
                 // 7. 执行动作
+                awaitIfPaused()
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
                 val toolResult = executeAction(action, infoPool)
@@ -537,6 +538,7 @@ class MobileAgent(
                     log("Reflector 已停用，跳过反思（按 A 处理）")
                     ReflectorResult("A", "")
                 } else {
+                    awaitIfPaused()
                     log("Reflector 反思中...")
                     val reflectPrompt = reflector.getPrompt(infoPool)
                     val reflectResponse = modelClient.predict(reflectPrompt, listOfNotNull(screenshot, afterScreenshot))
