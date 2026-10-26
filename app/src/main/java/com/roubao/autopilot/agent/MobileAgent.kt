@@ -184,7 +184,12 @@ class MobileAgent(
         log("屏幕尺寸: ${width}x${height}")
 
         // 获取已安装应用列表（只取非系统应用，限制数量避免 prompt 过长）
-        val apps = appScanner.getApps()
+        // 每次任务开始刷新一次，避免中文应用名/新装应用被旧缓存漏掉。
+        val apps = try {
+            appScanner.refreshApps()
+        } catch (e: Exception) {
+            appScanner.getApps()
+        }
             .filter { !it.isSystem }
             .take(50)
             .map { it.appName }

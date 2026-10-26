@@ -86,7 +86,8 @@ class Executor {
             "Only open or operate apps from Installed apps: $installedApps\n" +
             "If the current skill's preferred app is not installed, do not open it. " +
             "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n" +
-            "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n"
+            "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
+            "If the user explicitly names an installed app, call open_app with that exact name first; only ask if open_app fails.\n"
 
         if (infoPool.lastToolResult.isNotBlank()) {
             prompt += "\n\n### Last Tool Result ###\n${infoPool.lastToolResult}\n"
