@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -67,6 +68,7 @@ class MainActivity : ComponentActivity() {
 
     // 当前执行的协程 Job（用于停止任务）
     private var currentExecutionJob: kotlinx.coroutines.Job? = null
+    private var activeWakeLock: PowerManager.WakeLock? = null
 
     // 执行记录列表
     private val executionRecords = mutableStateOf<List<ExecutionRecord>>(emptyList())
@@ -415,11 +417,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun acquireTaskWakeLock(): PowerManager.WakeLock? {
+        return try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "roubao:task")
+            lock.setReferenceCounted(false)
+            lock.acquire(30 * 60 * 1000L)
+            activeWakeLock = lock
+            Log.d(TAG, "task wake lock acquired")
+            lock
+        } catch (e: Exception) {
+            Log.e(TAG, "acquire wake lock failed", e)
+            null
+        }
+    }
+
+    private fun releaseTaskWakeLock(lock: PowerManager.WakeLock?) {
+        try {
+            if (lock?.isHeld == true) lock.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "release wake lock failed", e)
+        }
+        if (activeWakeLock === lock) activeWakeLock = null
+    }
+
     override fun onDestroy() {
         // 用户退出/划掉 App：取消任务并收起悬浮窗，避免残留“执行中”。
         if (isFinishing) {
             currentExecutionJob?.cancel()
             mobileAgent.value?.stop()
+            releaseTaskWakeLock(activeWakeLock)
             OverlayService.idle(this)
             isExecuting.value = false
         }
@@ -614,6 +641,9 @@ class MainActivity : ComponentActivity() {
         // 取消之前的任务（如果有）
         currentExecutionJob?.cancel()
 
+        // 执行期间持有 partial wake lock，避免灭屏后 CPU/网络被挂起。
+        val taskWakeLock = acquireTaskWakeLock()
+
         currentExecutionJob = lifecycleScope.launch {
             // 保存初始记录
             executionRepository.saveRecord(record)
@@ -693,6 +723,8 @@ class MainActivity : ComponentActivity() {
                 // 延迟3秒后清空日志，恢复默认状态
                 kotlinx.coroutines.delay(3000)
                 mobileAgent.value?.clearLogs()
+            } finally {
+                releaseTaskWakeLock(taskWakeLock)
             }
         }
     }

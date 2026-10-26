@@ -796,7 +796,7 @@ class MobileAgent(
                 }
             }
             "system_button" -> {
-                when (action.text?.lowercase()) {
+                when ((action.text)?.lowercase()) {
                     "back" -> {
                         log("按返回键")
                         controller.back()
@@ -1049,7 +1049,7 @@ class MobileAgent(
                 controller.openApp(appName)
             }
             "system_button" -> {
-                when (action.button?.lowercase()) {
+                when ((action.button ?: action.text)?.lowercase()) {
                     "back" -> {
                         log("按返回键")
                         controller.back()
@@ -1290,8 +1290,8 @@ class MobileAgent(
                 }
             }
             "system_button" -> {
-                // 模型可能返回 HOME/BACK/ENTER（大写）；统一按小写处理。
-                when (action.button?.lowercase()) {
+                // 模型可能返回 HOME/BACK/ENTER（大写）；button 或 text 都兼容。
+                when ((action.button ?: action.text)?.lowercase()) {
                     "back" -> {
                         if (accessibilityModeEnabled && accessibilityService?.pressBack() == true) {
                             log("🤖 无障碍 BACK")
@@ -1547,3 +1547,5 @@ data class AgentResult(
     val success: Boolean,
     val message: String
 )
+
+
