@@ -605,8 +605,20 @@ class DeviceController(private val context: Context? = null) {
             }
         }
 
-        // 优先用 PackageManager 的 launch Intent：普通 App 即可启动，不需要 Shizuku。
-        // monkey 只作为没有 launcher intent 时的 fallback。
+        // 优先沿用旧版直接启动方式（monkey），只有 Shizuku 不可用时才用 Intent 兜底。
+        // 这样在 adb/root 环境不会触发系统的“是否允许打开”确认。
+        if (isAvailable()) {
+            val result = exec("monkey -p $finalPackage -c android.intent.category.LAUNCHER 1 2>/dev/null")
+            println("[DeviceController] openApp via monkey: $appNameOrPackage -> $finalPackage, result: $result")
+            if (!result.contains("No activities", ignoreCase = true) &&
+                !result.contains("Error", ignoreCase = true)
+            ) {
+                return
+            }
+            println("[DeviceController] monkey failed, fallback to Intent")
+        }
+
+        // 兜底：普通 launch Intent，user 级即可启动。
         val launchContext = context ?: App.getInstance()
         try {
             val launchIntent = launchContext.packageManager
@@ -614,17 +626,13 @@ class DeviceController(private val context: Context? = null) {
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 launchContext.startActivity(launchIntent)
-                println("[DeviceController] openApp via Intent: $appNameOrPackage -> $finalPackage")
+                println("[DeviceController] openApp via Intent fallback: $appNameOrPackage -> $finalPackage")
                 return
             }
-            println("[DeviceController] no launch intent for $finalPackage, fallback to monkey")
+            println("[DeviceController] no launch intent for $finalPackage")
         } catch (e: Exception) {
-            println("[DeviceController] openApp Intent failed: ${e.message}, fallback to monkey")
+            println("[DeviceController] openApp Intent fallback failed: ${e.message}")
         }
-
-        // fallback：需要 Shizuku/ADB
-        val result = exec("monkey -p $finalPackage -c android.intent.category.LAUNCHER 1 2>/dev/null")
-        println("[DeviceController] openApp fallback: $appNameOrPackage -> $finalPackage, result: $result")
     }
 
     /**

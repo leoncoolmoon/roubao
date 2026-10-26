@@ -339,7 +339,6 @@ class MobileAgent(
                         delay(1500)
                         OverlayService.idle(context)
                         updateState { copy(isRunning = false, isCompleted = true) }
-                        bringAppToFront()
                         return AgentResult(success = true, message = "任务完成")
                     }
                 }
@@ -447,7 +446,6 @@ class MobileAgent(
                     delay(1500)
                     OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = true, answer = answerText) }
-                    bringAppToFront()
                     return AgentResult(success = true, message = "回答: $answerText")
                 }
 
@@ -459,7 +457,7 @@ class MobileAgent(
                     delay(1500)
                     OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = success) }
-                    bringAppToFront()
+                    if (!success) bringAppToFront()
                     return AgentResult(success = success, message = if (success) "任务完成" else "任务失败")
                 }
 
@@ -704,7 +702,6 @@ class MobileAgent(
                     delay(1500)
                     OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = true) }
-                    bringAppToFront()
                     return AgentResult(success = true, message = "任务完成")
                 }
 
@@ -907,7 +904,7 @@ class MobileAgent(
                     delay(1500)
                     OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = success) }
-                    bringAppToFront()
+                    if (!success) bringAppToFront()
                     return AgentResult(success = success, message = if (success) "任务完成" else "任务失败")
                 }
 
@@ -927,7 +924,6 @@ class MobileAgent(
                     delay(3000)
                     OverlayService.idle(context)
                     updateState { copy(isRunning = false, isCompleted = true) }
-                    bringAppToFront()
                     return AgentResult(success = true, message = "回答: ${action.text}")
                 }
 
@@ -1225,8 +1221,26 @@ class MobileAgent(
             "key" -> {
                 val key = action.key
                 if (!key.isNullOrBlank()) {
-                    log("按键: $key")
-                    controller.keyEvent(key)
+                    when (key.lowercase()) {
+                        "back" -> {
+                            if (accessibilityModeEnabled && accessibilityService?.pressBack() == true) {
+                                log("🤖 无障碍 BACK (key)")
+                            } else {
+                                controller.back()
+                            }
+                        }
+                        "home" -> {
+                            if (accessibilityModeEnabled && accessibilityService?.pressHome() == true) {
+                                log("🤖 无障碍 HOME (key)")
+                            } else {
+                                controller.home()
+                            }
+                        }
+                        else -> {
+                            log("按键: $key")
+                            controller.keyEvent(key)
+                        }
+                    }
                 }
             }
             "set_selection" -> {

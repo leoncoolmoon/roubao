@@ -28,6 +28,10 @@ object ActionGate {
     )
 
     fun check(action: Action, level: AccessLevel, packId: String): String? {
+        // 模型有时把 system_button(BACK/HOME) 写成 key；这两个键无障碍可以直接处理。
+        if (action.type == "key" && action.key?.lowercase() in setOf("back", "home")) {
+            return null
+        }
         val itemId = actionToItem[action.type] ?: return null
         val repo = try {
             PromptRepository.getInstance()
