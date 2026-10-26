@@ -80,6 +80,9 @@ class MainActivity : ComponentActivity() {
     private val scheduledPrompt = mutableStateOf<String?>(null)
     private val scheduledAutoRun = mutableStateOf(false)
 
+    // 悬浮窗输入的新任务：不依赖当前页面/Compose 的 HomeScreen，直接交给 runAgent
+    private val pendingOverlayCommand = mutableStateOf<String?>(null)
+
     // 当前执行的记录 ID（用于停止后跳转）
     private val currentRecordId = mutableStateOf<String?>(null)
 
@@ -199,6 +202,21 @@ class MainActivity : ComponentActivity() {
 
         val settings by settingsManager.settings.collectAsState()
         val colors = BaoziTheme.colors
+
+        LaunchedEffect(pendingOverlayCommand.value) {
+            val command = pendingOverlayCommand.value ?: return@LaunchedEffect
+            pendingOverlayCommand.value = null
+            currentScreen = Screen.Home
+            runAgent(
+                instruction = command,
+                apiKey = settings.apiKey,
+                baseUrl = settings.baseUrl,
+                model = settings.model,
+                maxSteps = settings.maxSteps,
+                isGUIAgent = settings.currentProvider.isGUIAgent,
+                providerId = settings.currentProviderId
+            )
+        }
         val agent = mobileAgent.value
         val agentState by agent?.state?.collectAsState() ?: remember { mutableStateOf(null) }
         var pausedModelApplied by remember { mutableStateOf<String?>(null) }
@@ -758,10 +776,11 @@ class MainActivity : ComponentActivity() {
         val command = intent?.getStringExtra("overlay_prompt") ?: return
         if (command.isBlank()) return
         intent.removeExtra("overlay_prompt")
-        scheduledPrompt.value = command
-        scheduledAutoRun.value = true
+        // 不经过 HomeScreen 的 initialAutoRun，避免当前不在首页时丢任务。
+        pendingOverlayCommand.value = command
         if (intent.getBooleanExtra("hide_after_start", false)) {
-            window.decorView.postDelayed({ moveTaskToBack(true) }, 1200)
+            // 任务记录已经创建后再退到后台；给 runAgent 留出启动时间。
+            window.decorView.postDelayed({ moveTaskToBack(true) }, 3000)
         }
     }
 
