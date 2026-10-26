@@ -1089,7 +1089,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 20) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 21) {
 
         private val appContext = context.applicationContext
 
@@ -1118,7 +1118,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 20) {
+                if (version < 21) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1332,6 +1332,31 @@ class PromptRepository private constructor(context: Context) {
                     null,
                     cv,
                     SQLiteDatabase.CONFLICT_IGNORE
+                )
+            }
+            if (oldVersion < 21) {
+                // 恢复原来的 music skill；不在 skill 层做去重，交给 agent 做运行时应用过滤。
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 1)
+                        put("source", "custom")
+                        put("description", "在网易云音乐/QQ音乐中搜索并播放指定歌曲")
+                        put("prompt", LEGACY_MUSIC_PLAYER_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("music_player")
+                )
+                db.update(
+                    "tool_skill_prompts",
+                    ContentValues().apply {
+                        put("enabled", 0)
+                        put("source", "builtin")
+                        put("description", "播放音乐")
+                        put("prompt", LEGACY_PLAY_MUSIC_PROMPT)
+                    },
+                    "id = ?",
+                    arrayOf("play_music")
                 )
             }
         }
@@ -1595,6 +1620,17 @@ One short sentence."""
    用 ask_user 发送: "请输入数字选择要安装的应用，回复 0 取消"
 2. 用户选择数字后，open_app 打开设备自带应用商店，搜索对应应用名。
 3. 进入详情页后让用户手动确认安装；不要代替用户点击安装或支付。"""
+
+        private val LEGACY_MUSIC_PLAYER_PROMPT = """技能: music_player
+说明: 音乐。open_app 网易云/QQ音乐；搜索用 type；播放用 click(text)。"""
+
+        private val LEGACY_PLAY_MUSIC_PROMPT = """技能: play_music
+说明: 播放音乐
+关联应用:
+- 网易云音乐: 打开网易云音乐 -> 搜索歌曲 -> 播放
+- QQ音乐: 打开QQ音乐 -> 搜索歌曲 -> 播放
+- 酷狗音乐: 打开酷狗音乐 -> 搜索歌曲 -> 播放
+- Spotify: 打开Spotify -> 搜索歌曲 -> 播放"""
 
         private val ADVANCED_OVERLAY = """### Advanced Mode (Root) ###
 Root-level tools may be available in this pack.

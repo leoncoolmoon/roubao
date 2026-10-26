@@ -7,6 +7,7 @@ import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.tools.ToolManager
 import com.roubao.autopilot.vlm.VLMClient
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class EnabledSkillInfo(
@@ -62,10 +63,16 @@ class SkillManager private constructor(
                     com.roubao.autopilot.agent.AccessLevel.satisfies(level, it.dependenceJson)
             }
             .map {
+                val (installed, missing) = installedRelatedApps(it)
+                val availability = when {
+                    installed.isNotEmpty() -> " [installed related apps: ${installed.joinToString(", ")}]"
+                    missing.isNotEmpty() -> " [none of its related apps are installed; ask the user with numbered choices]"
+                    else -> ""
+                }
                 EnabledSkillInfo(
                     id = it.id,
                     name = it.displayName,
-                    description = it.description,
+                    description = it.description + availability,
                     prompt = it.prompt
                 )
             }
@@ -75,15 +82,64 @@ class SkillManager private constructor(
     }
 
     /** 按 id 取运行时 Skill 的完整上下文。 */
-    fun getSkillPrompt(id: String, level: com.roubao.autopilot.agent.AccessLevel): String? = try {
-        PromptRepository.getInstance().getToolSkillPrompt(id)
-            ?.takeIf {
-                it.category == "skill" && it.enabled &&
-                    com.roubao.autopilot.agent.AccessLevel.satisfies(level, it.dependenceJson)
+    fun getSkillPrompt(id: String, level: com.roubao.autopilot.agent.AccessLevel): String? {
+        return try {
+            val item = PromptRepository.getInstance().getToolSkillPrompt(id)
+                ?.takeIf {
+                    it.category == "skill" && it.enabled &&
+                        com.roubao.autopilot.agent.AccessLevel.satisfies(level, it.dependenceJson)
+                } ?: return null
+            val (installed, missing) = installedRelatedApps(item)
+            if (installed.isEmpty() && missing.isEmpty()) {
+                item.prompt
+            } else {
+                buildString {
+                    append(item.prompt)
+                    append("\n\n### Runtime Installed Apps (AUTHORITATIVE) ###\n")
+                    if (installed.isNotEmpty()) {
+                        append("Installed: ").append(installed.joinToString(", ")).append('\n')
+                        append("Only operate these installed apps. Ignore any other app names in this skill.\n")
+                    } else {
+                        append("None of this skill's related apps are installed.\n")
+                    }
+                    if (missing.isNotEmpty()) {
+                        append("NOT installed (ignore): ").append(missing.joinToString(", ")).append('\n')
+                    }
+                    append("If no related app is installed, ask the user with numbered choices; only run the install flow when install_app is enabled.\n")
+                }
             }
-            ?.prompt
-    } catch (e: Exception) {
-        null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 返回 (已安装, 未安装) 的 skill related app 名称。 */
+    private fun installedRelatedApps(item: com.roubao.autopilot.data.ToolSkillPromptEntity): Pair<List<String>, List<String>> {
+        val related = try {
+            JSONArray(item.relatedAppsJson.ifBlank { "[]" })
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        if (related.length() == 0) return emptyList<String>() to emptyList()
+
+        val installedPackages = try {
+            appScanner.getApps().associateBy { it.packageName.lowercase() }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        val installed = mutableListOf<String>()
+        val missing = mutableListOf<String>()
+        for (i in 0 until related.length()) {
+            val obj = related.optJSONObject(i) ?: continue
+            val pkg = obj.optString("package").lowercase()
+            val name = obj.optString("name", pkg)
+            if (pkg.isNotEmpty() && installedPackages.containsKey(pkg)) {
+                installed.add(name)
+            } else if (name.isNotBlank()) {
+                missing.add(name)
+            }
+        }
+        return installed to missing
     }
 
     /**
