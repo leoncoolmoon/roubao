@@ -132,8 +132,9 @@ class MainActivity : ComponentActivity() {
         settingsManager = App.getInstance().settingsManager
         executionRepository = ExecutionRepository(this)
 
-        // 加载执行记录
+        // 加载执行记录；上次进程被杀留下的 RUNNING 记录先收敛为 STOPPED
         lifecycleScope.launch {
+            executionRepository.markStaleRunningAsStopped()
             executionRecords.value = executionRepository.getAllRecords()
         }
 
@@ -415,6 +416,13 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        // 用户退出/划掉 App：取消任务并收起悬浮窗，避免残留“执行中”。
+        if (isFinishing) {
+            currentExecutionJob?.cancel()
+            mobileAgent.value?.stop()
+            OverlayService.idle(this)
+            isExecuting.value = false
+        }
         super.onDestroy()
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
