@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/images/logo.png" alt="肉包 Roubao - AI Android Automation" width="120" height="120">
 </p>
 
@@ -73,7 +73,7 @@
 | `su-user` provider | ❌ 未实现 | su-only 设备的 adb 级 shell 暂不可用 |
 | MediaProjection | ❌ 未实现 | API <30 仍以 tree-only / shell 截图为主 |
 | 宏脚本 | ❌ 未实现 | 当前没有录制/回放 |
-| `SkillManager.execute` 旧路径 | ⚠️ 未接入主链 | Skill 目前主要作为 Agent 上下文，不是脚本执行器 |
+| `SkillManager.execute` / DB Skill 快速路径 | ✅ 已接入主链 | Manager 选中 Skill 后、Executor 决策前：Delegation → DeepLink；GUI → ExecutionPlan；仅首次尝试 |
 
 ---
 
@@ -425,7 +425,7 @@ apksigner sign --ks custom.keystore --ks-key-alias roubao_key \
 - `root_shell` 需要真机 root / Shizuku Root 验证；非 root 设备上不会出现。
 - MediaProjection 未接入；API <30 以 tree-only / shell 截图为主。
 - 宏脚本系统未实现。
-- `SkillManager.execute` 旧路径未接入主链；Skill 目前主要是 Agent 上下文，不是脚本执行器。
+- `SkillManager.execute` 已接入主链：从 DB 的 `related_apps_json` 还原 Skill，Delegation 走 DeepLink，GUI 返回 ExecutionPlan；如果自定义 Skill 没有 `related_apps` / `type` / `deep_link` / `steps`，会回退到普通 Agent 循环。
 - `install_app` 是 prompt 规则，没有独立安装执行器。
 - 应用清单按需注入；安装/卸载后由缓存 TTL 和 `search_apps` 兜底，没有包变更广播即时刷新。
 

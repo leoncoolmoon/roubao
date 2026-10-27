@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/images/logo.png" alt="Roubao - AI Android Automation Assistant" width="120" height="120">
 </p>
 
@@ -73,7 +73,7 @@ Each level only exposes the Tools and Skills that can actually run, so the model
 | `su-user` provider | ❌ Not implemented | su-only devices still lack adb-level shell |
 | MediaProjection | ❌ Not implemented | API <30 uses tree-only / shell screenshots |
 | Macro scripts | ❌ Not implemented | No record/replay yet |
-| `SkillManager.execute` legacy path | ⚠️ Not wired into main chain | Skills are prompt context, not script runners |
+| `SkillManager.execute` / DB skill fast path | ✅ Wired into main chain | After Manager selects a skill, before Executor: Delegation → DeepLink; GUI → ExecutionPlan; one attempt per task |
 
 ---
 
@@ -425,7 +425,7 @@ Environment: JDK 17, Android SDK 34, Gradle 8.5.
 - `root_shell` needs validation on a real root / Shizuku Root device; it is not exposed on non-root devices.
 - MediaProjection is not implemented; API <30 relies on tree-only / shell screenshots.
 - Macro scripts are not implemented.
-- `SkillManager.execute` legacy path is not wired into the main chain; Skills are currently prompt context, not script runners.
+- `SkillManager.execute` is wired into the main chain: DB `related_apps_json` reconstructs the Skill; Delegation uses a DeepLink, GUI returns an ExecutionPlan. Custom skills without `related_apps` / `type` / `deep_link` / `steps` fall back to the normal Agent loop.
 - `install_app` is a prompt rule, not a dedicated installer.
 - App inventory is on-demand; there is no package-change broadcast, so the cache TTL and `search_apps` handle installs/uninstalls.
 
