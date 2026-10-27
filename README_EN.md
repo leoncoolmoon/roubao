@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/images/logo.png" alt="Roubao - AI Android Automation Assistant" width="120" height="120">
 </p>
 
@@ -50,7 +50,7 @@ No privilege / Accessibility (user) < Shizuku ADB (adb) < Root (root)
 
 Each level only exposes the Tools and Skills that can actually run, so the model does not waste steps on paths the system will reject.
 
-> Current version: **1.4.7 (versionCode 12)**  
+> Current version: **1.4.7 (versionCode 13)**  
 > Recent focus: permission model cleanup, Prompt DB v23, accessibility enhancements, root shell, task pause/reminders, on-demand app inventory.
 
 ---
@@ -468,5 +468,6 @@ MIT License. See [LICENSE](LICENSE).
 <p align="center">
   Made with ❤️ by Roubao Team
 </p>
+
 
 

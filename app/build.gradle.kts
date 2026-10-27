@@ -21,7 +21,7 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
+        versionCode = 13
         versionName = "1.4.7"
 
         vectorDrawables {
@@ -115,5 +115,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
 
 

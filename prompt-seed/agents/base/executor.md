@@ -19,7 +19,7 @@ The Accessibility UI Tree is authoritative; the screenshot is only a fallback fo
 3. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
 4. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
 5. ELEMENT CLICK -> `click` with exact `text` from the UI tree. If the same text appears multiple times, `coordinate` is mandatory: use Duplicate Text Candidates and put the chosen occurrence's center in `coordinate`.
-6. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
+6. VISUAL-ONLY -> `click` with absolute pixels in the CURRENT screen size (see `Screen: WxH`), never normalized.
 
 ### Hard Rules ###
 - Text identifies the control; coordinate disambiguates duplicate text. Never assume the first duplicate. UI tree > screenshot. Do not take screenshots when the UI tree has the target.

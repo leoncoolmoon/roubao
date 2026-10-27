@@ -167,6 +167,8 @@ class MobileAgent(
         val (width, height) = controller.getScreenSize()
         infoPool.screenWidth = width
         infoPool.screenHeight = height
+        infoPool.imageWidth = width
+        infoPool.imageHeight = height
         log("屏幕尺寸: ${width}x${height}")
 
         // 常驻 App 清单：系统默认应用 + 当前等级可用的 Skill 关联应用。
@@ -225,6 +227,14 @@ class MobileAgent(
                     val screenshotResult = controller.screenshotWithFallback()
                     OverlayService.setVisible(true)
                     screenshot = screenshotResult.bitmap
+                    infoPool.imageWidth = screenshot.width
+                    infoPool.imageHeight = screenshot.height
+                    if (screenshot.width != infoPool.screenWidth || screenshot.height != infoPool.screenHeight) {
+                        log(
+                            "坐标空间: 截图 ${screenshot.width}x${screenshot.height} != display " +
+                                "${infoPool.screenWidth}x${infoPool.screenHeight}，按比例映射"
+                        )
+                    }
 
                     // 处理敏感页面（截图被系统阻止）
                     if (screenshotResult.isSensitive) {
@@ -1118,6 +1128,8 @@ class MobileAgent(
         }
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
+        val imageWidth = infoPool.imageWidth.takeIf { it > 0 } ?: screenWidth
+        val imageHeight = infoPool.imageHeight.takeIf { it > 0 } ?: screenHeight
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
         if (action.type !in setOf("click", "double_tap", "long_press")) {
             infoPool.lastClickTarget = ""
@@ -1139,8 +1151,8 @@ class MobileAgent(
                     log("索引操作失败，回退文本/坐标: index=${action.index}")
                 }
 
-                var x = mapCoordinate(action.x ?: 0, screenWidth)
-                var y = mapCoordinate(action.y ?: 0, screenHeight)
+                var x = mapCoordinate(action.x ?: 0, screenWidth, imageWidth)
+                var y = mapCoordinate(action.y ?: 0, screenHeight, imageHeight)
                 val modelX = x
                 val modelY = y
                 val hasModelCoordinate = action.x != null && action.y != null
@@ -1226,8 +1238,8 @@ class MobileAgent(
                 // 2. 方向方式: direction (up/down/left/right) + optional coordinate
                 if (action.direction != null) {
                     // 方向方式 (MAI-UI 格式)
-                    val centerX = action.x?.let { mapCoordinate(it, screenWidth) } ?: (screenWidth / 2)
-                    val centerY = action.y?.let { mapCoordinate(it, screenHeight) } ?: (screenHeight / 2)
+                    val centerX = action.x?.let { mapCoordinate(it, screenWidth, imageWidth) } ?: (screenWidth / 2)
+                    val centerY = action.y?.let { mapCoordinate(it, screenHeight, imageHeight) } ?: (screenHeight / 2)
                     val distance = 400  // 滑动距离
                     when (action.direction.lowercase()) {
                         "up" -> swipeOrGesture(centerX, centerY + distance, centerX, centerY - distance)
@@ -1238,10 +1250,10 @@ class MobileAgent(
                     }
                 } else {
                     // 坐标方式
-                    val x1 = mapCoordinate(action.x ?: 0, screenWidth)
-                    val y1 = mapCoordinate(action.y ?: 0, screenHeight)
-                    val x2 = mapCoordinate(action.x2 ?: 0, screenWidth)
-                    val y2 = mapCoordinate(action.y2 ?: 0, screenHeight)
+                    val x1 = mapCoordinate(action.x ?: 0, screenWidth, imageWidth)
+                    val y1 = mapCoordinate(action.y ?: 0, screenHeight, imageHeight)
+                    val x2 = mapCoordinate(action.x2 ?: 0, screenWidth, imageWidth)
+                    val y2 = mapCoordinate(action.y2 ?: 0, screenHeight, imageHeight)
                     swipeOrGesture(x1, y1, x2, y2)
                 }
             }
@@ -1543,8 +1555,15 @@ class MobileAgent(
         }
     }
 
-    private fun mapCoordinate(value: Int, screenMax: Int): Int {
-        return value.coerceIn(0, (screenMax - 1).coerceAtLeast(0))
+    private fun mapCoordinate(value: Int, targetMax: Int, sourceMax: Int = 0): Int {
+        if (targetMax <= 0) return value
+        val scaled = if (sourceMax > 0 && sourceMax != targetMax) {
+            // 模型坐标在截图空间，tap 在 display 空间；按比例映射。
+            (value.toLong() * targetMax / sourceMax).toInt()
+        } else {
+            value
+        }
+        return scaled.coerceIn(0, (targetMax - 1).coerceAtLeast(0))
     }
 
     /**

@@ -1,4 +1,4 @@
-package com.roubao.autopilot.data
+﻿package com.roubao.autopilot.data
 
 import android.content.ContentValues
 import android.content.Context
@@ -2188,7 +2188,7 @@ The Accessibility UI Tree is authoritative; the screenshot is only a fallback fo
 3. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
 4. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
 5. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
-6. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
+6. VISUAL-ONLY -> `click` with absolute pixels in the CURRENT screen size (see `Screen: WxH`), never normalized.
 
 ### Hard Rules ###
 - Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
@@ -2291,3 +2291,4 @@ A/B/C
         const val CALC_FEEDBACK = "算术计算不要心算：有 shell 时用 expr / awk 执行，basic 下用计算器 App 或 GUI；不要直接给出心算结果。"
     }
 }
+

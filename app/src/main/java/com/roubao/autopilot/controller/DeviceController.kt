@@ -6,12 +6,16 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
 import com.roubao.autopilot.service.AutoPilotAccessibilityService
@@ -567,43 +571,64 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
-     * 获取屏幕尺寸（考虑屏幕方向）
+     * 获取屏幕尺寸（tap / input 使用的当前 display 坐标空间，含方向）。
+     *
+     * 不依赖 `wm size`：basic / 无 Shizuku 时 `wm size` 会以 App uid 执行失败，
+     * 旧实现会静默回退到 1080x2400，导致换手机后所有坐标偏移。
      */
     fun getScreenSize(): Pair<Int, Int> {
+        val ctx = context ?: try {
+            App.getInstance()
+        } catch (e: Exception) {
+            null
+        }
+
+        if (ctx != null) {
+            try {
+                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                if (wm != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        // maximumWindowMetrics 是完整 display 边界，已按当前旋转方向返回。
+                        val bounds = wm.maximumWindowMetrics.bounds
+                        if (bounds.width() > 0 && bounds.height() > 0) {
+                            println("[DeviceController] screen via maximumWindowMetrics: ${bounds.width()}x${bounds.height()}")
+                            return Pair(bounds.width(), bounds.height())
+                        }
+                    } else {
+                        val dm = DisplayMetrics()
+                        @Suppress("DEPRECATION")
+                        wm.defaultDisplay.getRealMetrics(dm)
+                        if (dm.widthPixels > 0 && dm.heightPixels > 0) {
+                            println("[DeviceController] screen via getRealMetrics: ${dm.widthPixels}x${dm.heightPixels}")
+                            return Pair(dm.widthPixels, dm.heightPixels)
+                        }
+                    }
+                }
+
+                val dm = ctx.resources.displayMetrics
+                if (dm.widthPixels > 0 && dm.heightPixels > 0) {
+                    println("[DeviceController] screen via resources.displayMetrics: ${dm.widthPixels}x${dm.heightPixels}")
+                    return Pair(dm.widthPixels, dm.heightPixels)
+                }
+            } catch (e: Exception) {
+                println("[DeviceController] WindowManager screen size failed: ${e.message}")
+            }
+        }
+
+        // 最后兜底：解析 wm size；有 Override size 时取最后一个（override 优先）。
         val output = exec("wm size")
-        // 输出格式: Physical size: 1080x2400
-        val match = Regex("(\\d+)x(\\d+)").find(output)
-        val (physicalWidth, physicalHeight) = if (match != null) {
-            val (w, h) = match.destructured
-            Pair(w.toInt(), h.toInt())
-        } else {
-            Pair(1080, 2400)
+        val matches = Regex("(\\d+)x(\\d+)").findAll(output).toList()
+        if (matches.isNotEmpty()) {
+            val (w, h) = matches.last().destructured
+            val width = w.toInt()
+            val height = h.toInt()
+            val landscape = ctx?.resources?.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
+            println("[DeviceController] screen via wm size: ${width}x${height}, landscape=$landscape")
+            return if (landscape) Pair(height, width) else Pair(width, height)
         }
 
-        // 检测屏幕方向
-        val orientation = getScreenOrientation()
-        return if (orientation == 1 || orientation == 3) {
-            // 横屏：交换宽高
-            Pair(physicalHeight, physicalWidth)
-        } else {
-            // 竖屏
-            Pair(physicalWidth, physicalHeight)
-        }
-    }
-
-    /**
-     * 获取屏幕方向
-     * @return 0=竖屏, 1=横屏(90°), 2=倒置竖屏, 3=横屏(270°)
-     */
-    private fun getScreenOrientation(): Int {
-        // 部分 ROM（如 HyperOS）的 `dumpsys window displays` 不输出 mCurrentOrientation，
-        // 但 `dumpsys display` 有。先查后者，再回退到前者。
-        val regex = Regex("mCurrentOrientation=(\\d)")
-        val displayOutput = exec("dumpsys display | grep -m1 mCurrentOrientation")
-        regex.find(displayOutput)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-
-        val windowOutput = exec("dumpsys window displays | grep -m1 mCurrentOrientation")
-        return regex.find(windowOutput)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        println("[DeviceController] WARNING: cannot determine screen size, fallback 1080x2400")
+        return Pair(1080, 2400)
     }
 
     /**

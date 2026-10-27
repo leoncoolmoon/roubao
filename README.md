@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/images/logo.png" alt="肉包 Roubao - AI Android Automation" width="120" height="120">
 </p>
 
@@ -50,7 +50,7 @@
 
 每一层都只向模型暴露**当前真的能执行**的 Tool / Skill，避免模型把步数浪费在系统必然拒绝的路径上。
 
-> 当前版本：**1.4.7 (versionCode 12)**  
+> 当前版本：**1.4.7 (versionCode 13)**  
 > 本轮重点：权限模型收敛、Prompt DB v23、无障碍增强、Root Shell、任务暂停/提醒、应用清单按需注入。
 
 ---
@@ -468,5 +468,6 @@ MIT License，详见 [LICENSE](LICENSE)。
 <p align="center">
   Made with ❤️ by Roubao Team
 </p>
+
 
 

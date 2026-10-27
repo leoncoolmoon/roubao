@@ -111,8 +111,11 @@ class Executor {
 
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
-            prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +
-                "Coordinates here are ABSOLUTE PIXELS.\n"
+            val modelWidth = if (infoPool.imageWidth > 0) infoPool.imageWidth else infoPool.screenWidth
+            val modelHeight = if (infoPool.imageHeight > 0) infoPool.imageHeight else infoPool.screenHeight
+            prompt += "Screen: ${modelWidth}x${modelHeight}. " +
+                "Coordinates here are ABSOLUTE PIXELS of this screen/image. " +
+                "Ignore any older 1080x2400 example; use the Screen size above.\n"
             prompt += "For click/double_tap/long_press: `text` identifies the control; `coordinate` disambiguates duplicate text. " +
                 "If the same text appears more than once, you MUST use the Duplicate Text Candidates section and put the " +
                 "chosen occurrence's center into `coordinate`. Never assume the first duplicate. " +

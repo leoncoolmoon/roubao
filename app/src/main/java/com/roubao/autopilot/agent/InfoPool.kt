@@ -36,6 +36,9 @@ data class InfoPool(
     // 屏幕尺寸
     var screenWidth: Int = 1080,
     var screenHeight: Int = 2400,
+    // 模型看到的截图尺寸（可能因无障碍截图/缩放与 tap 的 display 尺寸不同）
+    var imageWidth: Int = 0,
+    var imageHeight: Int = 0,
 
     // 额外知识
     var additionalKnowledge: String = "",
