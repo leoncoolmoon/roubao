@@ -185,11 +185,16 @@ class VLMClient(
                     val json = JSONObject(responseBody)
                     val choices = json.getJSONArray("choices")
                     if (choices.length() > 0) {
-                        val message = choices.getJSONObject(0).getJSONObject("message")
+                        val choice = choices.getJSONObject(0)
+                        val message = choice.getJSONObject("message")
                         val responseContent = message.getString("content")
+                        val finishReason = choice.optString("finish_reason", "")
+                        if (finishReason == "length") {
+                            println("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
+                        }
                         println(
                             "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
-                                "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符)"
+                                "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
                         return@withContext Result.success(responseContent)
                     } else {
@@ -266,11 +271,16 @@ class VLMClient(
                     val json = JSONObject(responseBody)
                     val choices = json.getJSONArray("choices")
                     if (choices.length() > 0) {
-                        val message = choices.getJSONObject(0).getJSONObject("message")
+                        val choice = choices.getJSONObject(0)
+                        val message = choice.getJSONObject("message")
                         val responseContent = message.getString("content")
+                        val finishReason = choice.optString("finish_reason", "")
+                        if (finishReason == "length") {
+                            println("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
+                        }
                         println(
                             "[VLMClient] ✓ 上下文请求完成 ${System.currentTimeMillis() - requestStart}ms " +
-                                "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符)"
+                                "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
                         return@withContext Result.success(responseContent)
                     } else {

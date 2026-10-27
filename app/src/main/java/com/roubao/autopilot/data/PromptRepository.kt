@@ -284,30 +284,61 @@ class PromptRepository private constructor(context: Context) {
     }
 
     /**
-     * 当前包下这条 Agent 提示词是否被用户改过（能力页卡片上的 *）。
-     *
-     * - basic 是整段替换，比较 overlay 与内置的 BASIC_* 文案；
-     * - advanced 的追加段来自 overlay，用户编辑写的是 base，所以比较 base 与 default_prompt；
-     * - standard 没有 overlay，同样比较 base。
+     * 当前包里的「出厂默认」提示词。
+     * basic 是整段替换成内置 BASIC_*；standard/advanced 编辑的是 base，所以是 default_prompt。
      */
-    fun isAgentCustomizedForPack(id: String, packId: String): Boolean {
-        val base = getAgentPrompt(id) ?: return false
-        if (packId == "basic") {
-            val factory = dbHelper.basicFactoryPrompt(id) ?: base.defaultPrompt
-            val current = getAgentPromptForEditing(id, packId)?.prompt ?: base.prompt
-            return current.trim() != factory.trim()
-        }
-        return base.prompt.trim() != base.defaultPrompt.trim()
+    fun getAgentFactoryPromptForPack(id: String, packId: String): String {
+        val base = getAgentPrompt(id)
+        val fallback = base?.defaultPrompt ?: ""
+        if (packId != "basic") return fallback
+        return dbHelper.basicFactoryPrompt(id) ?: fallback
     }
 
     /**
-     * 保存 Agent：
-     * - 当前包是 replace overlay 时，提示词写到 overlay，base 只更新展示信息；
-     * - 否则更新 base 提示词。
+     * 当前包下这条 Agent 提示词是否被用户改过（能力页卡片上的 *）。
+     *
+     * 以 agent_pack_overlays.user_modified 为准：用户保存时若与出厂默认一致，会清成 0，
+     * 所以「改了又改回默认」不会留下星号。旧库里没有标记的行用内容比对兜底。
+     */
+    fun isAgentCustomizedForPack(id: String, packId: String): Boolean {
+        val base = getAgentPrompt(id) ?: return false
+        var modified = false
+        var hasRow = false
+        var prompt = ""
+        dbHelper.readableDatabase.query(
+            "agent_pack_overlays",
+            arrayOf("prompt", "user_modified"),
+            "agent_id = ? AND pack_id = ?",
+            arrayOf(id, packId),
+            null, null, null
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                hasRow = true
+                prompt = cursor.getString(0) ?: ""
+                modified = (cursor.getInt(1) ?: 0) == 1
+            }
+        }
+        if (modified) return true
+        return if (packId == "basic" && hasRow) {
+            prompt.trim() != (dbHelper.basicFactoryPrompt(id) ?: base.defaultPrompt).trim()
+        } else {
+            base.prompt.trim() != base.defaultPrompt.trim()
+        }
+    }
+
+    /**
+     * 保存 Agent：提示词只写「当前包」这一层，绝不写 base，避免改一个包影响其他包。
+     *
+     * - 已有 replace overlay（basic / 用户改过的包）：更新 overlay；
+     * - 已有 append/prepend overlay（advanced）：用户看到的是 base，仍写 base，同时打标记；
+     * - 没有 overlay（standard 首次修改）：新建一条 replace overlay。
+     *
+     * 保存内容与出厂默认一致时把 user_modified 清 0，等于恢复默认。
      */
     fun updateAgentDetailsForPack(agent: AgentPromptEntity, packId: String) {
         val db = dbHelper.writableDatabase
         var mode = ""
+
         db.query(
             "agent_pack_overlays",
             arrayOf("mode"),
@@ -317,6 +348,9 @@ class PromptRepository private constructor(context: Context) {
         ).use { cursor ->
             if (cursor.moveToFirst()) mode = cursor.getString(0) ?: ""
         }
+
+        val factory = getAgentFactoryPromptForPack(agent.id, packId).trim()
+        val modified = if (agent.prompt.trim() == factory) 0 else 1
 
         val cv = ContentValues().apply {
             put("name", agent.name)
@@ -330,13 +364,42 @@ class PromptRepository private constructor(context: Context) {
         }
         db.update("agent_prompts", cv, "id = ?", arrayOf(agent.id))
 
-        if (mode == "replace") {
-            db.update(
+        if (packId.isBlank()) return
+
+        when (mode) {
+            "replace" -> db.update(
                 "agent_pack_overlays",
-                ContentValues().apply { put("prompt", agent.prompt) },
+                ContentValues().apply {
+                    put("prompt", agent.prompt)
+                    put("user_modified", modified)
+                },
                 "agent_id = ? AND pack_id = ?",
                 arrayOf(agent.id, packId)
             )
+
+            "append", "prepend" -> db.update(
+                "agent_pack_overlays",
+                ContentValues().apply { put("user_modified", modified) },
+                "agent_id = ? AND pack_id = ?",
+                arrayOf(agent.id, packId)
+            )
+
+            else -> {
+                // 与出厂默认一致时不需要新建 overlay
+                if (modified == 0) return
+                db.insertWithOnConflict(
+                    "agent_pack_overlays",
+                    null,
+                    ContentValues().apply {
+                        put("agent_id", agent.id)
+                        put("pack_id", packId)
+                        put("mode", "replace")
+                        put("prompt", agent.prompt)
+                        put("user_modified", modified)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
         }
     }
 
@@ -1111,7 +1174,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 24) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 25) {
 
         private val appContext = context.applicationContext
 
@@ -1424,6 +1487,15 @@ class PromptRepository private constructor(context: Context) {
                 // file 工具：授权目录内文件操作，move/delete/覆盖需要用户批准。
                 seedFileToolV24(db)
             }
+            if (oldVersion < 25) {
+                // 用户自定义标记：带标记的包提示词不再被后续 seed/迁移覆盖。
+                addColumnIfMissing(
+                    db,
+                    "agent_pack_overlays",
+                    "user_modified",
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+            }
         }
 
         /** v24：注册 file 工具（不覆盖用户已改过的同名条目）。 */
@@ -1503,6 +1575,7 @@ class PromptRepository private constructor(context: Context) {
                     pack_id TEXT NOT NULL,
                     mode TEXT NOT NULL DEFAULT 'append',
                     prompt TEXT NOT NULL,
+                    user_modified INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (agent_id, pack_id)
                 )
                 """.trimIndent()

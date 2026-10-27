@@ -2225,8 +2225,17 @@ Provide step by step actions."""
                 if (isEdit && !isFeedback) {
                     OutlinedButton(
                         onClick = {
+                            // 恢复的是「当前包」的出厂默认，不是 base 的默认，避免在 basic/advanced 包里填错文案
+                            val factory = if (isAgent && agent != null && activePackId.isNotBlank()) {
+                                PromptRepository.getInstance()
+                                    .getAgentFactoryPromptForPack(agent.id, activePackId)
+                            } else {
+                                ""
+                            }
                             promptValue = TextFieldValue(
-                                agent?.defaultPrompt ?: toolSkill?.defaultPrompt ?: ""
+                                factory.ifBlank {
+                                    agent?.defaultPrompt ?: toolSkill?.defaultPrompt ?: ""
+                                }
                             )
                             errorText = null
                         },
