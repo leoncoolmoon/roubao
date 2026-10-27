@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.4.5-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.4.6-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/Min%20SDK-26-blue.svg" alt="Min SDK">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -50,7 +50,7 @@ No privilege / Accessibility (user) < Shizuku ADB (adb) < Root (root)
 
 Each level only exposes the Tools and Skills that can actually run, so the model does not waste steps on paths the system will reject.
 
-> Current version: **1.4.5 (versionCode 10)**  
+> Current version: **1.4.6 (versionCode 11)**  
 > Recent focus: permission model cleanup, Prompt DB v23, accessibility enhancements, root shell, task pause/reminders, on-demand app inventory.
 
 ---
@@ -327,7 +327,7 @@ app/src/main/java/com/roubao/autopilot/
 │   └── ReminderScheduler.kt
 ├── skills/
 │   ├── SkillManager.kt             # DB roster / related-app hints
-│   └── SkillRegistry.kt            # assets skills.json
+│   └── SkillRegistry.kt            # assets skills.json loader (seed only; not loaded at runtime)
 ├── tools/                          # Tool interface / ToolManager / built-ins
 ├── ui/
 │   ├── OverlayService.kt           # idle / pause / ask_user / confirm
@@ -468,3 +468,4 @@ MIT License. See [LICENSE](LICENSE).
 <p align="center">
   Made with ❤️ by Roubao Team
 </p>
+

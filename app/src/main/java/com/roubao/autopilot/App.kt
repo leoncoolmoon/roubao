@@ -70,8 +70,8 @@ class App : Application() {
         }.start()
 
         // 初始化 Skills 层（传入 appScanner 用于检测已安装应用）
-        val skillManager = SkillManager.init(this, toolManager, appScanner)
-        println("[App] SkillManager 已加载 ${skillManager.getAllSkills().size} 个 Skills")
+        SkillManager.init(this, toolManager, appScanner)
+        println("[App] SkillManager 使用 DB Skill 目录")
 
         println("[App] 组件初始化完成")
 

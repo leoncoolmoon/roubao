@@ -64,7 +64,7 @@ class MobileAgent(
     // Skill 管理器
     private val skillManager: SkillManager? = try {
         SkillManager.getInstance().also {
-            println("[肉包] SkillManager 已加载，共 ${it.getAllSkills().size} 个 Skills")
+            println("[肉包] SkillManager 使用 DB Skill 目录")
             // 设置 VLM 客户端用于意图匹配（仅在 OpenAI 兼容模式下）
             vlmClient?.let { client -> it.setVLMClient(client) }
         }
@@ -137,14 +137,8 @@ class MobileAgent(
         val pack = PromptPackResolver.resolveRuntime(accessLevel)
         val packId = pack?.id ?: "basic"
 
-        // 使用 LLM 匹配 Skill，生成上下文信息给 Agent（不执行任何操作）
-        // basic 包不做 LLM 技能匹配，避免把 shell/root 技能上下文注入 UI-only prompt。
-        log("正在分析意图...")
-        val skillContext = if (packId == "basic") {
-            null
-        } else {
-            skillManager?.generateAgentContextWithLLM(instruction)
-        }
+        // 使用 LLM 匹配 Skill 的旧 assets 路径已移除；运行时 Skill 目录来自 DB。
+        log("Skill 目录: DB roster")
 
         val infoPool = InfoPool(instruction = instruction)
         infoPool.packId = packId
@@ -168,14 +162,6 @@ class MobileAgent(
         }
         infoPool.executorMemory = ConversationMemory.withSystemPrompt(executorSystemPrompt)
         log("已初始化对话记忆")
-
-        // 如果有 Skill 上下文，添加到 InfoPool，让 Manager 知道可用的工具
-        if (!skillContext.isNullOrEmpty() && skillContext != "未找到相关技能或可用应用，请使用通用 GUI 自动化完成任务。") {
-            infoPool.skillContext = skillContext
-            log("已匹配到可用技能:\n$skillContext")
-        } else {
-            log("未匹配到特定技能，使用通用 GUI 自动化")
-        }
 
         // 获取屏幕尺寸
         val (width, height) = controller.getScreenSize()

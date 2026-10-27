@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
@@ -21,8 +21,8 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.4.5"
+        versionCode = 11
+        versionName = "1.4.6"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -115,3 +115,4 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+

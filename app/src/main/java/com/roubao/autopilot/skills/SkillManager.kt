@@ -46,11 +46,14 @@ class SkillManager private constructor(
     }
 
     /**
-     * 初始化：加载 Skills 配置
+     * 初始化。
+     *
+     * assets/skills.json 现在只作为「首次建库/迁移」的种子源，
+     * 由 PromptRepository.seedBuiltInSkillsFromAssets() 读取并写入 DB。
+     * 运行时 Skill 目录、权限过滤、prompt 和快速路径都走 DB，不再加载 assets 到 registry。
      */
     fun initialize() {
-        val loadedCount = registry.loadFromAssets("skills.json")
-        println("[SkillManager] 已加载 $loadedCount 个 Skills")
+        println("[SkillManager] 使用 DB Skill 目录（assets/skills.json 仅作种子）")
     }
 
     /**

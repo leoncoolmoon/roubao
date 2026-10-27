@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-1.4.5-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Version-1.4.6-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/Min%20SDK-26-blue.svg" alt="Min SDK">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -50,7 +50,7 @@
 
 每一层都只向模型暴露**当前真的能执行**的 Tool / Skill，避免模型把步数浪费在系统必然拒绝的路径上。
 
-> 当前版本：**1.4.5 (versionCode 10)**  
+> 当前版本：**1.4.6 (versionCode 11)**  
 > 本轮重点：权限模型收敛、Prompt DB v23、无障碍增强、Root Shell、任务暂停/提醒、应用清单按需注入。
 
 ---
@@ -327,7 +327,7 @@ app/src/main/java/com/roubao/autopilot/
 │   └── ReminderScheduler.kt
 ├── skills/
 │   ├── SkillManager.kt             # DB roster / 相关应用提示
-│   └── SkillRegistry.kt            # assets skills.json
+│   └── SkillRegistry.kt            # assets skills.json loader（仅建库种子，运行时不再加载）
 ├── tools/                          # Tool 接口 / ToolManager / 内置 Tool
 ├── ui/
 │   ├── OverlayService.kt           # idle / 暂停 / ask_user / confirm
@@ -468,3 +468,4 @@ MIT License，详见 [LICENSE](LICENSE)。
 <p align="center">
   Made with ❤️ by Roubao Team
 </p>
+
