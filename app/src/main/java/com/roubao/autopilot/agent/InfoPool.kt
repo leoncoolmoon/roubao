@@ -48,6 +48,8 @@ data class InfoPool(
     var selectedSkillId: String = "",
     // 选中 Skill 的完整执行上下文，只给 Executor
     var activeSkillContext: String = "",
+    // 本次任务是否已经尝试过 Skill 快速路径（DeepLink / ExecutionPlan）
+    var skillFastPathDone: Boolean = false,
     // 最近一次工具执行结果（如 shell 输出）
     var lastToolResult: String = "",
     // 是否向模型发送截图；UI 树足够时可由模型关闭

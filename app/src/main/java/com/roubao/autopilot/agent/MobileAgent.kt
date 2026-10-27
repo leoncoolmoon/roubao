@@ -11,6 +11,7 @@ import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.skills.SkillManager
+import com.roubao.autopilot.skills.SkillResult
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
 import com.roubao.autopilot.vlm.MAIUIClient
@@ -321,6 +322,43 @@ class MobileAgent(
                         if (!selectedPrompt.isNullOrBlank()) {
                             infoPool.activeSkillContext = selectedPrompt
                             log("Manager 选择 Skill: $selectedId")
+
+                            // Manager 选中 Skill 之后、Executor 决策之前：尝试一次快速路径。
+                            // Delegation -> DeepLink 直接打开；GUI -> 把 ExecutionPlan 注入上下文。
+                            // 只做一次，避免 Manager 每步重复打开应用。
+                            if (!infoPool.skillFastPathDone && infoPool.actionHistory.isEmpty()) {
+                                infoPool.skillFastPathDone = true
+                                try {
+                                    when (val fast = skillManager?.executeFromDb(
+                                        selectedId,
+                                        mapOf("_raw_query" to infoPool.instruction),
+                                        infoPool.effectiveLevel()
+                                    )) {
+                                        is SkillResult.Delegated -> {
+                                            log("Skill 快速路径: ${fast.message} (${fast.deepLink})")
+                                            infoPool.activeSkillContext +=
+                                                "\n\n### Skill Fast Path (AUTHORITATIVE) ###\n" +
+                                                "Already opened ${fast.app.name} via ${fast.deepLink}. " +
+                                                "Verify the app state before the next action."
+                                        }
+                                        is SkillResult.NeedAutomation -> {
+                                            log("Skill 执行计划: ${fast.plan.app.name} / ${fast.plan.app.type}")
+                                            infoPool.activeSkillContext +=
+                                                "\n\n### Skill Execution Plan (AUTHORITATIVE) ###\n" +
+                                                fast.plan.toAgentContext()
+                                        }
+                                        is SkillResult.NoAvailableApp -> {
+                                            log("Skill 无可用应用: ${fast.requiredApps.joinToString(", ")}")
+                                        }
+                                        is SkillResult.Failed -> {
+                                            log("Skill 快速路径失败: ${fast.error}")
+                                        }
+                                        null -> Unit
+                                    }
+                                } catch (e: Exception) {
+                                    log("Skill 快速路径异常: ${e.message}")
+                                }
+                            }
                         } else {
                             log("Manager 选择了未知/不可用 Skill: $selectedId")
                         }
