@@ -404,7 +404,17 @@ class MainActivity : ComponentActivity() {
                                     settingsManager.updateCloudCrashReportEnabled(enabled)
                                     App.getInstance().updateCloudCrashReportEnabled(enabled)
                                 },
-                                onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
+                                onUpdateRootModeEnabled = { enabled ->
+                                    settingsManager.updateRootModeEnabled(enabled)
+                                    // 高级模式开关与 Root 权限开关保持同步，等级才会真的切到 advanced
+                                    settingsManager.updateAdvancedModeEnabled(enabled)
+                                    if (enabled) {
+                                        AccessLevelManager.ensureRoot(this@MainActivity)
+                                    } else {
+                                        AccessLevelManager.invalidateSuCache()
+                                        AccessLevelManager.refresh(this@MainActivity)
+                                    }
+                                },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
                                 onUpdateShizukuModeEnabled = { enabled ->
                                     settingsManager.updateShizukuModeEnabled(enabled)
@@ -415,7 +425,10 @@ class MainActivity : ComponentActivity() {
                                 onUpdateFileAccessRoot = { path ->
                                     settingsManager.updateFileAccessRoot(path)
                                 },
-                                onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
+                                onUpdateAccessibilityModeEnabled = {
+                                    settingsManager.updateAccessibilityModeEnabled(it)
+                                    AccessLevelManager.refresh(this@MainActivity)
+                                },
                                 onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
                                 onUpdateRootShellConfirmMode = { settingsManager.updateRootShellConfirmMode(it) },
                                 onUpdateAdvancedModeEnabled = { enabled ->

@@ -284,7 +284,8 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前权限可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 预览 Agent 策略包 $activePackId",
+                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前权限可用 ${availableToolSkillCount}）· " +
+                        "权限 ${currentLevel.label} → 策略包 ${packDisplayName(activePackId)}（${activePackId}）",
                     fontSize = 13.sp,
                     color = colors.textSecondary,
                     maxLines = 2,
@@ -576,6 +577,12 @@ fun CapabilitiesScreen() {
             }
         )
     }
+}
+
+private fun packDisplayName(packId: String): String = when (packId) {
+    "basic" -> "基础包"
+    "advanced" -> "高级包"
+    else -> "标准包"
 }
 
 @Composable

@@ -224,7 +224,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "无障碍支持模式",
+                            text = "无障碍权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary
@@ -287,81 +287,7 @@ fun SettingsScreen(
             }
         }
 
-        // Shizuku 连接 / 授权
-        item {
-            SettingsItem(
-                icon = Icons.Default.Build,
-                title = "Shizuku 连接 / 授权",
-                subtitle = if (shizukuAvailable) "已连接" else "未连接或未授权；basic 模式不需要 Shizuku",
-                onClick = { onRefreshShizuku() }
-            )
-        }
-
-        // Root 模式 / 高级权限（并入「权限与服务」，不再单独分组）
-        // 显示当前权限级别
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                when (shizukuPrivilegeLevel) {
-                                    "ROOT" -> colors.error.copy(alpha = 0.15f)
-                                    else -> colors.primary.copy(alpha = 0.15f)
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> colors.error
-                                else -> colors.primary
-                            },
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "当前权限级别",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> "Root 模式 (UID 0)"
-                                "ADB" -> "ADB 模式 (UID 2000)"
-                                else -> "未连接"
-                            },
-                            fontSize = 13.sp,
-                            color = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> colors.error
-                                else -> colors.textSecondary
-                            },
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-        }
-
-        // Shizuku 总开关：关闭后不探测 Shizuku，权限等级退回 su-user / 无障碍
+        // ADB 权限开关：关闭后不探测 Shizuku，策略包退回 basic（仅无障碍）
         item {
             Card(
                 modifier = Modifier
@@ -393,16 +319,19 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "允许使用 Shizuku",
+                            text = "ADB 权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary
                         )
                         Text(
                             text = when {
-                                !shizukuAvailable -> "未连接 Shizuku"
-                                !settings.shizukuModeEnabled -> "已关闭：AI 只能用无障碍能力"
-                                else -> "已开启（$shizukuPrivilegeLevel），可用 shell / ADB 工具"
+                                !settings.shizukuModeEnabled ->
+                                    "已关闭：策略包停在 basic（仅无障碍）"
+                                !shizukuAvailable ->
+                                    "未连接 Shizuku，开启后也不生效"
+                                else ->
+                                    "已开启（$shizukuPrivilegeLevel），激活 standard 包"
                             },
                             fontSize = 13.sp,
                             color = if (settings.shizukuModeEnabled && shizukuAvailable) {
@@ -412,71 +341,41 @@ fun SettingsScreen(
                             },
                             maxLines = 2
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (shizukuAvailable) "Shizuku：已连接" else "Shizuku：未连接",
+                                fontSize = 11.sp,
+                                color = if (shizukuAvailable) colors.success else colors.error
+                            )
+                            TextButton(
+                                onClick = { onRefreshShizuku() },
+                                contentPadding = PaddingValues(horizontal = 6.dp)
+                            ) {
+                                Text("刷新授权", fontSize = 11.sp)
+                            }
+                        }
                     }
                     Switch(
                         checked = settings.shizukuModeEnabled,
                         onCheckedChange = onUpdateShizukuModeEnabled,
-                        enabled = shizukuAvailable
+                        enabled = shizukuAvailable,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.primary,
+                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput,
+                            disabledCheckedThumbColor = colors.textHint,
+                            disabledCheckedTrackColor = colors.backgroundInput,
+                            disabledUncheckedThumbColor = colors.textHint.copy(alpha = 0.5f),
+                            disabledUncheckedTrackColor = colors.backgroundInput.copy(alpha = 0.5f)
+                        )
                     )
                 }
             }
         }
 
-        // 文件工具授权目录：所有 file 操作必须落在这个目录内
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .clickable { showFileRootDialog = true },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(colors.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = colors.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "文件授权目录",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = settings.fileAccessRoot,
-                            fontSize = 12.sp,
-                            color = colors.textSecondary,
-                            maxLines = 1
-                        )
-                    }
-                    Text(
-                        text = "修改",
-                        fontSize = 13.sp,
-                        color = colors.primary
-                    )
-                }
-            }
-        }
-
-        // Root 模式开关（仅在 Shizuku 以 Root 权限运行时可用）
+        // Root 权限开关（仅在 Shizuku 以 Root 权限运行时可用）
         item {
             val isShizukuRoot = shizukuPrivilegeLevel == "ROOT"
             Card(
@@ -512,24 +411,27 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Root 模式",
+                            text = "Root 权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
-                            color = if (isShizukuRoot) colors.textPrimary else colors.textHint
+                            color = colors.textPrimary
                         )
                         Text(
                             text = when {
-                                !isShizukuRoot -> "需要 Shizuku 以 Root 权限运行"
-                                settings.rootModeEnabled -> "已启用高级权限"
-                                else -> "启用后可使用 Root 功能"
+                                !settings.rootModeEnabled ->
+                                    if (isShizukuRoot) "已关闭：策略包停在 standard" else "已关闭"
+                                !isShizukuRoot ->
+                                    "需要 Shizuku 以 Root 权限运行，开启后也不生效"
+                                else ->
+                                    "已开启（UID 0），激活 advanced 包"
                             },
                             fontSize = 13.sp,
-                            color = when {
-                                !isShizukuRoot -> colors.textHint
-                                settings.rootModeEnabled -> colors.error
-                                else -> colors.textSecondary
+                            color = if (settings.rootModeEnabled && isShizukuRoot) {
+                                colors.error
+                            } else {
+                                colors.textSecondary
                             },
-                            maxLines = 1
+                            maxLines = 2
                         )
                     }
                     Switch(
@@ -619,6 +521,75 @@ fun SettingsScreen(
                             )
                         )
                     }
+                }
+            }
+        }
+
+        // 当前生效的策略包：三个开关 + 系统实际能力决定，能力页显示的就是这一包
+        item {
+            val packLabel = when {
+                currentLevel.rank >= 2 -> "advanced · 高级包（Root）"
+                currentLevel.rank == 1 -> "standard · 标准包（ADB）"
+                else -> "basic · 基础包（无障碍）"
+            }
+            Text(
+                text = "当前生效策略包：$packLabel · 能力页的 Agent 就是这一包",
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+        }
+
+        // 文件工具授权目录：所有 file 操作必须落在这个目录内
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clickable { showFileRootDialog = true },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "文件授权目录（file 工具）",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = settings.fileAccessRoot,
+                            fontSize = 12.sp,
+                            color = colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = "修改",
+                        fontSize = 13.sp,
+                        color = colors.primary
+                    )
                 }
             }
         }
