@@ -114,6 +114,32 @@ class MobileAgent(
         log("开始执行[$source]: $instruction")
         modelErrorNotified = false
 
+        // 三项权限至少开一项：都关掉时没有任何可用的操作通道，先提醒再中止
+        val permSettings = try {
+            App.getInstance().settingsManager.settings.value
+        } catch (e: Exception) {
+            null
+        }
+        if (permSettings != null &&
+            !permSettings.accessibilityModeEnabled &&
+            !permSettings.shizukuModeEnabled &&
+            !permSettings.rootModeEnabled
+        ) {
+            log("未开启任何权限（无障碍 / ADB / Root），已中止")
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    context,
+                    "请先在「设置 → 权限与服务」开启至少一项权限（无障碍 / ADB / Root）",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            updateState { copy(isRunning = false) }
+            return AgentResult(
+                success = false,
+                message = "未开启任何权限：请先开启无障碍 / ADB / Root 中的至少一项"
+            )
+        }
+
         // 立即显示悬浮窗，不等意图分析/应用扫描完成
         OverlayService.show(context, "准备执行...") {
             updateState { copy(isRunning = false) }

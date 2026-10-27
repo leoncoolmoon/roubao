@@ -100,6 +100,14 @@ fun SettingsScreen(
     var showPackDialog by remember { mutableStateOf(false) }
     var showRootShellConfirmDialog by remember { mutableStateOf(false) }
     val currentLevel by AccessLevelManager.level.collectAsState()
+    val anyPermissionOn = settings.accessibilityModeEnabled ||
+        settings.shizukuModeEnabled || settings.rootModeEnabled
+    val effectivePackLabel = when {
+        currentLevel.rank >= 2 -> "高级包（Root）"
+        currentLevel.rank == 1 -> "标准包（ADB）"
+        !anyPermissionOn -> "未开启任何权限"
+        else -> "基础包（无障碍）"
+    }
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
         mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
@@ -525,18 +533,25 @@ fun SettingsScreen(
             }
         }
 
-        // 当前生效的策略包：三个开关 + 系统实际能力决定，能力页显示的就是这一包
+        // Agent 策略包（只影响 Agent prompt，不影响 tool/skill 可用性）
         item {
-            val packLabel = when {
-                currentLevel.rank >= 2 -> "advanced · 高级包（Root）"
-                currentLevel.rank == 1 -> "standard · 标准包（ADB）"
-                else -> "basic · 基础包（无障碍）"
-            }
-            Text(
-                text = "当前生效策略包：$packLabel · 能力页的 Agent 就是这一包",
-                fontSize = 12.sp,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            SettingsItem(
+                icon = Icons.Default.Star,
+                title = "Agent 策略包（预览/编辑）",
+                subtitle = buildString {
+                    append(
+                        when (settings.promptPackMode) {
+                            "basic" -> "预览：基础包"
+                            "standard" -> "预览：标准包"
+                            "advanced" -> "预览：高级包"
+                            else -> "自动（按当前权限选）"
+                        }
+                    )
+                    append(" · 当前生效：")
+                    append(effectivePackLabel)
+                    if (!anyPermissionOn) append(" —— 请先开启一项权限")
+                },
+                onClick = { showPackDialog = true }
             )
         }
 
@@ -605,21 +620,6 @@ fun SettingsScreen(
                     "每次提醒（root_shell 执行前弹确认）"
                 },
                 onClick = { showRootShellConfirmDialog = true }
-            )
-        }
-
-        // Agent 策略包选择（只影响 Agent prompt，不影响 tool/skill 可用性）
-        item {
-            SettingsItem(
-                icon = Icons.Default.Star,
-                title = "Agent 策略包（预览/编辑）",
-                subtitle = when (settings.promptPackMode) {
-                    "basic" -> "预览：基础 Agent（运行时按权限自动选）"
-                    "standard" -> "预览：标准 Agent（运行时按权限自动选）"
-                    "advanced" -> "预览：高级 Agent（运行时按权限自动选）"
-                    else -> "自动（运行时按当前权限选 Agent 策略）"
-                },
-                onClick = { showPackDialog = true }
             )
         }
 
