@@ -113,7 +113,10 @@ data class Action(
     val start: Int? = null,          // set_selection 起始字符下标
     val end: Int? = null,            // set_selection 结束字符下标
     val command: String? = null,     // shell 动作的命令
-    val enabled: Boolean? = null     // set_screenshot 开关
+    val enabled: Boolean? = null,    // set_screenshot 开关
+    val op: String? = null,          // file 动作：list/read/mkdir/copy/move/delete/write
+    val path: String? = null,        // file 动作：目标路径（相对授权目录或绝对）
+    val dest: String? = null         // file 动作：copy/move 的目标路径
 ) {
     companion object {
         private const val SCALE_FACTOR = 999  // MAI-UI 坐标缩放因子
@@ -164,7 +167,10 @@ data class Action(
                     start = if (obj.has("start")) obj.optInt("start") else null,
                     end = if (obj.has("end")) obj.optInt("end") else null,
                     command = obj.optString("command", null),
-                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null
+                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null,
+                    op = obj.optString("op", null),
+                    path = obj.optString("path", null),
+                    dest = obj.optString("dest", null)
                 )
             } catch (e: Exception) {
                 null
@@ -267,6 +273,9 @@ data class Action(
         start?.let { obj.put("start", it) }
         end?.let { obj.put("end", it) }
         command?.let { obj.put("command", it) }
+        op?.let { obj.put("op", it) }
+        path?.let { obj.put("path", it) }
+        dest?.let { obj.put("dest", it) }
         if (needConfirm) obj.put("need_confirm", true)
 
         return obj.toString()

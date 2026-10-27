@@ -12,6 +12,7 @@ import com.roubao.autopilot.data.ExecutionStep
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.skills.SkillManager
 import com.roubao.autopilot.skills.SkillResult
+import com.roubao.autopilot.tools.FileTool
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
 import com.roubao.autopilot.vlm.MAIUIClient
@@ -60,6 +61,17 @@ class MobileAgent(
     private val executor = Executor()
     private val reflector = ActionReflector()
     private val notetaker = Notetaker()
+
+    // file 工具：授权目录跟随设置；审批记忆在每次任务开始时重置
+    private val fileTool: FileTool by lazy {
+        FileTool(controller) {
+            try {
+                App.getInstance().settingsManager.settings.value.fileAccessRoot
+            } catch (e: Exception) {
+                FileTool.DEFAULT_ROOT
+            }
+        }
+    }
 
     // Skill 管理器
     private val skillManager: SkillManager? = try {
@@ -130,6 +142,7 @@ class MobileAgent(
         }
 
         log("使用 OpenAI 兼容模式")
+        fileTool.resetApprovals()
 
         AccessLevelManager.refresh(context)
         val accessLevel = AccessLevelManager.current()
@@ -195,6 +208,9 @@ class MobileAgent(
                 coroutineContext.ensureActive()
                 awaitIfPaused()
 
+                // 每步耗时统计（仅日志，不参与决策）
+                val timer = StepTimer().also { it.reset(step + 1) }
+
                 // 检查是否被用户停止
                 if (!_state.value.isRunning) {
                     log("用户停止执行")
@@ -215,6 +231,7 @@ class MobileAgent(
                 } else {
                     infoPool.accessibilityTree = ""
                 }
+                timer.mark("tree")
 
                 val treeOnly = !infoPool.visionEnabled && infoPool.accessibilityTree.isNotBlank()
                 var screenshot: Bitmap? = null
@@ -253,6 +270,7 @@ class MobileAgent(
                         log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                     }
                 }
+                timer.mark("shot")
 
                 val modelClient = vlmClient
                     ?: return AgentResult(success = false, message = "VLMClient 未初始化")
@@ -287,6 +305,7 @@ class MobileAgent(
 
                     val planPrompt = manager.getPrompt(infoPool)
                     val planResponse = modelClient.predict(planPrompt, screenshot?.let { listOf(it) } ?: emptyList())
+                    timer.mark("manager")
 
                     // VLM 调用后检查停止状态
                     if (!_state.value.isRunning) {
@@ -300,6 +319,7 @@ class MobileAgent(
                         val err = planResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Manager 调用失败: $err")
                         notifyModelError(err)
+                        log(timer.finish())
                         continue
                     }
 
@@ -376,6 +396,7 @@ class MobileAgent(
                     // 检查是否完成
                     if (planResult.plan.contains("Finished") && planResult.plan.length < 20) {
                         log("任务完成!")
+                        log(timer.finish())
                         OverlayService.update("完成!")
                         delay(1500)
                         OverlayService.idle(context)
@@ -415,6 +436,7 @@ class MobileAgent(
                     // 降级：使用普通方式
                     modelClient.predict(actionPrompt, screenshot?.let { listOf(it) } ?: emptyList())
                 }
+                timer.mark("executor")
 
                 // VLM 调用后检查停止状态
                 if (!_state.value.isRunning) {
@@ -428,6 +450,7 @@ class MobileAgent(
                     val err = actionResponse.exceptionOrNull()?.message ?: "unknown"
                     log("Executor 调用失败: $err")
                     notifyModelError(err)
+                    log(timer.finish())
                     continue
                 }
 
@@ -451,6 +474,7 @@ class MobileAgent(
                     infoPool.summaryHistory.add(executorResult.description)
                     infoPool.actionOutcomes.add("C")
                     infoPool.errorDescriptions.add("Invalid action format")
+                    log(timer.finish())
                     continue
                 }
 
@@ -473,6 +497,7 @@ class MobileAgent(
                     infoPool.actionHistory.add(action)
                     infoPool.summaryHistory.add("等待用户补充")
                     infoPool.actionOutcomes.add("A")
+                    log(timer.finish())
                     continue
                 }
 
@@ -483,6 +508,7 @@ class MobileAgent(
                         ?: action.message?.takeIf { it.isNotBlank() }
                         ?: "任务完成"
                     log("回答: $answerText")
+                    log(timer.finish())
                     OverlayService.update("${answerText.take(20)}...")
                     delay(1500)
                     OverlayService.idle(context)
@@ -494,6 +520,7 @@ class MobileAgent(
                 if (action.type == "terminate") {
                     val success = action.status == "success"
                     log("任务${if (success) "完成" else "失败"}")
+                    log(timer.finish())
                     OverlayService.update(if (success) "完成!" else "失败")
                     delay(1500)
                     OverlayService.idle(context)
@@ -535,6 +562,7 @@ class MobileAgent(
                     log("工具结果已回填: ${toolResult.take(120)}...")
                 }
                 infoPool.lastAction = action
+                timer.mark("action")
 
                 // 立即记录执行步骤（outcome 暂时为 "?" 表示进行中）
                 val currentStepIndex = _state.value.executionSteps.size
@@ -550,6 +578,7 @@ class MobileAgent(
 
                 // 等待动作生效
                 delay(if (step == 0) 5000 else 2000)
+                timer.mark("wait")
 
                 // 检查停止状态
                 if (!_state.value.isRunning) {
@@ -568,6 +597,7 @@ class MobileAgent(
                 if (afterScreenshotResult.isFallback) {
                     log("动作后截图失败，使用黑屏占位图")
                 }
+                timer.mark("shot2")
 
                 // 9. Reflector 反思
                 // 检查停止状态
@@ -597,6 +627,7 @@ class MobileAgent(
                 }
 
                 log("结果: ${reflectResult.outcome} - ${reflectResult.errorDescription.take(50)}")
+                timer.mark("reflector")
 
                 // 更新历史
                 infoPool.actionHistory.add(action)
@@ -634,6 +665,8 @@ class MobileAgent(
                         infoPool.importantNotes = notetaker.parseResponse(noteResponse.getOrThrow())
                     }
                 }
+                timer.mark("notetaker")
+                log(timer.finish())
             }
         } catch (e: CancellationException) {
             log("任务被取消")
@@ -1332,6 +1365,29 @@ class MobileAgent(
                     log("root_shell 输出: ${output.take(800)}")
                     return@withContext output
                 }
+            }
+            "file" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("file")) {
+                    log("file 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
+                val op = action.op?.trim().orEmpty()
+                val path = action.path?.trim().orEmpty()
+                if (op.isEmpty() || path.isEmpty()) {
+                    log("file: 缺少 op/path")
+                    return@withContext "Error: file 动作需要 op 和 path 参数"
+                }
+                log("file: $op $path${action.dest?.let { " -> $it" } ?: ""}")
+                val result = fileTool.execute(
+                    op = op,
+                    path = path,
+                    dest = action.dest,
+                    content = action.text
+                ) { message ->
+                    withContext(Dispatchers.Main) { waitForUserConfirm(message) }
+                }
+                log("file 结果: ${result.take(300)}")
+                return@withContext result
             }
             "key" -> {
                 val key = action.key

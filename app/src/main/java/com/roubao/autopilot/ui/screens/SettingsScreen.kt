@@ -71,6 +71,8 @@ fun SettingsScreen(
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
+    onUpdateShizukuModeEnabled: (Boolean) -> Unit = {},
+    onUpdateFileAccessRoot: (String) -> Unit = {},
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
     onUpdatePromptPackMode: (String) -> Unit = {},
     onUpdateRootShellConfirmMode: (String) -> Unit = {},
@@ -93,6 +95,7 @@ fun SettingsScreen(
     var showShizukuHelpDialog by remember { mutableStateOf(false) }
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
+    var showFileRootDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
     var showPackDialog by remember { mutableStateOf(false) }
     var showRootShellConfirmDialog by remember { mutableStateOf(false) }
@@ -354,6 +357,121 @@ fun SettingsScreen(
                             maxLines = 1
                         )
                     }
+                }
+            }
+        }
+
+        // Shizuku 总开关：关闭后不探测 Shizuku，权限等级退回 su-user / 无障碍
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "允许使用 Shizuku",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = when {
+                                !shizukuAvailable -> "未连接 Shizuku"
+                                !settings.shizukuModeEnabled -> "已关闭：AI 只能用无障碍能力"
+                                else -> "已开启（$shizukuPrivilegeLevel），可用 shell / ADB 工具"
+                            },
+                            fontSize = 13.sp,
+                            color = if (settings.shizukuModeEnabled && shizukuAvailable) {
+                                colors.primary
+                            } else {
+                                colors.textSecondary
+                            },
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = settings.shizukuModeEnabled,
+                        onCheckedChange = onUpdateShizukuModeEnabled,
+                        enabled = shizukuAvailable
+                    )
+                }
+            }
+        }
+
+        // 文件工具授权目录：所有 file 操作必须落在这个目录内
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clickable { showFileRootDialog = true },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "文件授权目录",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = settings.fileAccessRoot,
+                            fontSize = 12.sp,
+                            color = colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = "修改",
+                        fontSize = 13.sp,
+                        color = colors.primary
+                    )
                 }
             }
         }
@@ -861,6 +979,18 @@ fun SettingsScreen(
         )
     }
 
+    // 文件工具授权目录
+    if (showFileRootDialog) {
+        FileRootDialog(
+            current = settings.fileAccessRoot,
+            onDismiss = { showFileRootDialog = false },
+            onConfirm = {
+                onUpdateFileAccessRoot(it)
+                showFileRootDialog = false
+            }
+        )
+    }
+
     // Shizuku 帮助对话框
     if (showShizukuHelpDialog) {
         ShizukuHelpDialog(onDismiss = { showShizukuHelpDialog = false })
@@ -1258,6 +1388,68 @@ fun ApiKeyDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(key) }) {
+                Text("确定", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+
+/**
+ * 文件工具授权目录的编辑对话框。
+ */
+@Composable
+fun FileRootDialog(
+    current: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var path by remember { mutableStateOf(current) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("文件授权目录", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "模型只能在这个目录内读写文件。移动、删除、覆盖已有文件会先征求你的同意。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    BasicTextField(
+                        value = path,
+                        onValueChange = { path = it },
+                        textStyle = TextStyle(
+                            color = colors.textPrimary,
+                            fontSize = 14.sp
+                        ),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(path) }) {
                 Text("确定", color = colors.primary)
             }
         },

@@ -88,6 +88,10 @@ data class AppSettings(
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
     val suCommandEnabled: Boolean = false,
+    // Shizuku 总开关：关闭后不再探测 Shizuku，权限等级退回 su-user / 无障碍
+    val shizukuModeEnabled: Boolean = true,
+    // file 工具的授权目录：所有文件操作必须落在这个目录内
+    val fileAccessRoot: String = "/sdcard/Download/肉包",
     val accessibilityModeEnabled: Boolean = true,
     val advancedModeEnabled: Boolean = false,
     val overlayScale: Float = 0.65f,
@@ -230,6 +234,10 @@ class SettingsManager(context: Context) {
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
             suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
+            shizukuModeEnabled = prefs.getBoolean("shizuku_mode_enabled", true),
+            fileAccessRoot = prefs.getString("file_access_root", "/sdcard/Download/肉包")
+                ?.takeIf { it.isNotBlank() }
+                ?: "/sdcard/Download/肉包",
             accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", true),
             advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
             overlayScale = prefs.getFloat("overlay_scale", 0.65f).coerceIn(0.4f, 1.2f),
@@ -365,6 +373,21 @@ class SettingsManager(context: Context) {
     fun updateSuCommandEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("su_command_enabled", enabled).apply()
         _settings.value = _settings.value.copy(suCommandEnabled = enabled)
+    }
+
+    fun updateShizukuModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("shizuku_mode_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(shizukuModeEnabled = enabled)
+        // 关闭 Shizuku 时不再以 Root 身份操作，避免出现「Shizuku 关掉但 root 模式还开着」的错位
+        if (!enabled && _settings.value.rootModeEnabled) {
+            updateRootModeEnabled(false)
+        }
+    }
+
+    fun updateFileAccessRoot(path: String) {
+        val safe = path.trim().trimEnd('/').ifBlank { "/sdcard/Download/肉包" }
+        prefs.edit().putString("file_access_root", safe).apply()
+        _settings.value = _settings.value.copy(fileAccessRoot = safe)
     }
 
     fun updateAccessibilityModeEnabled(enabled: Boolean) {

@@ -462,6 +462,7 @@ class DeviceController(private val context: Context? = null) {
      * 失败时返回黑屏占位图（降级处理）
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
         // 优先无障碍截图（API 30+）：全屏、无 shell 也能用，basic 包的关键路径。
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             try {
@@ -469,6 +470,7 @@ class DeviceController(private val context: Context? = null) {
                 val bitmap = service?.takeScreenshotBitmap()
                 if (bitmap != null) {
                     println("[DeviceController] Screenshot via accessibility takeScreenshot")
+                    logShotElapsed(startedAt, "无障碍", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             } catch (e: Exception) {
@@ -493,6 +495,7 @@ class DeviceController(private val context: Context? = null) {
                 println("[DeviceController] Reading screenshot from: $SCREENSHOT_PATH, size: ${file.length()}")
                 val bitmap = BitmapFactory.decodeFile(SCREENSHOT_PATH)
                 if (bitmap != null) {
+                    logShotElapsed(startedAt, "screencap 文件", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             }
@@ -507,6 +510,7 @@ class DeviceController(private val context: Context? = null) {
                 println("[DeviceController] Read ${bytes.size} bytes via shell")
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bitmap != null) {
+                    logShotElapsed(startedAt, "shell cat", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             }
@@ -518,6 +522,14 @@ class DeviceController(private val context: Context? = null) {
             println("[DeviceController] Screenshot exception, returning fallback")
             createFallbackScreenshot(isSensitive = false)
         }
+    }
+
+    /** 打印截图耗时与来源，用于定位每步延迟。 */
+    private fun logShotElapsed(startedAt: Long, source: String, bitmap: Bitmap) {
+        println(
+            "[DeviceController] 截图($source) ${bitmap.width}x${bitmap.height} " +
+                "用时 ${System.currentTimeMillis() - startedAt}ms"
+        )
     }
 
     /**

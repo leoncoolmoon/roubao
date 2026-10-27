@@ -406,6 +406,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
+                                onUpdateShizukuModeEnabled = { enabled ->
+                                    settingsManager.updateShizukuModeEnabled(enabled)
+                                    AccessLevelManager.invalidateSuCache()
+                                    AccessLevelManager.refresh(this@MainActivity)
+                                    refreshShizukuStatus()
+                                },
+                                onUpdateFileAccessRoot = { path ->
+                                    settingsManager.updateFileAccessRoot(path)
+                                },
                                 onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
                                 onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
                                 onUpdateRootShellConfirmMode = { settingsManager.updateRootShellConfirmMode(it) },

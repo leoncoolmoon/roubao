@@ -1,4 +1,4 @@
-﻿package com.roubao.autopilot.data
+package com.roubao.autopilot.data
 
 import android.content.ContentValues
 import android.content.Context
@@ -281,6 +281,23 @@ class PromptRepository private constructor(context: Context) {
         } else {
             base
         }
+    }
+
+    /**
+     * 当前包下这条 Agent 提示词是否被用户改过（能力页卡片上的 *）。
+     *
+     * - basic 是整段替换，比较 overlay 与内置的 BASIC_* 文案；
+     * - advanced 的追加段来自 overlay，用户编辑写的是 base，所以比较 base 与 default_prompt；
+     * - standard 没有 overlay，同样比较 base。
+     */
+    fun isAgentCustomizedForPack(id: String, packId: String): Boolean {
+        val base = getAgentPrompt(id) ?: return false
+        if (packId == "basic") {
+            val factory = dbHelper.basicFactoryPrompt(id) ?: base.defaultPrompt
+            val current = getAgentPromptForEditing(id, packId)?.prompt ?: base.prompt
+            return current.trim() != factory.trim()
+        }
+        return base.prompt.trim() != base.defaultPrompt.trim()
     }
 
     /**
@@ -1094,7 +1111,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 23) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 24) {
 
         private val appContext = context.applicationContext
 
@@ -1203,6 +1220,7 @@ class PromptRepository private constructor(context: Context) {
             seedPacksV13(db)
             applyDependenceV13(db)
             enableBuiltinToolsV13(db)
+            seedFileToolV24(db)
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -1402,6 +1420,34 @@ class PromptRepository private constructor(context: Context) {
                     })
                 }
             }
+            if (oldVersion < 24) {
+                // file 工具：授权目录内文件操作，move/delete/覆盖需要用户批准。
+                seedFileToolV24(db)
+            }
+        }
+
+        /** v24：注册 file 工具（不覆盖用户已改过的同名条目）。 */
+        private fun seedFileToolV24(db: SQLiteDatabase) {
+            val cv = ContentValues().apply {
+                put("id", "file")
+                put("name", "file")
+                put("display_name", "文件操作")
+                put("category", "tool")
+                put("description", "授权目录内列目录/读/建目录/复制；移动、删除、覆盖已有文件需要用户批准。")
+                put("prompt", FILE_TOOL_PROMPT)
+                put("default_prompt", FILE_TOOL_PROMPT)
+                put("is_default", 1)
+                put("enabled", 1)
+                put("keywords_json", "[]")
+                put("params_json", "[]")
+                put("related_apps_json", "[]")
+                put("prompt_hint", "")
+                put("domain", "")
+                put("source", "builtin")
+                put("executable", 0)
+                put("dependence_json", "[\"adb\"]")
+            }
+            db.insertWithOnConflict("tool_skill_prompts", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
         }
 
         /** v11：移除内置 Prompt 中静态写死的 shell/open_app 推荐。 */
@@ -1570,6 +1616,13 @@ class PromptRepository private constructor(context: Context) {
             }
         }
 
+        /** basic 包对 manager/executor 的出厂提示词，用于判断当前包里的提示词是否被改过。 */
+        fun basicFactoryPrompt(agentId: String): String? = when (agentId) {
+            "manager" -> BASIC_MANAGER_PROMPT
+            "executor" -> BASIC_EXECUTOR_PROMPT
+            else -> null
+        }
+
         private val BASIC_MANAGER_PROMPT = """You are the planning agent for an Android automation app running in BASIC mode: accessibility only, no shell, no root.
 
 ### User Request ###
@@ -1674,6 +1727,14 @@ One short sentence."""
 - QQ音乐: 打开QQ音乐 -> 搜索歌曲 -> 播放
 - 酷狗音乐: 打开酷狗音乐 -> 搜索歌曲 -> 播放
 - Spotify: 打开Spotify -> 搜索歌曲 -> 播放"""
+
+        private val FILE_TOOL_PROMPT = """工具: file
+说明: 在授权目录内操作文件（list/read/mkdir/copy/move/delete/write）。路径必须落在授权目录内；移动、删除、覆盖已有文件需要用户批准。
+参数:
+  - op: string (必填) - list / read / mkdir / copy / move / delete / write
+  - path: string (必填) - 目标路径，相对授权目录或绝对路径
+  - dest: string (可选) - copy / move 的目标路径
+  - text: string (可选) - write 写入的文件内容"""
 
         private val ADVANCED_OVERLAY = """### Advanced Mode (Root) ###
 Root-level tools may be available in this pack.

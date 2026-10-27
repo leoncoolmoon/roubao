@@ -25,7 +25,8 @@ object ActionGate {
         "open_app" to "open_app",
         "search_apps" to "search_apps",
         "shell" to "shell",
-        "root_shell" to "root_shell"
+        "root_shell" to "root_shell",
+        "file" to "file"
     )
 
     fun check(action: Action, level: AccessLevel): String? {

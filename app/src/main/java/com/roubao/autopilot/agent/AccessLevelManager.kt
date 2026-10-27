@@ -53,7 +53,7 @@ object AccessLevelManager {
             false
         }
 
-        val shizukuUid = shizukuUid()
+        val shizukuUid = if (settings?.shizukuModeEnabled != false) shizukuUid() else null
         val rootAllowed = settings?.advancedModeEnabled == true
 
         // 无障碍只决定 UI 能力（tree/gesture/screenshot），不是 shell/root 等级的前置条件。
@@ -75,7 +75,12 @@ object AccessLevelManager {
      */
     fun ensureSuUser(context: Context) {
         if (suUserAvailable != null) return
-        if (shizukuUid() == 2000) {
+        val shizukuOn = try {
+            App.getInstance().settingsManager.settings.value.shizukuModeEnabled
+        } catch (e: Exception) {
+            true
+        }
+        if (shizukuOn && shizukuUid() == 2000) {
             suUserAvailable = false
             refresh(context)
             return

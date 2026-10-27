@@ -123,9 +123,18 @@ class VLMClient(
         var lastException: Exception? = null
 
         // 预先编码图片 (避免重试时重复编码)
+        val encodeStart = System.currentTimeMillis()
         val encodedImages = images.map { bitmapToBase64Url(it) }
+        val encodeMs = System.currentTimeMillis() - encodeStart
+        val imageChars = encodedImages.sumOf { it.length }
+        val inputChars = prompt.length + imageChars
+        println(
+            "[VLMClient] 准备请求: 编码 ${images.size} 张 ${encodeMs}ms, " +
+                "文本 ${prompt.length} 字符, base64 ${imageChars / 1024}KB"
+        )
 
         for (attempt in 1..MAX_RETRIES) {
+            val requestStart = System.currentTimeMillis()
             try {
                 val content = JSONArray().apply {
                     put(JSONObject().apply {
@@ -178,11 +187,16 @@ class VLMClient(
                     if (choices.length() > 0) {
                         val message = choices.getJSONObject(0).getJSONObject("message")
                         val responseContent = message.getString("content")
+                        println(
+                            "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
+                                "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符)"
+                        )
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")
                     }
                 } else {
+                    println("[VLMClient] ✗ HTTP ${response.code} 用时 ${System.currentTimeMillis() - requestStart}ms")
                     lastException = Exception("API error: ${response.code} - $responseBody")
                 }
             } catch (e: UnknownHostException) {
@@ -225,6 +239,7 @@ class VLMClient(
         var lastException: Exception? = null
 
         for (attempt in 1..MAX_RETRIES) {
+            val requestStart = System.currentTimeMillis()
             try {
                 val requestBody = JSONObject().apply {
                     put("model", model)
@@ -253,11 +268,16 @@ class VLMClient(
                     if (choices.length() > 0) {
                         val message = choices.getJSONObject(0).getJSONObject("message")
                         val responseContent = message.getString("content")
+                        println(
+                            "[VLMClient] ✓ 上下文请求完成 ${System.currentTimeMillis() - requestStart}ms " +
+                                "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符)"
+                        )
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")
                     }
                 } else {
+                    println("[VLMClient] ✗ 上下文请求 HTTP ${response.code} 用时 ${System.currentTimeMillis() - requestStart}ms")
                     lastException = Exception("API error: ${response.code} - $responseBody")
                 }
             } catch (e: UnknownHostException) {
