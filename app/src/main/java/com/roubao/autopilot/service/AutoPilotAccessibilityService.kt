@@ -173,8 +173,10 @@ class AutoPilotAccessibilityService : AccessibilityService() {
      */
     fun dumpNodeTree(maxNodes: Int = 80): String {
         val root = rootInActiveWindow ?: return "UI 元素树为空 (未获取到 active window)"
-        val elements = mutableListOf<UIElementNode>()
-        collectNodes(root, elements, maxNodes)
+        // 收集比展示上限更多的节点，用于检测重复文本候选；展示仍只取前 maxNodes。
+        val allElements = mutableListOf<UIElementNode>()
+        collectNodes(root, allElements, maxOf(maxNodes, 300))
+        val elements = allElements.take(maxNodes)
 
         if (elements.isEmpty()) {
             return "界面未提取到可见 UI 节点元素"
@@ -194,23 +196,85 @@ class AutoPilotAccessibilityService : AccessibilityService() {
                 if (node.isEditable) append("[可输入] ")
                 append("\n")
             }
+            append(duplicateTextCandidates(allElements))
         }
     }
 
     /**
-     * 提取当前界面中匹配查询条件的元素中心坐标（x, y）
-     * 查询匹配规则：不区分大小写匹配文本、描述、ID 或类名
+     * 同名/同描述候选集。模型在多个「确定」之间必须靠坐标选择，
+     * 不能依赖代码取第一个节点。
      */
-    fun findElementCoordinates(query: String): Pair<Int, Int>? {
-        if (query.isBlank()) return null
-        val root = rootInActiveWindow ?: return null
-        val matchedNode = findMatchingNode(root, query) ?: return null
+    private fun duplicateTextCandidates(
+        elements: List<UIElementNode>,
+        maxGroups: Int = 6,
+        maxPerGroup: Int = 4
+    ): String {
+        val groups = LinkedHashMap<String, MutableList<UIElementNode>>()
+        elements.forEach { node ->
+            val label = node.text.ifBlank { node.contentDescription }.trim()
+            if (label.isBlank()) return@forEach
+            val key = normalizeUiText(label)
+            if (key.isBlank()) return@forEach
+            groups.getOrPut(key) { mutableListOf() }.add(node)
+        }
 
-        val rect = Rect()
-        matchedNode.getBoundsInScreen(rect)
-        if (rect.isEmpty) return null
+        val duplicates = groups.values.filter { it.size > 1 }.take(maxGroups)
+        if (duplicates.isEmpty()) return ""
 
-        return Pair(rect.centerX(), rect.centerY())
+        return buildString {
+            append("\n### Duplicate Text Candidates (AUTHORITATIVE) ###\n")
+            duplicates.forEach { list ->
+                val label = list.first().text.ifBlank { list.first().contentDescription }
+                append("「").append(label).append("」出现 ").append(list.size).append(" 次：\n")
+                list.take(maxPerGroup).forEach { node ->
+                    append("- center=(").append(node.centerX).append(", ").append(node.centerY).append(")")
+                    append(" bounds=[").append(node.bounds.left).append(",").append(node.bounds.top)
+                    append(",").append(node.bounds.right).append(",").append(node.bounds.bottom).append("]")
+                    if (node.isClickable) append(" [clickable]")
+                    append('\n')
+                }
+                if (list.size > maxPerGroup) {
+                    append("- ... 还有 ").append(list.size - maxPerGroup).append(" 个\n")
+                }
+            }
+            append("Duplicated text: choose the intended occurrence by coordinate, ")
+            append("and put that occurrence's center in `coordinate`.\n")
+        }
+    }
+
+    private fun normalizeUiText(value: String): String =
+        value.trim().lowercase().replace(Regex("\\s+"), "")
+
+    /**
+     * 返回所有匹配的候选节点（exact 优先，其次 contains），而不是第一个。
+     */
+    fun findElementCandidates(query: String, limit: Int = 12): List<UIElementNode> {
+        if (query.isBlank()) return emptyList()
+        val root = rootInActiveWindow ?: return emptyList()
+        val all = mutableListOf<UIElementNode>()
+        collectNodes(root, all, 400)
+        val q = normalizeUiText(query)
+        if (q.isEmpty()) return emptyList()
+
+        val exact = all.filter { node ->
+            normalizeUiText(node.text) == q ||
+                normalizeUiText(node.contentDescription) == q ||
+                normalizeUiText(node.viewId) == q
+        }
+        val pool = if (exact.isNotEmpty()) {
+            exact
+        } else {
+            all.filter { node ->
+                (node.text.isNotEmpty() && normalizeUiText(node.text).contains(q)) ||
+                    (node.contentDescription.isNotEmpty() && normalizeUiText(node.contentDescription).contains(q)) ||
+                    (node.viewId.isNotEmpty() && normalizeUiText(node.viewId).contains(q))
+            }
+        }
+        return pool
+            .distinctBy {
+                "${it.bounds.left},${it.bounds.top},${it.bounds.right},${it.bounds.bottom}|${it.text}|${it.contentDescription}"
+            }
+            .take(limit)
     }
 
     /**

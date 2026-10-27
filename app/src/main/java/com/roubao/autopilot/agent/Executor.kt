@@ -113,13 +113,15 @@ class Executor {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
             prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +
                 "Coordinates here are ABSOLUTE PIXELS.\n"
-            prompt += "For click/double_tap/long_press: find the target node below, put its EXACT text " +
-                "into `text`, and its center coordinate into `coordinate` as fallback.\n"
+            prompt += "For click/double_tap/long_press: `text` identifies the control; `coordinate` disambiguates duplicate text. " +
+                "If the same text appears more than once, you MUST use the Duplicate Text Candidates section and put the " +
+                "chosen occurrence's center into `coordinate`. Never assume the first duplicate. " +
+                "This overrides any earlier 'Text > coordinates' rule for duplicate text.\n"
             prompt += "Optional index mode: each node is numbered 1..N. You may use " +
                 "{\"action\":\"click\",\"index\":N}, {\"action\":\"long_press\",\"index\":N}, " +
                 "{\"action\":\"type\",\"index\":N,\"text\":\"...\"} or " +
                 "{\"action\":\"scroll\",\"index\":N,\"direction\":\"down\"}. " +
-                "Index is a snapshot; if the page animates or an ad is moving, prefer text/coordinate.\n"
+                "Index is a snapshot; if the page animates, scrolls, or an ad is moving, prefer text + coordinate.\n"
             prompt += "${infoPool.accessibilityTree}\n"
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")

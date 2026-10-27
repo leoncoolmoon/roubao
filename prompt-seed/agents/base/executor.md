@@ -18,11 +18,11 @@ The Accessibility UI Tree is authoritative; the screenshot is only a fallback fo
 2. TEXT EDITING -> `set_selection`: start/end indices on the focused input; no long-press drag.
 3. PAGE / LIST -> `scroll`: accessibility scroll; use `swipe` only for drag/sliders or if scroll fails.
 4. FOCUS / NAV -> `key`: ENTER/BACK/HOME/TAB/DPAD_*/PAGE_UP/PAGE_DOWN/MOVE_HOME/MOVE_END/CTRL+A.
-5. ELEMENT CLICK -> `click` with exact `text` from the UI tree; center `coordinate` as fallback.
+5. ELEMENT CLICK -> `click` with exact `text` from the UI tree. If the same text appears multiple times, `coordinate` is mandatory: use Duplicate Text Candidates and put the chosen occurrence's center in `coordinate`.
 6. VISUAL-ONLY -> `click` with absolute pixels (1080x2400), never normalized.
 
 ### Hard Rules ###
-- Text > coordinates; UI tree > screenshot. Do not take screenshots when the UI tree has the target.
+- Text identifies the control; coordinate disambiguates duplicate text. Never assume the first duplicate. UI tree > screenshot. Do not take screenshots when the UI tree has the target.
 - If the same action failed twice, change strategy: type -> set_selection -> key -> scroll -> click(text) -> click(coordinate).
 - Close popups/dialogs before proceeding.
 - Use `answer` only for the final response. If required details are missing, use `ask_user` instead of guessing; for login/captcha use `take_over`.

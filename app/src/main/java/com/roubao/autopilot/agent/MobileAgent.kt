@@ -1119,6 +1119,9 @@ class MobileAgent(
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
+        if (action.type !in setOf("click", "double_tap", "long_press")) {
+            infoPool.lastClickTarget = ""
+        }
 
         when (action.type) {
             "click", "double_tap", "long_press" -> {
@@ -1140,6 +1143,7 @@ class MobileAgent(
                 var y = mapCoordinate(action.y ?: 0, screenHeight)
                 val modelX = x
                 val modelY = y
+                val hasModelCoordinate = action.x != null && action.y != null
                 var calibrated = false
 
                 // 只使用模型显式给出的元素文本做无障碍匹配；
@@ -1148,12 +1152,44 @@ class MobileAgent(
 
                 if (accessibilityModeEnabled && accessibilityService != null) {
                     if (query != null) {
-                        val exactCoords = accessibilityService.findElementCoordinates(query)
-                        if (exactCoords != null) {
-                            x = exactCoords.first
-                            y = exactCoords.second
-                            calibrated = true
-                            log("🎯 无障碍文本校准${action.type}: ($x, $y) [查询: $query]")
+                        val candidates = accessibilityService.findElementCandidates(query)
+                        if (candidates.isNotEmpty()) {
+                            // 唯一候选直接用；多个候选必须用模型坐标包含/距离来选择，
+                            // 绝不能因为 text 命中就取第一个。
+                            val chosen = when {
+                                candidates.size == 1 -> candidates.first()
+                                hasModelCoordinate -> {
+                                    val containing = candidates
+                                        .filter { it.bounds.contains(modelX, modelY) }
+                                        .minByOrNull { it.bounds.width().toLong() * it.bounds.height().toLong() }
+                                    containing ?: candidates.minByOrNull { candidate ->
+                                        val dx = (candidate.centerX - modelX).toLong()
+                                        val dy = (candidate.centerY - modelY).toLong()
+                                        dx * dx + dy * dy
+                                    }?.takeIf { candidate ->
+                                        val dx = (candidate.centerX - modelX).toLong()
+                                        val dy = (candidate.centerY - modelY).toLong()
+                                        kotlin.math.sqrt((dx * dx + dy * dy).toDouble()) <= 240.0
+                                    }
+                                }
+                                else -> candidates.first()
+                            }
+
+                            if (chosen != null) {
+                                x = chosen.centerX
+                                y = chosen.centerY
+                                calibrated = true
+                                infoPool.lastClickTarget =
+                                    "text='$query' center=($x,$y) bounds=[" +
+                                        "${chosen.bounds.left},${chosen.bounds.top}," +
+                                        "${chosen.bounds.right},${chosen.bounds.bottom}] candidates=${candidates.size}"
+                                log(
+                                    "🎯 候选选择${action.type}: ($x, $y) [查询: $query, " +
+                                        "候选: ${candidates.size}, bounds: ${infoPool.lastClickTarget}]"
+                                )
+                            } else {
+                                log("候选集有 ${candidates.size} 个，坐标 ($modelX,$modelY) 不匹配，回退原始坐标")
+                            }
                         } else if (action.type == "click" && accessibilityService.performActionByAttribute(query)) {
                             log("🤖 无障碍直接触发节点点击: [查询: $query]")
                             return@withContext null

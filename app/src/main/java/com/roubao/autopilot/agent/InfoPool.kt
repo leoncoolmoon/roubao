@@ -52,6 +52,8 @@ data class InfoPool(
     var skillFastPathDone: Boolean = false,
     // 最近一次工具执行结果（如 shell 输出）
     var lastToolResult: String = "",
+    // 最近一次点击选中的 UI 候选（用于 Reflector 验证）
+    var lastClickTarget: String = "",
     // 是否向模型发送截图；UI 树足够时可由模型关闭
     var visionEnabled: Boolean = true,
     // ask_user 的用户补充内容
