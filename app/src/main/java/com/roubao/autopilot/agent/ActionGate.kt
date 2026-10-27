@@ -23,11 +23,12 @@ object ActionGate {
         "swipe" to "swipe",
         "key" to "press_key",
         "open_app" to "open_app",
+        "search_apps" to "search_apps",
         "shell" to "shell",
         "root_shell" to "root_shell"
     )
 
-    fun check(action: Action, level: AccessLevel, packId: String): String? {
+    fun check(action: Action, level: AccessLevel): String? {
         // 模型有时把 system_button(BACK/HOME) 写成 key；这两个键无障碍可以直接处理。
         if (action.type == "key" && action.key?.lowercase() in setOf("back", "home")) {
             return null
@@ -36,29 +37,23 @@ object ActionGate {
         val repo = try {
             PromptRepository.getInstance()
         } catch (e: Exception) {
-            return null
+            return "prompt repository unavailable"
         }
         val item = try {
             repo.getToolSkillPrompt(itemId)
         } catch (e: Exception) {
             null
-        } ?: return null
+        } ?: return "tool '$itemId' not found"
 
         if (!item.enabled) return "tool '$itemId' is disabled"
-        val packLevel = try {
-            repo.getPack(packId)?.level?.let { AccessLevel.fromId(it) } ?: AccessLevel.ROOT
-        } catch (e: Exception) {
-            AccessLevel.ROOT
-        }
-        val effective = AccessLevel.cap(level, packLevel)
-        if (!AccessLevel.satisfies(effective, item.dependenceJson)) {
+        if (!AccessLevel.satisfies(level, item.dependenceJson)) {
             val deps = AccessLevel.parse(item.dependenceJson)
-            return "tool '$itemId' requires ${deps.joinToString("+")}, current pack cap is ${effective.id}"
+            return "tool '$itemId' requires ${deps.joinToString("+")}, current permission level is ${level.id}"
         }
         return null
     }
 
-    fun audit(action: Action, level: AccessLevel, packId: String, result: String) {
-        println("[ActionGate] level=${level.id} pack=$packId action=${action.type} result=$result")
+    fun audit(action: Action, level: AccessLevel, result: String) {
+        println("[ActionGate] level=${level.id} action=${action.type} result=$result")
     }
 }

@@ -65,8 +65,8 @@ class SkillManager private constructor(
             .map {
                 val (installed, missing) = installedRelatedApps(it)
                 val availability = when {
-                    installed.isNotEmpty() -> " [installed related apps: ${installed.joinToString(", ")}]"
-                    missing.isNotEmpty() -> " [none of its related apps are installed; ask the user with numbered choices]"
+                    installed.isNotEmpty() -> " [related apps installed: ${installed.joinToString(", ")}]"
+                    missing.isNotEmpty() -> " [related apps not installed; use a similar installed app or GUI; ask user only if none]"
                     else -> ""
                 }
                 EnabledSkillInfo(
@@ -95,17 +95,18 @@ class SkillManager private constructor(
             } else {
                 buildString {
                     append(item.prompt)
-                    append("\n\n### Runtime Installed Apps (AUTHORITATIVE) ###\n")
+                    append("\n\n### Runtime Related Apps (HINTS, NOT REQUIREMENTS) ###\n")
                     if (installed.isNotEmpty()) {
-                        append("Installed: ").append(installed.joinToString(", ")).append('\n')
-                        append("Only operate these installed apps. Ignore any other app names in this skill.\n")
+                        append("Related apps installed: ").append(installed.joinToString(", ")).append('\n')
+                        append("Prefer them, but you may use a similar installed app or GUI if they fail.\n")
                     } else {
                         append("None of this skill's related apps are installed.\n")
+                        append("This is not a hard requirement: use a similar installed app, web version, or GUI to complete the task.\n")
                     }
                     if (missing.isNotEmpty()) {
-                        append("NOT installed (ignore): ").append(missing.joinToString(", ")).append('\n')
+                        append("Related but not installed (do not assume required): ").append(missing.joinToString(", ")).append('\n')
                     }
-                    append("If no related app is installed, ask the user with numbered choices; only run the install flow when install_app is enabled.\n")
+                    append("Only ask the user to install/choose an app when no suitable installed app or GUI path exists; install flow requires install_app enabled.\n")
                 }
             }
         } catch (e: Exception) {

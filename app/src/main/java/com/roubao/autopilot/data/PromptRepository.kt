@@ -125,7 +125,8 @@ private val LEGACY_PRESET_FEEDBACK = listOf(
     "complaint" to "文本输入使用 type（ACTION_SET_TEXT），不要使用屏幕键盘。",
     "complaint" to "光标与选区使用 set_selection，不要长按拖拽。",
     "complaint" to "同一操作连续失败两次后必须更换策略，不要重复点击同一位置。",
-    "suggestion" to SECURITY_FEEDBACK
+    "suggestion" to SECURITY_FEEDBACK,
+    "suggestion" to PromptRepository.CALC_FEEDBACK
 )
 
 /** v10：把旧版随手写的反馈替换成专业、单职责的表述。 */
@@ -1093,7 +1094,7 @@ class PromptRepository private constructor(context: Context) {
         return PromptImportResult(agentCount, toolCount, feedbackCount, errors, packCount, overlayCount)
     }
 
-    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 22) {
+    private class PromptOpenHelper(context: Context) : SQLiteOpenHelper(context, "prompts.db", null, 23) {
 
         private val appContext = context.applicationContext
 
@@ -1122,7 +1123,7 @@ class PromptRepository private constructor(context: Context) {
                 )
                 val version = check.version
                 check.close()
-                if (version < 22) {
+                if (version < 23) {
                     println("[PromptRepository] seed db version too old: $version")
                     tmp.delete()
                     return
@@ -1233,9 +1234,6 @@ class PromptRepository private constructor(context: Context) {
             }
             if (oldVersion < 7) {
                 removeLegacyDuplicateSuggestions(db)
-            }
-            if (oldVersion < 8) {
-                insertShellCalcSkill(db)
             }
             if (oldVersion < 9) {
                 addColumnIfMissing(db, "tool_skill_prompts", "keywords_json", "TEXT NOT NULL DEFAULT '[]'")
@@ -1382,6 +1380,28 @@ class PromptRepository private constructor(context: Context) {
                     })
                 }
             }
+            if (oldVersion < 23) {
+                // shell_calc 是“内部命令”却挂在 skill 上；按 tool=内部命令的定义删除。
+                // 计算需求保留为一条反馈：算术不要心算，有 shell 用 expr，basic 用计算器/GUI。
+                db.delete("tool_skill_prompts", "id = ?", arrayOf("shell_calc"))
+                insertRootShellTool(db)
+                val calcExists = db.query(
+                    "user_feedback",
+                    arrayOf("id"),
+                    "text = ?",
+                    arrayOf(CALC_FEEDBACK),
+                    null, null, null
+                ).use { it.moveToFirst() }
+                if (!calcExists) {
+                    db.insert("user_feedback", null, ContentValues().apply {
+                        put("text", CALC_FEEDBACK)
+                        put("created_at", System.currentTimeMillis())
+                        put("enabled", 1)
+                        put("kind", "suggestion")
+                        put("dependence_json", "[]")
+                    })
+                }
+            }
         }
 
         /** v11：移除内置 Prompt 中静态写死的 shell/open_app 推荐。 */
@@ -1503,7 +1523,7 @@ class PromptRepository private constructor(context: Context) {
         }
 
         private fun applyDependenceV13(db: SQLiteDatabase) {
-            val adbIds = listOf("shell", "shell_calc", "press_key")
+            val adbIds = listOf("shell", "press_key")
             adbIds.forEach { id ->
                 db.update(
                     "tool_skill_prompts",
@@ -1777,31 +1797,36 @@ Root-level tools may be available in this pack.
             }
         }
 
-        /** v8：加入 shell_calc 测试 Skill。 */
-        private fun insertShellCalcSkill(db: SQLiteDatabase) {
+        /** v23：加入 root_shell tool；root 级命令走独立 tool，不再伪装成 skill。 */
+        private fun insertRootShellTool(db: SQLiteDatabase) {
             val exists = db.query(
                 "tool_skill_prompts",
                 arrayOf("id"),
                 "id = ?",
-                arrayOf("shell_calc"),
+                arrayOf("root_shell"),
                 null, null, null
             ).use { it.moveToFirst() }
             if (exists) return
             db.insert("tool_skill_prompts", null, ContentValues().apply {
-                put("id", "shell_calc")
-                put("name", "shell_calc")
-                put("display_name", "Shell 计算")
-                put("category", "skill")
-                put("description", "算术计算必须用 shell 执行 expr，不允许模型自己心算")
-                put("prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
-                put("default_prompt", PromptRepository.DEFAULT_SKILL_SHELL_CALC)
+                put("id", "root_shell")
+                put("name", "root_shell")
+                put("display_name", "Root Shell")
+                put("category", "tool")
+                put("description", "以 root 执行 shell 命令（需要 su / Shizuku Root）")
+                put("prompt", PromptRepository.DEFAULT_TOOL_ROOT_SHELL)
+                put("default_prompt", PromptRepository.DEFAULT_TOOL_ROOT_SHELL)
                 put("is_default", 1)
                 put("enabled", 1)
-                put("domain", "计算")
+                put("keywords_json", "[]")
+                put("params_json", "[]")
+                put("related_apps_json", "[]")
+                put("prompt_hint", "")
+                put("domain", "系统")
                 put("source", "builtin")
                 put("executable", 1)
+                put("dependence_json", "[\"root\"]")
             })
-            println("[PromptRepository] inserted shell_calc skill")
+            println("[PromptRepository] inserted root_shell tool")
         }
 
         /**
@@ -2044,6 +2069,7 @@ Root-level tools may be available in this pack.
                 ToolSkillPromptEntity("swipe", "swipe", "滑动屏幕", "tool", "在屏幕上滑动，支持上下左右方向", DEFAULT_TOOL_SWIPE, DEFAULT_TOOL_SWIPE, true),
                 ToolSkillPromptEntity("type", "type", "输入文本", "tool", "输入文本内容到当前焦点位置", DEFAULT_TOOL_TYPE, DEFAULT_TOOL_TYPE, true),
                 ToolSkillPromptEntity("press_key", "press_key", "按键操作", "tool", "按下系统按键（Home、Back、Enter 等）", DEFAULT_TOOL_PRESS_KEY, DEFAULT_TOOL_PRESS_KEY, true),
+                ToolSkillPromptEntity("root_shell", "root_shell", "Root Shell", "tool", "以 root 执行 shell 命令（需要 su / Shizuku Root）", DEFAULT_TOOL_ROOT_SHELL, DEFAULT_TOOL_ROOT_SHELL, true, domain = "系统", source = "builtin", dependenceJson = "[\"root\"]"),
 
                 // Default Skills
                 ToolSkillPromptEntity("order_food", "order_food", "外卖点餐", "skill", "在美团/饿了么等应用中完成外卖搜索与点餐流程", DEFAULT_SKILL_ORDER_FOOD, DEFAULT_SKILL_ORDER_FOOD, true),
@@ -2051,8 +2077,7 @@ Root-level tools may be available in this pack.
                 ToolSkillPromptEntity("social_media", "social_media", "社交发帖", "skill", "在微信/小红书/微博等平台编辑并发布图文动态", DEFAULT_SKILL_SOCIAL_MEDIA, DEFAULT_SKILL_SOCIAL_MEDIA, true),
                 ToolSkillPromptEntity("e_commerce", "e_commerce", "电商购物", "skill", "在淘宝/京东/拼多多中搜索商品并加入购物车", DEFAULT_SKILL_E_COMMERCE, DEFAULT_SKILL_E_COMMERCE, true),
                 ToolSkillPromptEntity("music_player", "music_player", "音乐播放", "skill", "在网易云音乐/QQ音乐中搜索并播放指定歌曲", DEFAULT_SKILL_MUSIC_PLAYER, DEFAULT_SKILL_MUSIC_PLAYER, true),
-                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true),
-                ToolSkillPromptEntity("shell_calc", "shell_calc", "Shell 计算", "skill", "算术计算必须用 shell 执行 expr，不允许模型自己心算", DEFAULT_SKILL_SHELL_CALC, DEFAULT_SKILL_SHELL_CALC, true, domain = "计算", source = "builtin", executable = true)
+                ToolSkillPromptEntity("navigation", "navigation", "地图导航", "skill", "在高德/百度地图中搜索路线并开始导航", DEFAULT_SKILL_NAVIGATION, DEFAULT_SKILL_NAVIGATION, true)
             )
 
             for (item in defaults) {
@@ -2073,6 +2098,7 @@ Root-level tools may be available in this pack.
                     put("domain", item.domain)
                     put("source", item.source)
                     put("executable", if (item.executable) 1 else 0)
+                    put("dependence_json", item.dependenceJson)
                 }
                 db.insert("tool_skill_prompts", null, cv)
             }
@@ -2090,6 +2116,20 @@ Root-level tools may be available in this pack.
             return instance ?: synchronized(this) {
                 instance ?: PromptRepository(context.applicationContext).also {
                     instance = it
+                    try {
+                        val db = it.dbHelper.writableDatabase
+                        val rootShell = db.rawQuery(
+                            "select count(*) from tool_skill_prompts where id='root_shell'",
+                            null
+                        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+                        val shellCalc = db.rawQuery(
+                            "select count(*) from tool_skill_prompts where id='shell_calc'",
+                            null
+                        ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }
+                        println("[PromptRepository] db v${db.version} root_shell=$rootShell shell_calc=$shellCalc")
+                    } catch (e: Exception) {
+                        println("[PromptRepository] db probe failed: ${e.message}")
+                    }
                 }
             }
         }
@@ -2233,7 +2273,8 @@ A/B/C
         const val DEFAULT_TOOL_OPEN_APP = "工具: open_app\n说明: 通过应用名称打开指定的 App\n参数:\n  - text: string (必填) - 应用名称（如\"微信\"、\"设置\"）"
         const val DEFAULT_TOOL_DEEP_LINK = "工具: deep_link\n说明: 通过 DeepLink URL 直接打开应用的特定页面\n参数:\n  - url: string (必填) - DeepLink 链接"
         const val DEFAULT_TOOL_CLIPBOARD = "工具: clipboard\n说明: 读取或写入系统剪贴板内容\n参数:\n  - action: string (必填) - 操作类型 (read/write)\n  - text: string (可选) - 要写入剪贴板的文本"
-        const val DEFAULT_TOOL_SHELL = "工具: shell\n说明: 执行 ADB Shell 命令（需要 Shizuku 权限）\n参数:\n  - command: string (必填) - 要执行的 Shell 命令"
+        const val DEFAULT_TOOL_SHELL = "工具: shell\n说明: 执行 ADB Shell 命令（需要 Shizuku 权限）。算术计算也用 shell（expr / awk），不要心算。\n参数:\n  - command: string (必填) - 要执行的 Shell 命令"
+        const val DEFAULT_TOOL_ROOT_SHELL = "工具: root_shell\n说明: 以 root 执行 shell 命令（需要 su 或 Shizuku Root，仅高级模式）。高风险命令先只读确认。\n参数:\n  - command: string (必填) - 要执行的 root Shell 命令"
         const val DEFAULT_TOOL_HTTP = "工具: http\n说明: 发送 HTTP 请求获取外部数据\n参数:\n  - url: string (必填) - 请求 URL\n  - method: string (可选) - 请求方法 (GET/POST)"
         const val DEFAULT_TOOL_SCREENSHOT = "工具: screenshot\n说明: 截取当前屏幕，获取界面图像供 AI 分析"
         const val DEFAULT_TOOL_TAP = "工具: tap\n说明: 点击屏幕指定坐标位置\n参数:\n  - coordinate: list (必填) - 点击坐标 [x, y]"
@@ -2247,6 +2288,6 @@ A/B/C
         const val DEFAULT_SKILL_E_COMMERCE = "技能: e_commerce\n说明: 电商购物服务。搜索商品、对比价格并加入购物车或下单。"
         const val DEFAULT_SKILL_MUSIC_PLAYER = "技能: music_player\n说明: 音乐播放服务。搜索音乐名称、播放指定歌曲或歌单。"
         const val DEFAULT_SKILL_NAVIGATION = "技能: navigation\n说明: 地图导航服务。设置终点并开启语音路线导航。"
-        const val DEFAULT_SKILL_SHELL_CALC = "技能: shell_calc\n说明: 算术计算必须用 shell 执行 expr，不允许模型自己心算。\n步骤:\n1. 将用户表达式转成 shell expr 命令。\n2. 调用 shell 动作执行。\n3. 用 shell 输出作为最终 answer。"
+        const val CALC_FEEDBACK = "算术计算不要心算：有 shell 时用 expr / awk 执行，basic 下用计算器 App 或 GUI；不要直接给出心算结果。"
     }
 }

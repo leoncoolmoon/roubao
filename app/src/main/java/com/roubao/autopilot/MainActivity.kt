@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.d(TAG, "Shizuku binder dead")
         shizukuAvailable.value = false
+        AccessLevelManager.refresh(this)
     }
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
@@ -116,8 +117,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
-        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        readScheduledIntent(intent)
         applyOverlayIntent(intent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -214,7 +214,8 @@ class MainActivity : ComponentActivity() {
                 model = settings.model,
                 maxSteps = settings.maxSteps,
                 isGUIAgent = settings.currentProvider.isGUIAgent,
-                providerId = settings.currentProviderId
+                providerId = settings.currentProviderId,
+                source = "overlay"
             )
         }
         val agent = mobileAgent.value
@@ -347,8 +348,25 @@ class MainActivity : ComponentActivity() {
                                             model = settings.model,
                                             maxSteps = settings.maxSteps,
                                             isGUIAgent = settings.currentProvider.isGUIAgent,
-                                            providerId = settings.currentProviderId
+                                            providerId = settings.currentProviderId,
+                                            source = "home"
                                         )
+                                    },
+                                    onScheduledExecute = { instruction ->
+                                        runAgent(
+                                            instruction = instruction,
+                                            apiKey = settings.apiKey,
+                                            baseUrl = settings.baseUrl,
+                                            model = settings.model,
+                                            maxSteps = settings.maxSteps,
+                                            isGUIAgent = settings.currentProvider.isGUIAgent,
+                                            providerId = settings.currentProviderId,
+                                            source = "scheduled"
+                                        )
+                                    },
+                                    onInitialConsumed = {
+                                        scheduledPrompt.value = null
+                                        scheduledAutoRun.value = false
                                     },
                                     onStop = {
                                         mobileAgent.value?.stop()
@@ -390,6 +408,7 @@ class MainActivity : ComponentActivity() {
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
                                 onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
                                 onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
+                                onUpdateRootShellConfirmMode = { settingsManager.updateRootShellConfirmMode(it) },
                                 onUpdateAdvancedModeEnabled = { enabled ->
                                     settingsManager.updateAdvancedModeEnabled(enabled)
                                     if (enabled) {
@@ -573,12 +592,14 @@ class MainActivity : ComponentActivity() {
         model: String,
         maxSteps: Int,
         isGUIAgent: Boolean = false,
-        providerId: String = ""
+        providerId: String = "",
+        source: String = "home"
     ) {
         if (instruction.isBlank()) {
             Toast.makeText(this, "请输入指令", Toast.LENGTH_SHORT).show()
             return
         }
+        Log.i(TAG, "runAgent source=$source instruction=${instruction.take(80)}")
         // MAI-UI 本地部署不需要 API Key
         val requiresApiKey = providerId != "mai_ui"
         if (requiresApiKey && apiKey.isBlank()) {
@@ -674,7 +695,7 @@ class MainActivity : ComponentActivity() {
             executionRecords.value = executionRepository.getAllRecords()
 
             try {
-                val result = mobileAgent.value!!.runInstruction(instruction, maxSteps)
+                val result = mobileAgent.value!!.runInstruction(instruction, maxSteps, source = source)
 
                 // 更新记录状态
                 val agentState = mobileAgent.value?.state?.value
@@ -772,13 +793,26 @@ class MainActivity : ComponentActivity() {
         return if (instruction.length > 10) instruction.take(10) + "..." else instruction
     }
 
+    /**
+     * 读取定时任务 Intent 后立即移除 extras。
+     * 这样 Activity 被系统重建/从最近任务恢复时，不会再拿同一条旧 prompt 自动执行一次。
+     */
+    private fun readScheduledIntent(intent: Intent?) {
+        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
+        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        intent?.removeExtra(EXTRA_SCHEDULED_PROMPT)
+        intent?.removeExtra(EXTRA_SCHEDULED_AUTO_RUN)
+    }
+
     private fun applyOverlayIntent(intent: Intent?) {
         val command = intent?.getStringExtra("overlay_prompt") ?: return
         if (command.isBlank()) return
+        val hideAfterStart = intent.getBooleanExtra("hide_after_start", false)
         intent.removeExtra("overlay_prompt")
+        intent.removeExtra("hide_after_start")
         // 不经过 HomeScreen 的 initialAutoRun，避免当前不在首页时丢任务。
         pendingOverlayCommand.value = command
-        if (intent.getBooleanExtra("hide_after_start", false)) {
+        if (hideAfterStart) {
             // 任务记录已经创建后再退到后台；给 runAgent 留出启动时间。
             window.decorView.postDelayed({ moveTaskToBack(true) }, 3000)
         }
@@ -787,8 +821,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
-        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        readScheduledIntent(intent)
         applyOverlayIntent(intent)
     }
 

@@ -1,0 +1,6 @@
+{
+  "text": "算术计算不要心算：有 shell 时用 expr / awk 执行，basic 下用计算器 App 或 GUI；不要直接给出心算结果。",
+  "kind": "suggestion",
+  "enabled": true,
+  "dependence": []
+}

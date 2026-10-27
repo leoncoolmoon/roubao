@@ -77,6 +77,10 @@ class App : Application() {
 
         // 刷新访问等级（只读缓存，不触发 su 弹窗）
         com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        // 高级模式已开启时，启动阶段补一次 root 探测，否则重启后 root 缓存为空，等级会停在上一次刷新。
+        if (settingsManager.settings.value.advancedModeEnabled) {
+            com.roubao.autopilot.agent.AccessLevelManager.ensureRoot(this)
+        }
     }
 
     override fun onTerminate() {

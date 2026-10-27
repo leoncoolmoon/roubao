@@ -146,14 +146,15 @@ class Manager {
             false
         }
         result += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
-            "Installed apps: $installedApps\n" +
-            "Only plan or name apps from this list. A skill's related apps are suggestions, not proof that they are installed. " +
-            "If none of a skill's preferred apps are installed, do not plan/open those apps; use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one. " +
-            "Never call open_app for an app that is not in Installed apps.\n" +
+            "App inventory (partial: system defaults + skill-related apps):\n$installedApps\n" +
+            "This is NOT the full installed-app list. If the app you need is not listed, call `search_apps` with its name; " +
+            "only after search returns no match should you treat it as not installed.\n" +
+            "Do not invent a package name. A skill's related apps are hints, not requirements. " +
+            "If none are installed, use a similar installed app, web version, or GUI; only ask the user when no suitable app/GUI path exists.\n" +
             "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
             "If the user explicitly names an installed app, call open_app with that exact name first; do not ask the user to confirm the app name unless open_app fails.\n"
 
-        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
+        val policy = toolPolicySection(infoPool.effectiveLevel())
         if (policy.isNotBlank()) result += policy
 
         return result

@@ -64,16 +64,15 @@ data class InfoPool(
     // 无障碍 UI 元素树信息
     var accessibilityTree: String = "",
 
-    // 本次任务快照的提示词包与访问等级
+    // 本次任务快照的 Agent 策略包与访问等级
     var packId: String = "standard",
-    var packLevel: String = "adb",
     var accessLevel: String = "user"
 ) {
-    /** pack 是上限：basic 包在 adb 环境下也只能用 user 级工具。 */
-    fun effectiveLevel(): AccessLevel = AccessLevel.cap(
-        AccessLevel.fromId(accessLevel),
-        AccessLevel.fromId(packLevel)
-    )
+    /**
+     * 工具/Skill 只看系统权限等级。
+     * pack 只决定 Agent prompt（Manager/Executor/Reflector/Notetaker），不限制 tool/skill。
+     */
+    fun effectiveLevel(): AccessLevel = AccessLevel.fromId(accessLevel)
 }
 
 /**

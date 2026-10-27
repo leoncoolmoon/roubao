@@ -5,11 +5,11 @@
 <h1 align="center">Roubao (肉包)</h1>
 
 <p align="center">
-  <strong>The First Open-Source AI Phone Automation Assistant Without PC</strong>
+  <strong>Open-source AI phone automation without a PC · Permission-aware · Fully database-backed prompts</strong>
 </p>
 
 <p align="center">
-  Vision-Language Model (VLM) · Native Android Kotlin · Multi-Agent Architecture
+  Vision-Language Model (VLM) · Native Android Kotlin · Accessibility + Shizuku + Root
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Version-1.4.5-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/Min%20SDK-26-blue.svg" alt="Min SDK">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -36,505 +37,433 @@
 
 ---
 
-## Background
+## What Is Roubao?
 
-In December 2025, ByteDance partnered with ZTE to release "Doubao Phone Assistant" - an AI assistant that can automatically operate your phone to complete complex tasks. It can compare prices and place orders, batch-apply for jobs, and scroll through videos.
+Roubao is a fully open-source, native Android AI phone automation assistant.  
+No PC, no cable. Install it, add a model API key, and operate your phone with natural language.
 
-The first batch of 30,000 engineering units priced at 3,499 CNY (~$480) sold out on launch day, with resale prices reaching 5,000+ CNY.
+Unlike Shizuku-only solutions, Roubao models the real permission levels a phone can grant:
 
-**Can't buy one? Let's build our own.**
+```text
+No privilege / Accessibility (user) < Shizuku ADB (adb) < Root (root)
+```
 
-And so Roubao was born - a fully open-source AI phone automation assistant.
+Each level only exposes the Tools and Skills that can actually run, so the model does not waste steps on paths the system will reject.
 
-Why "Roubao" (肉包, meaning "meat bun")? Because the author doesn't like vegetables. 🥟
+> Current version: **1.4.5 (versionCode 10)**  
+> Recent focus: permission model cleanup, Prompt DB v23, accessibility enhancements, root shell, task pause/reminders, on-demand app inventory.
 
 ---
 
-## Comparison
+## Status
 
-| Feature | Roubao | Doubao Phone | Other Open Source |
-|---------|--------|--------------|-------------------|
-| Requires PC | ❌ No | ❌ No | ✅ Most do |
-| Requires Hardware | ❌ No | ✅ $480+ | ❌ No |
-| Native Android | ✅ Kotlin | ✅ Native | ❌ Python |
-| Open Source | ✅ MIT | ❌ Closed | ✅ Yes |
-| Skills/Tools Architecture | ✅ Full | ❓ Unknown | ❌ No |
-| UI Design | ⭐⭐⭐½ | ⭐⭐⭐⭐ | ⭐⭐ |
-| Custom Models | ✅ Yes | ❌ Doubao only | ✅ Partial |
-
-### What Problem Do We Solve?
-
-**Pain points of traditional phone automation:**
-
-- Must connect to a computer to run ADB commands
-- Need to set up Python environment and various dependencies
-- Can only operate from computer, phone must be connected via USB
-- High technical barrier, difficult for regular users
-
-**Roubao's Solution:**
-
-One app, install and use. No computer, no cables, no technical background required.
-
-Open App → Configure API Key → Tell it what you want → Done.
-
----
-
-## Why Choose Roubao?
-
-### Native Android Implementation, Not a Python Script Wrapper
-
-Almost all phone automation open-source projects (including Alibaba's MobileAgent) are **Python implementations**, requiring:
-- Running Python scripts on a computer
-- Phone connected to computer via USB/WiFi ADB
-- Screenshots transferred to computer, processed, then commands sent back to phone
-
-**Roubao is completely different.**
-
-We **rewrote the entire MobileAgent framework in Kotlin**, running natively on Android:
-- Screenshot, analysis, and execution all happen locally on the phone
-- No computer relay, lower latency
-- Uses Shizuku for system-level permissions instead of cumbersome ADB commands
-
-### Why Shizuku?
-
-For security reasons, regular Android apps cannot:
-- Simulate user taps and swipes on screen
-- Read UI content from other apps
-- Execute system commands like `input tap` or `screencap`
-
-Traditional solutions require connecting to a computer for ADB commands. **Shizuku** is an elegant solution:
-
-1. Start Shizuku service **once** via wireless debugging or computer ADB
-2. After that, regular apps can gain ADB-level permissions
-3. **No Root required**, no need to connect to computer each time
-
-This allows Roubao to execute screenshots, taps, and input directly on the phone, truly achieving "one app does it all."
-
-### Claude Code-Inspired Tools/Skills Architecture
-
-Inspired by [Claude Code](https://claude.ai/claude-code), Roubao implements a **Tools + Skills dual-layer Agent framework**:
-
-```
-User: "Order me some food"
-         │
-         ▼
-   ┌─────────────┐
-   │ SkillManager │  ← Intent Recognition
-   └─────────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-🚀 Fast Path   🤖 Standard Path
-(Delegation)   (GUI Automation)
-    │              │
-    ▼              ▼
-Direct DeepLink  Agent Loop
-Open Xiaomei AI  Operate Meituan App
-```
-
-**Tools Layer (Atomic Capabilities)**
-
-Low-level toolkit where each Tool performs an independent operation:
-
-| Tool | Function |
-|------|----------|
-| `search_apps` | Smart app search (pinyin, semantic support) |
-| `open_app` | Open application |
-| `deep_link` | Jump to specific app page via DeepLink |
-| `clipboard` | Read/write clipboard |
-| `shell` | Execute Shell commands |
-| `http` | HTTP requests (call external APIs) |
-
-**Skills Layer (User Intent)**
-
-User-facing task layer that maps natural language to specific operations:
-
-| Skill | Type | Description |
-|-------|------|-------------|
-| Order Food (Xiaomei) | Delegation | Directly open Xiaomei AI to help order |
-| Order Food (Meituan) | GUI Automation | Step-by-step operation on Meituan App |
-| Navigate (Amap) | Delegation | DeepLink directly to Amap search |
-| Generate Image (Jimeng) | Delegation | Open Jimeng AI to generate images |
-| Send WeChat | GUI Automation | Auto-operate WeChat to send messages |
-
-**Two Execution Modes:**
-
-1. **Delegation**: For high-confidence matches, directly open AI-capable apps (like Xiaomei, Doubao, Jimeng) via DeepLink to complete tasks. **Fast, one-step.**
-
-2. **GUI Automation**: For apps without AI capability (like Meituan, WeChat), complete tasks through traditional screenshot-analyze-operate loops. Skills provide step guidance for better success.
+| Module | Status | Notes |
+|---|---|---|
+| Accessibility automation | ✅ Done | UI tree, index actions, coordinate calibration, blind-operation fallback |
+| Accessibility screenshot | ✅ Done | API 30+ `takeScreenshot`; fallback to shell / tree-only |
+| Shizuku ADB | ✅ Done | shell, files, `pm`/`am`/`settings`, screenshot fallback |
+| Root shell | ✅ Implemented, needs device validation | Shizuku Root or `su -c`; `root_shell` tool + confirmation setting |
+| Three-tier permission filtering | ✅ Done | Tools/Skills follow permission; upward blocked, downward allowed |
+| Database-backed prompts | ✅ Done | SQLite v23; agents / tools / skills / feedback / packs / overlays / audit |
+| Prompt import/export/editor | ✅ Done | v3 import/export, placeholders, format checks, per-item reset |
+| Pause / resume | ✅ Done | Main UI + overlay checkpoints |
+| Scheduled reminders | ✅ Done | AlarmManager + notification; exact/inexact modes |
+| On-demand app inventory | ✅ Done | System defaults + skill-related apps; `search_apps` for the full list |
+| Root shell confirmation | ✅ Done | Settings: "every time" / "allow by default" |
+| `su-user` provider | ❌ Not implemented | su-only devices still lack adb-level shell |
+| MediaProjection | ❌ Not implemented | API <30 uses tree-only / shell screenshots |
+| Macro scripts | ❌ Not implemented | No record/replay yet |
+| `SkillManager.execute` legacy path | ⚠️ Not wired into main chain | Skills are prompt context, not script runners |
 
 ---
 
 ## Key Features
 
-### 🤖 Intelligent AI Agent
+### 🧱 Three-tier permission model
 
-- Based on advanced Vision Language Models (VLM), can "see" and understand screen content
-- Natural language commands - just speak normally
-- Smart decision making, automatically plans next steps based on screen state
+| Level | Source | Capabilities | Default agent strategy |
+|---|---|---|---|
+| `user` | Accessibility service | UI tree, screenshots, tap/swipe/type, `open_app`, `search_apps` | `basic` |
+| `adb` | Shizuku ADB | Adds `shell`, files, `pm`/`am`/`settings`, screenshot fallback | `standard` |
+| `root` | `su` or Shizuku Root + advanced mode | Adds `root_shell` (confirmation by default) | `advanced` |
 
-### 🗃️ Database-Backed Prompt Management and Accessibility Enhancements
+Rules:
 
-- Agent and Tool/Skill Prompt Database Management, support inport/export and modification
-- Android Accessibility Service and Enhanced Automation
+- A Tool/Skill's `dependence` is its **minimum permission**. It is available when `minLevel <= currentLevel`.
+- **Upward is blocked**: user level cannot see adb/root tools; adb cannot see root tools.
+- **Downward is allowed**: root can use adb/user tools.
+- Permission filtering is about **prompt economy**, not security. Real enforcement is Android permissions / providers / `ActionGate`.
+- **A pack only selects the Agent prompt strategy.** It does not hide Tools or Skills.
+- The Capabilities screen shows everything; only insufficient permission is marked.
+- Accessibility is a UI provider, not a prerequisite for adb. If accessibility is disconnected while Shizuku ADB is alive, `currentLevel` remains `adb` and shell stays available.
 
-### 🎨 Beautifully Designed UI
+### ♿ Accessibility enhancements
 
-**This is probably the best-looking UI among all open-source phone automation projects.**
+- UI tree dump (text, content description, view id, bounds, clickable/editable)
+- Optional **index mode**: `{"action":"click","index":5}`, with text/coordinate fallback
+- Text calibration: when the model provides `text`, prefer the accessibility node center
+- Gestures: `dispatchGesture` for tap/swipe/long-press/double-tap
+- `ACTION_SET_TEXT` writes text directly, independent of IME language state
+- `ACTION_SET_SELECTION` for cursor/selection
+- `ACTION_SCROLL_*` for paging
+- API 30+ accessibility screenshot; fallback to shell / tree-only
+- Basic UI tasks work without Shizuku
 
-- Modern Material 3 design language
-- Smooth animations
-- Dark/Light theme auto-adaptation
-- Carefully designed onboarding experience
-- Full English and Chinese language support
+### 🧠 Tools + Skills
 
-### 🔒 Safety Protection
+**Tool = an internal command bound to a permission.**
 
-- API Key encrypted with AES-256-GCM
-- Automatically stops when detecting payment or password pages
-- Full visibility during task execution with overlay progress display
-- Can manually stop tasks anytime
-- Optional cloud crash reporting (can be disabled in settings)
+| Tool | Purpose | Minimum level |
+|---|---|---|
+| `tap` / `swipe` / `type` / `press_key` | UI actions | user |
+| `open_app` / `deep_link` | Launch app / deep link | user |
+| `search_apps` | Search installed apps (name/package/semantic) | user |
+| `http` / `clipboard` | External API / clipboard | user |
+| `shell` | ADB shell (files, pm, am, settings, screenshot fallback) | adb |
+| `root_shell` | Root shell (su / Shizuku Root) | root |
 
-### 🔓 Root Mode Support
+**Skill = a capability that drives an external app / GUI.**
 
-When Shizuku runs with Root privileges, Roubao can enable Root mode:
+- A Skill is **not one-to-one with an app**. `related_apps` is a hint.
+- If no related app is installed, prefer a similar installed app, web version, or GUI path.
+- Only ask the user when no suitable app/GUI path exists.
+- `shell_calc` was removed: it was an internal command, not an external GUI skill. The arithmetic rule now lives in the `shell` prompt and a feedback lesson.
 
-- **Root Mode**: Unlock more system-level operation capabilities
-- **su Commands**: Allow execution of `su -c` commands (use with caution)
-- **Auto Detection**: Automatically detects Shizuku privilege level (ADB/Root), option is grayed out in non-Root environments
+### 🗃️ Fully database-backed prompts
+
+- SQLite `prompts.db` v23:
+  - `agent_prompts`
+  - `tool_skill_prompts`
+  - `user_feedback`
+  - `prompt_packs`
+  - `agent_pack_overlays`
+  - `action_audit`
+  - `meta`
+- First install copies `assets/prompts_seed.db`; existing installs migrate by version.
+- Agents, Tools, Skills, feedback and pack overlays are editable in-app.
+- v3 import/export, per-item import/export, per-item reset, full reset.
+- Prompt editor with placeholder panel and format checks:
+  - Agent: required placeholders such as `{{instruction}}`
+  - Tool: `工具: name` + `说明:`
+  - Skill: `技能: name` + `说明:`
+- Feedback is filtered by permission before injection into Manager/Executor.
+- Built-in defaults plus custom suggestions/complaints.
+
+### 🧩 On-demand app inventory
+
+- No more dumping 500+ installed app names into every prompt.
+- Resident inventory = **system default apps** (browser/dialer/SMS/home/gallery/camera/email/music/calendar/settings/files/assistant) + **installed apps related to enabled Skills**.
+- If an app is missing from the list, call `search_apps`:
+  - returns app name + package + system flag
+  - `open_app` returns the resolved package/candidates instead of failing silently
+- This prevents the old "first 50 names alphabetically" truncation that made WeChat or Baidu Netdisk look uninstalled.
+
+### 🎛️ Task control / interaction
+
+- Pause/resume from the main UI and overlay
+- Persistent idle overlay (draggable, scalable)
+- Inline `ask_user` input with a 5-minute timeout policy
+- `take_over` collaboration and sensitive-action confirmation
+- Scheduled reminders via AlarmManager + notification, with exact/inexact modes
+- Partial wake lock during tasks
+- Successful tasks stay in the target app; failed/stopped tasks return to the main UI
+- Stale RUNNING history entries are cleaned on next launch
+
+### 🔐 Root / high risk
+
+- `root_shell` is a separate Tool with `dependence = ["root"]`
+- Root providers:
+  - Shizuku running as Root → ShellService
+  - otherwise → `su -c`
+- Settings → **Root command confirmation**:
+  - **Every time (default)**: confirm before execution, 2-minute timeout cancels
+  - **Allow by default**: no per-command confirmation
+- `root_shell` appears only with advanced mode + root provider; adb level is rejected by `ActionGate`
+- Normal `shell` is not affected by the root confirmation setting
+
+### 🤖 Multi-model / multi-provider
+
+- OpenAI-compatible APIs
+- Alibaba Qwen-VL
+- OpenAI / OpenRouter / custom endpoints
+- GUI-Owl mode
+- MAI-UI mode
+- Switch models while paused without losing task memory
+
+### 🎨 UI / UX
+
+- Material 3, dark/light themes
+- Home presets, attachments, long-press scheduling
+- Capabilities: Agents / Tools / Skills / suggestions & complaints
+- Prompt preview + long-press editing
+- Settings: permission groups, agent pack preview, Shizuku authorization, root confirmation
+- Full English and Chinese UI
+
+### 🔒 Safety
+
+- API key encrypted with AES-256-GCM
+- Stops or asks for confirmation on payment/password/biometric pages
+- High-risk actions can require confirmation; `ActionGate` is fail-closed for missing tools
+- Optional cloud crash reporting
+- Audit log records level / action / result
 
 ---
 
-## Quick Start
+## Why This Permission Model?
 
-### Prerequisites
+```text
+user(0) < adb(1) < root(2)
 
-1. **Android 8.0 (API 26)** or higher
-2. **WiFi Network** - Shizuku wireless debugging requires WiFi connection, ensure your phone is connected to WiFi
-3. **Shizuku** - For system-level control permissions
-4. **VLM API Key** - Requires a Vision Language Model API key (e.g., Alibaba Qwen-VL)
-
-### Installation Steps
-
-#### 1. Install and Start Shizuku
-
-Shizuku is an open-source tool that allows regular apps to gain ADB-level permissions without Root.
-
-- [Google Play](https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api)
-- [GitHub Releases](https://github.com/RikkaApps/Shizuku/releases)
-
-**Startup Methods (choose one):**
-
-**Wireless Debugging (Recommended, requires Android 11+)**
-1. Go to `Settings > Developer Options > Wireless Debugging`
-2. Enable Wireless Debugging
-3. In Shizuku app, select "Wireless Debugging" to start
-
-**Computer ADB**
-1. Connect phone to computer, enable USB Debugging
-2. Run: `adb shell sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh`
-
-#### 2. Install Roubao
-
-Download the latest APK from [Releases](../../releases) page.
-
-#### 3. Authorization & Configuration
-
-1. Open Roubao app
-2. Authorize Roubao in Shizuku
-3. **⚠️ Important: Go to Settings and configure your API Key**
-
-### Getting an API Key
-
-**Alibaba Qwen-VL (Recommended for China users)**
-1. Visit [Alibaba Cloud Bailian Platform](https://bailian.console.aliyun.com/)
-2. Enable DashScope service
-3. Create API key in API-KEY management
-
-**OpenAI (Requires proxy in some regions)**
-1. Visit [OpenAI Platform](https://platform.openai.com/)
-2. Create an API Key
-
----
-
-## Usage Examples
-
+item.minLevel = max(dependence)      // [] = user
+currentLevel  = highest available provider level
+available     = item.enabled && item.minLevel <= currentLevel
 ```
-Order a tasty burger nearby
-Open NetEase Music and play daily recommendations
-Post my latest photo to Weibo
-Order pork trotter rice on Meituan
-Watch trending videos on Bilibili
-```
+
+- **No privilege / accessibility**: UI-only; suitable for basic.
+- **Shizuku ADB**: adds shell/files/system commands; suitable for standard.
+- **Root**: adds root_shell; suitable for advanced.
+- **Pack**: selects the Agent prompt strategy only; does not change Tool/Skill availability.
+- **Skill-to-app relation**: a hint, not a binding; fall back to similar apps / web / GUI.
+
+The goals are:
+
+1. Do not send tools the current permission cannot execute.
+2. Do not dump hundreds of app names into every prompt.
+3. Give each permission level an appropriate Agent strategy.
+4. Keep real high-risk protection in system permissions + confirmation + audit.
 
 ---
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────┐
 │                         Roubao App                            │
 ├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │                  UI Layer (Compose)                  │   │
-│   │          HomeScreen / Settings / History            │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                   Skills Layer                       │   │
-│   │    SkillManager → Intent Recognition → Fast/Standard │   │
-│   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ Order Food │ Navigate │ Taxi │ WeChat │ AI Art │  │
-│   │    └─────────────────────────────────────────────┘  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                   Tools Layer                        │   │
-│   │    ToolManager → Atomic Capability Wrapper           │   │
-│   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ search_apps │ open_app │ deep_link │ clipboard │  │
-│   │    │ shell │ http │ screenshot │ tap │ swipe │ type │  │
-│   │    └─────────────────────────────────────────────┘  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                  Agent Layer                         │   │
-│   │    MobileAgent (ported from MobileAgent-v3)          │   │
-│   │    ┌───────────┬───────────┬───────────┬──────────┐ │   │
-│   │    │  Manager  │ Executor  │ Reflector │ Notetaker│ │   │
-│   │    │ (Planning)│(Execution)│(Reflection)│ (Notes) │ │   │
-│   │    └───────────┴───────────┴───────────┴──────────┘ │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                  VLM Client                          │   │
-│   │           Qwen-VL / GPT-4V / Claude                  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-├────────────────────────────┼────────────────────────────────┤
-│                            ▼                                 │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │                    Shizuku                           │   │
-│   │              System-level Control                    │   │
-│   │     screencap │ input tap │ input swipe │ am start  │   │
-│   └─────────────────────────────────────────────────────┘   │
+│  UI (Compose)                                                │
+│    Home / Capabilities / History / Settings / Onboarding     │
+│    OverlayService (idle / pause / ask_user / confirm)        │
+├──────────────────────────────────────────────────────────────┤
+│  Prompt layer                                                │
+│    PromptRepository (SQLite v23)                             │
+│    Agent / Tool / Skill / Feedback / Pack / Overlay / Audit  │
+├──────────────────────────────────────────────────────────────┤
+│  Skill layer                                                 │
+│    SkillManager → DB roster → permission filter → selection  │
+│    related apps are hints; otherwise similar app / GUI      │
+├──────────────────────────────────────────────────────────────┤
+│  Agent layer                                                 │
+│    MobileAgent → Manager → Executor → ActionGate             │
+│                 → Reflector / Notetaker                      │
+│    Tool Policy generated from permission + DB                │
+├──────────────────────────────────────────────────────────────┤
+│  Execution layer                                             │
+│    DeviceController                                          │
+│      ├─ AccessibilityService (tree / index / gestures / shot)│
+│      ├─ Shizuku ShellService (adb shell / files / settings)  │
+│      └─ su -c / Shizuku Root (root_shell)                    │
+├──────────────────────────────────────────────────────────────┤
+│  VLM Client                                                   │
+│    OpenAI-compatible / Qwen-VL / GUI-Owl / MAI-UI            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Workflow
 
-```
-User Input
-      │
-      ▼
-┌─────────────────┐
-│  Skills Match    │ ← Check for matching Skill
-└─────────────────┘
-      │
-      ├── High-confidence Delegation Skill ──▶ Direct DeepLink ──▶ Done
-      │
-      ▼
-┌─────────────────┐
-│ Standard Agent   │
-│     Loop        │
-└─────────────────┘
-      │
-      ▼
-   ┌──────────────────────────────────────────────┐
-   │  1. Screenshot - Shizuku screencap           │
-   │  2. Manager Planning - VLM analyzes state    │
-   │  3. Executor Decision - Determine next step  │
-   │  4. Execute Action - tap/swipe/type/open_app │
-   │  5. Reflector - Evaluate action outcome      │
-   │  6. Loop until done or safety limit          │
-   └──────────────────────────────────────────────┘
+```text
+User instruction
+  │
+  ▼
+AccessLevelManager.refresh()
+  │  accessibility / Shizuku ADB / su / Shizuku Root
+  ▼
+SkillManager / PromptRepository
+  │  permission-filtered DB skills; related apps are hints
+  ▼
+MobileAgent loop
+  │
+  ├─ Accessibility UI tree + screenshot (or tree-only)
+  ├─ Manager planning (agent pack)
+  ├─ Executor decision
+  ├─ ActionGate: permission / provider / enabled
+  ├─ DeviceController execution
+  │    ├─ accessibility gestures / index / ACTION_SET_TEXT
+  │    ├─ shell (Shizuku ADB)
+  │    └─ root_shell (Root + confirmation)
+  ├─ Reflector
+  └─ loop until done / sensitive page / user stop
 ```
 
-### Project Structure
+---
 
-```
+## Project Structure
+
+```text
 app/src/main/java/com/roubao/autopilot/
-├── agent/                    # AI Agent Core (ported from MobileAgent-v3)
-│   ├── MobileAgent.kt        # Agent main loop
-│   ├── Manager.kt            # Planning Agent
-│   ├── Executor.kt           # Execution Agent
-│   ├── ActionReflector.kt    # Reflection Agent
-│   ├── Notetaker.kt          # Notes Agent
-│   └── InfoPool.kt           # State pool
-│
-├── tools/                    # Tools Layer - Atomic Capabilities
-│   ├── Tool.kt               # Tool interface definition
-│   ├── ToolManager.kt        # Tool manager
-│   ├── SearchAppsTool.kt     # App search
-│   ├── OpenAppTool.kt        # Open app
-│   ├── DeepLinkTool.kt       # DeepLink jump
-│   ├── ClipboardTool.kt      # Clipboard operations
-│   ├── ShellTool.kt          # Shell commands
-│   └── HttpTool.kt           # HTTP requests
-│
-├── skills/                   # Skills Layer - User Intent
-│   ├── Skill.kt              # Skill interface definition
-│   ├── SkillRegistry.kt      # Skill registry
-│   └── SkillManager.kt       # Skill manager
-│
-├── controller/               # Device Control
-│   ├── DeviceController.kt   # Shizuku controller
-│   └── AppScanner.kt         # App scanner (pinyin/semantic search)
-│
-├── vlm/                      # VLM Client
-│   └── VLMClient.kt          # API wrapper
-│
-├── ui/                       # User Interface
-│   ├── screens/              # Screen composables
-│   ├── theme/                # Theme definitions
-│   └── OverlayService.kt     # Overlay service
-│
-├── data/                     # Data Layer
-│   └── SettingsManager.kt    # Settings management
-│
-└── App.kt                    # Application entry
+├── agent/
+│   ├── MobileAgent.kt              # main loop / pause / action dispatch
+│   ├── Manager.kt                  # planning agent
+│   ├── Executor.kt                 # execution agent
+│   ├── ActionReflector.kt          # reflection agent
+│   ├── Notetaker.kt                # notes agent
+│   ├── InfoPool.kt                 # state pool
+│   ├── AccessLevel.kt              # user / adb / root
+│   ├── AccessLevelManager.kt       # provider detection & refresh
+│   ├── ActionGate.kt               # pre-execution gate
+│   ├── CapabilityPromptSupport.kt  # Tool Policy
+│   └── PromptPackResolver.kt       # agent pack selection
+├── controller/
+│   ├── DeviceController.kt         # accessibility / Shizuku / root_shell
+│   ├── AppScanner.kt               # full app scan / search
+│   └── AppInventory.kt             # default + skill-related inventory
+├── data/
+│   ├── PromptRepository.kt         # SQLite v23 / import-export / migrations
+│   ├── SettingsManager.kt          # settings
+│   └── ExecutionHistory.kt         # execution history
+├── service/
+│   ├── AutoPilotAccessibilityService.kt
+│   ├── ShellService.kt             # Shizuku UserService
+│   ├── ReminderReceiver.kt
+│   └── ReminderScheduler.kt
+├── skills/
+│   ├── SkillManager.kt             # DB roster / related-app hints
+│   └── SkillRegistry.kt            # assets skills.json
+├── tools/                          # Tool interface / ToolManager / built-ins
+├── ui/
+│   ├── OverlayService.kt           # idle / pause / ask_user / confirm
+│   └── screens/                    # Home / Capabilities / Settings / ...
+└── vlm/                            # VLM / GUI-Owl / MAI-UI clients
 
-app/src/main/assets/
-└── skills.json               # Skills configuration file
+prompt-seed/                        # readable seed source
+scripts/build_prompt_seed.py        # builds assets/prompts_seed.db
+app/src/main/assets/prompts_seed.db # seed DB (v23)
 ```
 
 ---
 
-## Roadmap
-
-### Completed (v1.x)
-
-- [x] **Native Android Implementation** - Kotlin rewrite of MobileAgent, no Python dependency
-- [x] **Tools Layer** - Atomic capability wrapper (search_apps, deep_link, clipboard, etc.)
-- [x] **Skills Layer** - User intent mapping with Delegation and GUI Automation modes
-- [x] **Smart App Search** - Multi-dimensional matching via pinyin, semantic, and category
-- [x] **Fast Path** - High-confidence Skills direct DeepLink jump
-- [x] **Database-backed Agent & Tool/Skill Prompt Management** - Prompts persisted in SQLite DB, supporting UI preview, long-press multi-line editing & reset, and dynamic creation/deletion of custom Agent, Tool, and Skill entries
-- [x] **Android Accessibility Service and Enhanced Automation** - Registered `AccessibilityService`, supports UI tree dumping, precise coordinate targeting, and blind-operation fallback for unreliable screenshots
-
-### 🚀 v2.0 In Development
-
-> Major update in progress on `roubao2.0+AccessibilityService` branch
-
-- [ ] **Accessibility Service Hybrid Mode** - Integrate AccessibilityService for more precise UI control
-  - Prioritize element index-based clicking (unaffected by screen changes)
-  - Smart fallback: auto-switch to coordinate mode when index mode fails
-  - No Root required, further lowering the barrier to entry
-
-- [ ] **UI Tree Awareness** - Agent can access complete UI structure
-  - Identify clickable elements, input fields, scrollable areas
-  - Provide structured UI context to LLM
-  - Reduce pure-visual misjudgments
-
-- [ ] **Macro Script System** - Record, store, and replay action sequences
-  - Record execution as replayable scripts
-  - Support loop playback, delay control
-  - Script management UI (new "Scripts" navigation tab)
-
-- [ ] **Settings Enhancement**
-  - Accessibility service toggle with guidance
-  - Hybrid mode status display
-
-### Near-term
-
-- [ ] **MCP (Model Context Protocol)** - Extended capabilities like calendar, email, file management
-- [ ] **Execution Recording** - Save task execution videos for review and debugging
-- [ ] **More Skills** - Expand built-in Skills, support user customization
-
-### Mid-term
-
-- [ ] **More Device Support** - Support more Android devices and custom systems (MIUI, ColorOS, HarmonyOS, etc.)
-- [ ] **Local Models** - Support running small VLMs on-device for offline use
-- [ ] **Task Templates** - Save and share common tasks
-
-### Long-term Vision
-
-- [ ] **Multi-app Collaboration** - Cross-app workflows for complex tasks
-- [ ] **Smart Learning** - Learn from user habits to optimize execution strategies
-- [ ] **Voice Control** - Voice activation and commands
-
----
-
-## Development
+## Quick Start
 
 ### Requirements
 
-- Android Studio Hedgehog or later
-- JDK 17
-- Android SDK 34
+1. Android 8.0 (API 26)+
+2. **Accessibility service** — required for basic mode
+3. **Shizuku** — required for standard/adb mode (optional)
+4. **Root (optional)** — advanced + `root_shell`
+5. VLM API key
 
-### Building
+> Basic mode does not require Shizuku. Only file/system commands, `shell`, and `root_shell` need higher permission.
+
+### Install
+
+1. Download the APK from [Releases](../../releases).
+2. Open Roubao.
+3. Enable accessibility following the onboarding.
+4. Authorize Roubao in Shizuku if you need adb capabilities.
+5. Configure API key / provider / model in Settings.
+
+### Recommended setups
+
+| Scenario | Recommendation |
+|---|---|
+| UI-only automation | Accessibility + basic |
+| Files/system commands | Accessibility + Shizuku ADB + standard |
+| root_shell | Shizuku Root or su + advanced mode + advanced |
+| No accessibility but Shizuku ADB alive | Level stays adb; shell works, UI tools degrade by provider |
+
+### API keys
+
+- Alibaba Bailian / DashScope (recommended in China)
+- OpenAI / OpenRouter
+- Custom OpenAI-compatible endpoints (Ollama, vLLM, etc.)
+
+---
+
+## Prompt Management & Customization
+
+- Capabilities → Agents / Tools / Skills / suggestions & complaints
+- Long-press a prompt preview to edit; reset to default supported
+- Top `⋮`: add Agent/Skill/Tool/suggestion/complaint, import JSON, export JSON
+- Prompt editor:
+  - dynamic placeholder panel
+  - required placeholder checks for Agents
+  - first-line format checks for Tools/Skills
+- Agent strategy packs:
+  - `basic`: accessibility-only UI strategy
+  - `standard`: ADB/shell-first strategy
+  - `advanced`: root strategy
+  - runtime selects by permission; the Settings selection is for preview/editing
+
+---
+
+## Build
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/roubao.git
+git clone https://github.com/leoncoolmoon/roubao.git
 cd roubao
 
-# Build Debug version
+# Debug
 ./gradlew assembleDebug
 
-# Install to device
-./gradlew installDebug
+# Release (unsigned)
+./gradlew assembleRelease
+
+# Local signing example
+zipalign -p -f 4 app-release-unsigned.apk app-release-aligned.apk
+apksigner sign --ks custom.keystore --ks-key-alias roubao_key \
+  --out roubao-signed.apk app-release-aligned.apk
 ```
+
+Environment: JDK 17, Android SDK 34, Gradle 8.5.
+
+> If Firebase Crashlytics is enabled, provide `app/google-services.json`; otherwise disable cloud reporting.
+
+---
+
+## Known Limitations
+
+- `su-user` (`su 2000 -c`) provider is not implemented; su-only devices lack standard/adb shell.
+- `root_shell` needs validation on a real root / Shizuku Root device; it is not exposed on non-root devices.
+- MediaProjection is not implemented; API <30 relies on tree-only / shell screenshots.
+- Macro scripts are not implemented.
+- `SkillManager.execute` legacy path is not wired into the main chain; Skills are currently prompt context, not script runners.
+- `install_app` is a prompt rule, not a dedicated installer.
+- App inventory is on-demand; there is no package-change broadcast, so the cache TTL and `search_apps` handle installs/uninstalls.
 
 ---
 
 ## Bug Reports
 
-Encountered a crash or bug? Here's how to report:
+Use [GitHub Issues](https://github.com/leoncoolmoon/roubao/issues) and include:
 
-### Export Logs
-
-1. Open Roubao App → Settings
-2. Find "Feedback & Debug" section
-3. Tap "Export Logs"
-4. Choose a sharing method (Email, etc.) to send to developers
-
-### Log Contents
-
-- Device model and Android version
-- App version
-- Crash stack traces (if any)
-- Operation logs
-
-> 💡 Log files do NOT contain your API Key or personal information
-
-### Submit an Issue
-
-Please submit issues on [GitHub Issues](https://github.com/Turbo1123/roubao/issues) with:
 - Problem description
 - Steps to reproduce
-- Exported log file
+- Device model / Android version / app version
+- Settings → Feedback & Debug → Export logs
+
+Logs do not contain API keys or personal data.
 
 ---
 
 ## Contributing
 
-Issues and Pull Requests are welcome!
-
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push the branch
 5. Open a Pull Request
 
 ---
 
 ## License
 
-This project is open-sourced under the MIT License. See [LICENSE](LICENSE) file for details.
+MIT License. See [LICENSE](LICENSE).
 
 ---
 
 ## Acknowledgments
 
-- [MobileAgent](https://github.com/X-PLUG/MobileAgent) - Mobile Agent framework open-sourced by Alibaba DAMO Academy X-PLUG team, provided important technical reference for this project
-- [Shizuku](https://github.com/RikkaApps/Shizuku) - Excellent Android permission management framework
-
----
+- [MobileAgent](https://github.com/X-PLUG/MobileAgent) — mobile agent framework reference
+- [Shizuku](https://github.com/RikkaApps/Shizuku) — Android permission framework
 
 <p align="center">
   Made with ❤️ by Roubao Team

@@ -1,23 +1,23 @@
 [
   {
     "id": "basic",
-    "display_name": "基础包（仅无障碍）",
+    "display_name": "基础 Agent（仅无障碍策略）",
     "level": "user",
-    "description": "只用无障碍：UI 树 + 截图 + 手势",
+    "description": "只影响 Agent prompt：仅无障碍 UI 策略",
     "sort_order": 10
   },
   {
     "id": "standard",
-    "display_name": "标准包（Shizuku / su-user）",
+    "display_name": "标准 Agent（Shizuku / ADB 策略）",
     "level": "adb",
-    "description": "可用 adb 级 shell；system/file 优先 shell",
+    "description": "只影响 Agent prompt：ADB/shell 优先策略",
     "sort_order": 20
   },
   {
     "id": "advanced",
-    "display_name": "高级包（Root）",
+    "display_name": "高级 Agent（Root 策略）",
     "level": "root",
-    "description": "可用 root 级工具；高风险动作需确认",
+    "description": "只影响 Agent prompt：Root 策略",
     "sort_order": 30
   }
 ]

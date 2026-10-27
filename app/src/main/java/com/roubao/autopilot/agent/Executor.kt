@@ -83,9 +83,11 @@ class Executor {
         }
 
         prompt += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
-            "Only open or operate apps from Installed apps: $installedApps\n" +
-            "If the current skill's preferred app is not installed, do not open it. " +
-            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n" +
+            "App inventory (partial: system defaults + skill-related apps):\n$installedApps\n" +
+            "This is NOT the full installed-app list. If the app you need is not listed, call `search_apps` with its name " +
+            "before concluding it is not installed. Never call open_app with a package you invented.\n" +
+            "If the current skill's related apps are not installed, they are not hard requirements: " +
+            "use a similar installed app, web version, or GUI; only use `ask_user` when no suitable app/GUI path exists.\n" +
             "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
             "If the user explicitly names an installed app, call open_app with that exact name first; only ask if open_app fails.\n"
 
@@ -122,7 +124,7 @@ class Executor {
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
-        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
+        val policy = toolPolicySection(infoPool.effectiveLevel())
         if (policy.isNotBlank()) prompt += policy
 
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")

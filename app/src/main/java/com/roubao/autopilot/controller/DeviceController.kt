@@ -183,6 +183,45 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
+     * root shell：走 su -c，仅在高级模式/root provider 下使用。
+     * 每次 spawn 一个 su 进程，超时 20 秒；失败返回明确错误，不做静默降级。
+     */
+    fun rootShell(command: String): String {
+        if (command.isBlank()) return "Error: empty root command"
+        // 优先 Shizuku Root：ShellService 本身已经是 uid 0，不需要每次 spawn su。
+        try {
+            if (isAvailable() && Shizuku.getUid() == 0) {
+                return exec(command)
+            }
+        } catch (_: Exception) {
+        }
+        var process: Process? = null
+        return try {
+            process = ProcessBuilder("su", "-c", command)
+                .redirectErrorStream(true)
+                .start()
+            val finished = process.waitFor(20, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return "Error: root command timeout"
+            }
+            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
+            if (process.exitValue() != 0) {
+                "Error(${process.exitValue()}): ${output.take(2000)}"
+            } else {
+                output
+            }
+        } catch (e: Exception) {
+            "Error: root provider unavailable: ${e.message}"
+        } finally {
+            try {
+                process?.destroy()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
      * 点击屏幕
      */
     fun tap(x: Int, y: Int) {

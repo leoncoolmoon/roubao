@@ -3,11 +3,11 @@ package com.roubao.autopilot.agent
 import com.roubao.autopilot.data.PromptRepository
 
 /**
- * 运行时 Tool Policy。由 DB 的 dependence/enabled + 当前等级/包生成，
+ * 运行时 Tool Policy。由 DB 的 dependence/enabled + 当前权限等级生成，
  * 只列当前环境真正能调用的动作，避免模型把步数浪费在不可用工具上。
+ * 注意：Agent 策略包（pack）只影响 Agent prompt，不参与这里的过滤。
  */
 fun toolPolicySection(
-    packId: String = "standard",
     level: AccessLevel = AccessLevelManager.current()
 ): String {
     val repo = try {
@@ -16,16 +16,9 @@ fun toolPolicySection(
         return ""
     }
 
-    val packLevel = try {
-        repo.getPack(packId)?.level?.let { AccessLevel.fromId(it) } ?: AccessLevel.ROOT
-    } catch (e: Exception) {
-        AccessLevel.ROOT
-    }
-    val effective = AccessLevel.cap(level, packLevel)
-
-    val dispatchable = setOf("tap", "type", "swipe", "press_key", "open_app", "shell")
+    val dispatchable = setOf("tap", "type", "swipe", "press_key", "open_app", "search_apps", "shell", "root_shell")
     val items = try {
-        repo.getToolSkillPromptsForLevel(effective)
+        repo.getToolSkillPromptsForLevel(level)
             .filter { it.category == "tool" && it.id in dispatchable && it.enabled }
     } catch (e: Exception) {
         emptyList()
@@ -38,13 +31,14 @@ fun toolPolicySection(
         "swipe" to "{\"action\":\"swipe\",\"direction\":\"up|down|left|right\"}",
         "press_key" to "{\"action\":\"key\",\"key\":\"ENTER|BACK|HOME|TAB|DPAD_DOWN\"}",
         "open_app" to "{\"action\":\"open_app\",\"text\":\"应用名\"}",
-        "shell" to "{\"action\":\"shell\",\"command\":\"ls /sdcard/Download\"}"
+        "search_apps" to "{\"action\":\"search_apps\",\"text\":\"应用名关键词\"}",
+        "shell" to "{\"action\":\"shell\",\"command\":\"ls /sdcard/Download\"}",
+        "root_shell" to "{\"action\":\"root_shell\",\"command\":\"id\"}"
     )
 
     return buildString {
         append("\n\n### Tool Policy (AUTHORITATIVE) ###\n")
-        append("Access level: ").append(effective.id).append(" (").append(effective.label).append(")")
-        append(" | pack: ").append(packId).append('\n')
+        append("Permission level: ").append(level.id).append(" (").append(level.label).append(")\n")
         append("Enabled tools:\n")
         items.sortedBy { it.id }.forEach { item ->
             append("- ").append(item.id)
@@ -54,9 +48,9 @@ fun toolPolicySection(
             append('\n')
         }
         if (items.none { it.id == "shell" }) {
-            append("shell/root are NOT available in this pack; use UI actions or ask the user to enable Shizuku.\n")
+            append("shell/root are NOT available at this permission level; use UI actions or ask the user to enable Shizuku.\n")
         }
-        if (effective.rank < AccessLevel.ADB.rank) {
+        if (level.rank < AccessLevel.ADB.rank) {
             append("Only UI actions are available: click, type, swipe, scroll, set_selection, system_button(BACK/HOME), open_app (normal Intent). Launch apps from Home/app drawer or open_app.\n")
         }
     }.trimEnd()

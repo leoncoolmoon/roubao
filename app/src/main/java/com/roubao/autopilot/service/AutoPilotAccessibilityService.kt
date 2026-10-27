@@ -42,6 +42,10 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
         println("[AccessibilityService] 无障碍服务已断开")
+        try {
+            com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        } catch (_: Exception) {
+        }
         return super.onUnbind(intent)
     }
 

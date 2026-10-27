@@ -91,7 +91,8 @@ data class AppSettings(
     val accessibilityModeEnabled: Boolean = true,
     val advancedModeEnabled: Boolean = false,
     val overlayScale: Float = 0.65f,
-    val promptPackMode: String = "auto"  // auto / basic / standard / advanced
+    val promptPackMode: String = "auto",  // auto / basic / standard / advanced
+    val rootShellConfirmMode: String = "always"  // always / auto
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -232,7 +233,8 @@ class SettingsManager(context: Context) {
             accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", true),
             advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
             overlayScale = prefs.getFloat("overlay_scale", 0.65f).coerceIn(0.4f, 1.2f),
-            promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto"
+            promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto",
+            rootShellConfirmMode = prefs.getString("root_shell_confirm_mode", "always") ?: "always"
         )
     }
 
@@ -388,5 +390,14 @@ class SettingsManager(context: Context) {
         }
         prefs.edit().putString("prompt_pack_mode", safe).apply()
         _settings.value = _settings.value.copy(promptPackMode = safe)
+    }
+
+    fun updateRootShellConfirmMode(mode: String) {
+        val safe = when (mode) {
+            "auto" -> "auto"
+            else -> "always"
+        }
+        prefs.edit().putString("root_shell_confirm_mode", safe).apply()
+        _settings.value = _settings.value.copy(rootShellConfirmMode = safe)
     }
 }

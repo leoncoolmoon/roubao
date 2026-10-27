@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
 import com.roubao.autopilot.App
+import com.roubao.autopilot.controller.AppInventory
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
@@ -52,6 +53,8 @@ class MobileAgent(
     private val useMAIUIMode: Boolean = maiuiClient != null
     // App 扫描器 (使用 App 单例中的实例)
     private val appScanner: AppScanner = App.getInstance().appScanner
+    // 常驻清单：系统默认应用 + Skill 关联应用；完整列表按需 search_apps
+    private val appInventory = AppInventory(context, appScanner)
     private val manager = Manager()
     private val executor = Executor()
     private val reflector = ActionReflector()
@@ -92,9 +95,10 @@ class MobileAgent(
     suspend fun runInstruction(
         instruction: String,
         maxSteps: Int = 25,
-        useNotetaker: Boolean = false
+        useNotetaker: Boolean = false,
+        source: String = "home"
     ): AgentResult {
-        log("开始执行: $instruction")
+        log("开始执行[$source]: $instruction")
         modelErrorNotified = false
 
         // 立即显示悬浮窗，不等意图分析/应用扫描完成
@@ -128,12 +132,8 @@ class MobileAgent(
 
         AccessLevelManager.refresh(context)
         val accessLevel = AccessLevelManager.current()
-        val packMode = try {
-            App.getInstance().settingsManager.settings.value.promptPackMode
-        } catch (e: Exception) {
-            "auto"
-        }
-        val pack = PromptPackResolver.resolve(accessLevel, packMode)
+        // 运行时 Agent 策略包按权限等级自动选；settings.promptPackMode 只用于预览/编辑。
+        val pack = PromptPackResolver.resolveRuntime(accessLevel)
         val packId = pack?.id ?: "basic"
 
         // 使用 LLM 匹配 Skill，生成上下文信息给 Agent（不执行任何操作）
@@ -147,9 +147,8 @@ class MobileAgent(
 
         val infoPool = InfoPool(instruction = instruction)
         infoPool.packId = packId
-        infoPool.packLevel = pack?.level ?: "user"
         infoPool.accessLevel = accessLevel.id
-        log("访问等级: ${accessLevel.id}, 提示词包: $packId (cap=${infoPool.packLevel})")
+        log("访问等级: ${accessLevel.id}, Agent 策略包: $packId")
         infoPool.availableSkills = try {
             skillManager?.getEnabledSkillRoster(infoPool.effectiveLevel())
                 ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
@@ -183,18 +182,21 @@ class MobileAgent(
         infoPool.screenHeight = height
         log("屏幕尺寸: ${width}x${height}")
 
-        // 获取已安装应用列表（只取非系统应用，限制数量避免 prompt 过长）
-        // 60 秒内复用缓存；超过 TTL 才全量刷新，避免每个任务都扫一遍。
-        val apps = try {
-            appScanner.refreshAppsIfStale()
+        // 常驻 App 清单：系统默认应用 + 当前等级可用的 Skill 关联应用。
+        // 不再注入“全部非系统应用按名字排序的前 50 个”，完整列表由 search_apps 按需查询。
+        infoPool.installedApps = try {
+            withContext(Dispatchers.IO) {
+                appInventory.brief(infoPool.effectiveLevel())
+            }
         } catch (e: Exception) {
-            appScanner.getApps()
+            println("[肉包] AppInventory failed: ${e.message}")
+            ""
         }
-            .filter { !it.isSystem }
-            .take(50)
-            .map { it.appName }
-        infoPool.installedApps = apps.joinToString(", ")
-        log("已加载 ${apps.size} 个应用")
+        log(
+            "App Inventory: ${
+                infoPool.installedApps.lineSequence().count { it.startsWith("- ") }
+            } 项（系统默认 + Skill 关联）"
+        )
 
         updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
@@ -1084,10 +1086,10 @@ class MobileAgent(
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool): String? = withContext(Dispatchers.IO) {
         val level = infoPool.effectiveLevel()
-        val gateError = ActionGate.check(action, level, infoPool.packId)
+        val gateError = ActionGate.check(action, level)
         if (gateError != null) {
             log("动作被拒绝: $gateError")
-            ActionGate.audit(action, level, infoPool.packId, "rejected: $gateError")
+            ActionGate.audit(action, level, "rejected: $gateError")
             return@withContext "Action rejected: $gateError"
         }
         // 动态获取屏幕尺寸（处理横竖屏切换）
@@ -1228,6 +1230,37 @@ class MobileAgent(
                     return@withContext output
                 }
             }
+            "root_shell" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("root_shell")) {
+                    log("root_shell 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
+                val command = action.command
+                if (!command.isNullOrBlank()) {
+                    val confirmMode = try {
+                        App.getInstance().settingsManager.settings.value.rootShellConfirmMode
+                    } catch (e: Exception) {
+                        "always"
+                    }
+                    if (confirmMode != "auto") {
+                        val confirmed = withTimeoutOrNull(2 * 60 * 1000L) {
+                            withContext(Dispatchers.Main) {
+                                waitForUserConfirm(
+                                    "即将以 Root 执行：\n${command.take(300)}\n\n是否继续？"
+                                )
+                            }
+                        } ?: false
+                        if (!confirmed) {
+                            log("root_shell 用户取消或确认超时")
+                            return@withContext "root_shell: cancelled by user"
+                        }
+                    }
+                    log("root_shell: $command")
+                    val output = controller.rootShell(command)
+                    log("root_shell 输出: ${output.take(800)}")
+                    return@withContext output
+                }
+            }
             "key" -> {
                 val key = action.key
                 if (!key.isNullOrBlank()) {
@@ -1317,22 +1350,60 @@ class MobileAgent(
                     else -> log("未知系统按钮: ${action.button}")
                 }
             }
+            "search_apps" -> {
+                val query = action.text?.trim()
+                if (query.isNullOrBlank()) {
+                    return@withContext "search_apps: missing query"
+                }
+                val results = try {
+                    appInventory.search(query)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                if (results.isEmpty()) {
+                    log("search_apps: $query -> 0 results")
+                    return@withContext "search_apps: no match for '$query'. The app may not be installed."
+                }
+                log("search_apps: $query -> ${results.size} results")
+                val text = results.joinToString("\n") { entry ->
+                    "- ${entry.appName} (${entry.packageName})${if (entry.isSystem) " [system]" else ""}"
+                }
+                return@withContext "search_apps '$query':\n$text"
+            }
             "open_app" -> {
                 if (!PromptRepository.getInstance().isToolSkillEnabled("open_app")) {
                     log("open_app 工具已禁用，拒绝执行")
                     return@withContext null
                 }
-                action.text?.let { appName ->
-                    // 智能匹配包名 (客户端模糊搜索，省 token)
-                    val packageName = appScanner.findPackage(appName)
-                    if (packageName != null) {
-                        log("找到应用: $appName -> $packageName")
-                        controller.openApp(packageName)
-                    } else {
-                        log("未找到应用: $appName，尝试直接打开")
-                        controller.openApp(appName)
-                    }
+                val appName = action.text?.trim()
+                if (appName.isNullOrBlank()) {
+                    return@withContext "open_app: missing app name"
                 }
+                // 智能匹配包名 (客户端模糊搜索，省 token)
+                val packageName = appScanner.findPackage(appName)
+                if (packageName != null) {
+                    log("找到应用: $appName -> $packageName")
+                    controller.openApp(packageName)
+                    return@withContext "open_app: $appName -> $packageName"
+                }
+
+                // 精确/模糊都没找到：刷新一次缓存，再给模型候选，不要静默拿原始字符串去 startActivity。
+                val candidates = try {
+                    appInventory.search(appName, limit = 3)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                if (candidates.isNotEmpty()) {
+                    val best = candidates.first()
+                    log("模糊匹配应用: $appName -> ${best.appName} (${best.packageName})")
+                    controller.openApp(best.packageName)
+                    return@withContext "open_app: '$appName' not exact; opened ${best.appName} (${best.packageName}). " +
+                        "Candidates: " + candidates.joinToString(", ") { "${it.appName}(${it.packageName})" }
+                }
+
+                log("未找到应用: $appName")
+                return@withContext "open_app: '$appName' not found. " +
+                    "It may not be installed; call search_apps or ask the user for the exact app name."
             }
             "wait" -> {
                 // 智能等待：模型决定等待时长

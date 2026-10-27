@@ -73,6 +73,7 @@ fun SettingsScreen(
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
     onUpdatePromptPackMode: (String) -> Unit = {},
+    onUpdateRootShellConfirmMode: (String) -> Unit = {},
     onUpdateAdvancedModeEnabled: (Boolean) -> Unit = {},
     onRefreshShizuku: () -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
@@ -94,6 +95,7 @@ fun SettingsScreen(
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
     var showPackDialog by remember { mutableStateOf(false) }
+    var showRootShellConfirmDialog by remember { mutableStateOf(false) }
     val currentLevel by AccessLevelManager.level.collectAsState()
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
@@ -503,16 +505,30 @@ fun SettingsScreen(
             }
         }
 
-        // 提示词包选择
+        // Root 命令确认（仅影响 root_shell，不影响普通 shell）
+        item {
+            SettingsItem(
+                icon = Icons.Default.Build,
+                title = "Root 命令确认",
+                subtitle = if (settings.rootShellConfirmMode == "auto") {
+                    "默认通过（root_shell 不再逐次确认）"
+                } else {
+                    "每次提醒（root_shell 执行前弹确认）"
+                },
+                onClick = { showRootShellConfirmDialog = true }
+            )
+        }
+
+        // Agent 策略包选择（只影响 Agent prompt，不影响 tool/skill 可用性）
         item {
             SettingsItem(
                 icon = Icons.Default.Star,
-                title = "提示词包",
+                title = "Agent 策略包（预览/编辑）",
                 subtitle = when (settings.promptPackMode) {
-                    "basic" -> "基础包（仅无障碍）"
-                    "standard" -> "标准包（Shizuku / su-user）"
-                    "advanced" -> "高级包（Root）"
-                    else -> "自动（当前等级：${currentLevel.label}）"
+                    "basic" -> "预览：基础 Agent（运行时按权限自动选）"
+                    "standard" -> "预览：标准 Agent（运行时按权限自动选）"
+                    "advanced" -> "预览：高级 Agent（运行时按权限自动选）"
+                    else -> "自动（运行时按当前权限选 Agent 策略）"
                 },
                 onClick = { showPackDialog = true }
             )
@@ -855,17 +871,66 @@ fun SettingsScreen(
         OverlayHelpDialog(onDismiss = { showOverlayHelpDialog = false })
     }
 
-    // 提示词包选择
+    // Root 命令确认模式
+    if (showRootShellConfirmDialog) {
+        val options = listOf(
+            "always" to "每次提醒（推荐）",
+            "auto" to "默认通过（不再逐次确认）"
+        )
+        AlertDialog(
+            onDismissRequest = { showRootShellConfirmDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("Root 命令确认") },
+            text = {
+                Column {
+                    Text(
+                        "仅影响 root_shell（su / Shizuku Root）；普通 shell 不受影响。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    options.forEach { (mode, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onUpdateRootShellConfirmMode(mode)
+                                    showRootShellConfirmDialog = false
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = settings.rootShellConfirmMode == mode,
+                                onClick = {
+                                    onUpdateRootShellConfirmMode(mode)
+                                    showRootShellConfirmDialog = false
+                                }
+                            )
+                            Text(label, fontSize = 14.sp, color = colors.textPrimary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRootShellConfirmDialog = false }) {
+                    Text("关闭", color = colors.textSecondary)
+                }
+            }
+        )
+    }
+
+    // Agent 策略包选择
     if (showPackDialog) {
         val options = listOf(
-            "auto" to "自动（按当前等级选最高可用包）",
-            "basic" to "基础包 · 仅无障碍",
-            "standard" to "标准包 · Shizuku / su-user",
-            "advanced" to "高级包 · Root"
+            "auto" to "自动（按当前等级选 Agent 策略）",
+            "basic" to "基础 Agent · 仅无障碍策略",
+            "standard" to "标准 Agent · Shizuku / ADB 策略",
+            "advanced" to "高级 Agent · Root 策略"
         )
         AlertDialog(
             onDismissRequest = { showPackDialog = false },
-            title = { Text("提示词包") },
+            title = { Text("Agent 策略包（预览/编辑）") },
             text = {
                 Column {
                     Text(
@@ -909,7 +974,7 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "提示：标准/高级包需要相应权限；等级不够时选择不会生效，会自动回退到可用包。",
+                        "只影响 Agent prompt，不影响 tool / skill 的可用性；tool/skill 只看当前权限等级。运行时按当前权限自动选 Agent 策略，这里的选项只影响预览/编辑。",
                         fontSize = 11.sp,
                         color = colors.textHint
                     )

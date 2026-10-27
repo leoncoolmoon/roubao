@@ -276,7 +276,7 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前等级可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 包 $activePackId",
+                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前权限可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 预览 Agent 策略包 $activePackId",
                     fontSize = 13.sp,
                     color = colors.textSecondary
                 )
@@ -1177,7 +1177,7 @@ fun ToolSkillCard(
                     )
                     if (!available) {
                         Text(
-                            text = "当前等级不可用（仍可编辑/启用）",
+                            text = "当前权限不足（仍可编辑/启用）",
                             fontSize = 11.sp,
                             color = colors.error
                         )
