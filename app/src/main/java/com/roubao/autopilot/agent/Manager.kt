@@ -185,11 +185,17 @@ class Manager {
             "No completed subgoal."
         }
 
-        val plan = response
-            .substringAfter("### Plan", "")
-            .substringBefore("### Selected Skill", "")
-            .replace("###", "")
-            .trim()
+        // 模型有时不写 "### Plan ###" 标题，直接从编号列表开始。
+        // 这时按编号行抽取，而不是把整段响应当计划（整段里可能只有一个 "null"）。
+        val plan = if (response.contains("### Plan")) {
+            response
+                .substringAfter("### Plan", "")
+                .substringBefore("### Selected Skill", "")
+                .replace("###", "")
+                .trim()
+        } else {
+            extractNumberedList(response)
+        }
 
         val selectedSkill = response
             .substringAfter("### Selected Skill ###", "")
@@ -200,9 +206,21 @@ class Manager {
             .firstOrNull { it.isNotBlank() }
             ?.trim()
             ?.substringBefore(" ")
+            ?.trim()
+            ?.trimEnd('.', '。', '*', '"', '\'')
             ?.takeIf { it.isNotBlank() && !it.equals("None", ignoreCase = true) }
 
         return PlanResult(thought, completedSubgoal, plan, selectedSkill)
+    }
+
+    /** 抽取形如 "1. xxx" / "2) xxx" 的编号行，作为缺失标题时的计划兜底。 */
+    private fun extractNumberedList(text: String): String {
+        val numbered = Regex("""^\d+[.)、]\s*\S""")
+        return text.lineSequence()
+            .map { it.trim() }
+            .filter { numbered.containsMatchIn(it) }
+            .joinToString("\n")
+            .trim()
     }
 }
 
