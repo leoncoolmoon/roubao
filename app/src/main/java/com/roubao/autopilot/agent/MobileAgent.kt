@@ -422,31 +422,35 @@ Output exactly one action:
                         val err = planResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Manager 调用失败: $err")
                         if (onModelFailure(err)) {
+                            log(timer.finish())
                             OverlayService.idle(context)
                             updateState { copy(isRunning = false) }
                             bringAppToFront()
                             return AgentResult(success = false, message = "模型连续失败，用户结束任务")
                         }
-                        log(timer.finish())
-                        continue
-                    }
+                        // 已经有可用计划时不该被一次规划失败卡住：继续走 Executor，用旧计划推进
+                        if (infoPool.plan.isBlank()) {
+                            log(timer.finish())
+                            continue
+                        }
+                        log("Manager 失败但已有计划，本步跳过重规划直接执行")
+                    } else {
+                        val rawPlan = planResponse.getOrThrow()
+                        consecutiveModelFailures = 0
+                        val planResult = manager.parseResponse(rawPlan)
+                        if (isUsableText(planResult.completedSubgoal)) {
+                            infoPool.completedPlan = planResult.completedSubgoal
+                        }
+                        // Manager 说 KEEP 表示沿用原计划；解析出 null/空也算无效，都不要冲掉现有计划
+                        when {
+                            planResult.plan.trim().equals("KEEP", ignoreCase = true) ->
+                                log("Manager 沿用现有计划（KEEP）")
 
-                    val rawPlan = planResponse.getOrThrow()
-                    consecutiveModelFailures = 0
-                    val planResult = manager.parseResponse(rawPlan)
-                    if (isUsableText(planResult.completedSubgoal)) {
-                        infoPool.completedPlan = planResult.completedSubgoal
-                    }
-                    // Manager 说 KEEP 表示沿用原计划；解析出 null/空也算无效，都不要冲掉现有计划
-                    when {
-                        planResult.plan.trim().equals("KEEP", ignoreCase = true) ->
-                            log("Manager 沿用现有计划（KEEP）")
+                            !isUsableText(planResult.plan) ->
+                                log("Manager 计划无效（${planResult.plan.take(20)}），沿用上一步计划")
 
-                        !isUsableText(planResult.plan) ->
-                            log("Manager 计划无效（${planResult.plan.take(20)}），沿用上一步计划")
-
-                        else -> infoPool.plan = planResult.plan
-                    }
+                            else -> infoPool.plan = planResult.plan
+                        }
 
                     planResult.selectedSkillId?.let { selectedId ->
                         infoPool.selectedSkillId = selectedId
@@ -517,6 +521,7 @@ Output exactly one action:
                     if (planResult.plan.contains("Finished") && planResult.plan.length < 20) {
                         log("Manager 判定任务完成，向 Executor 索取最终答复")
                         finishRequested = true
+                    }
                     }
                 }
 

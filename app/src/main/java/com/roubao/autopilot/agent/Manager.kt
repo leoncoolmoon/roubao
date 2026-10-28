@@ -35,9 +35,9 @@ class Manager {
         } catch (e: Exception) {
             ""
         }
-        // 反馈也放在末尾：稳定前缀才可能命中前缀缓存
+        // 反馈放回最前：和"UI 树在前"保持同一套顺序，避免再把大段动态内容压到生成之前
         return if (feedback.isNotEmpty()) {
-            "$formatted\n\n### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback"
+            "### User Feedback / Lessons (MUST FOLLOW) ###\n$feedback\n\n$formatted"
         } else {
             formatted
         }
@@ -111,8 +111,33 @@ class Manager {
             .replace("{{skillContext}}", skillContextStr)
             .replace("{{additionalKnowledge}}", additionalKnowledgeStr)
 
+        // 注意：UI 树必须放在「规则」之前。
+        // 放到最后会让模型把最后的 12k 字符节点逐一"重读"一遍，实测 reasoning 涨到 18–20k 字符，
+        // 直接吃满 max_tokens 导致 content=null。缓存收益（~1.2k token）远抵不过一次失败（95–360s）。
+        if (infoPool.accessibilityTree.isNotBlank()) {
+            result = "### Current UI Tree ###\n${infoPool.accessibilityTree.take(12000)}\n\n$result"
+        }
+
         if (infoPool.userReply.isNotBlank()) {
-            result += "\n\n### User Reply ###\n${infoPool.userReply}"
+            result = "### User Reply ###\n${infoPool.userReply}\n\n$result"
+        }
+
+        if (infoPool.plan.isEmpty() && infoPool.availableSkills.isNotBlank()) {
+            val selectionBlock = """
+
+                ### Selectable Skills ###
+                ${infoPool.availableSkills}
+
+                ### Skill Selection (MANDATORY) ###
+                Choose at most one skill from the list above.
+                If one clearly matches the request, you MUST output its exact id.
+                If none matches, output "None".
+                Put this section before every other output section:
+                ### Selected Skill ###
+                <skill_id or None>
+            """.trimIndent()
+
+            result = "$selectionBlock\n\n$result"
         }
 
         result += "\n\n### Clarification Rule (AUTHORITATIVE) ###\n" +
@@ -135,29 +160,6 @@ class Manager {
 
         val policy = toolPolicySection(infoPool.effectiveLevel())
         if (policy.isNotBlank()) result += policy
-
-        // 每步都变的内容放最后：前面那些稳定段落才可能命中前缀缓存
-        if (infoPool.plan.isEmpty() && infoPool.availableSkills.isNotBlank()) {
-            val selectionBlock = """
-
-                ### Selectable Skills ###
-                ${infoPool.availableSkills}
-
-                ### Skill Selection (MANDATORY) ###
-                Choose at most one skill from the list above.
-                If one clearly matches the request, you MUST output its exact id.
-                If none matches, output "None".
-                Put this section before every other output section:
-                ### Selected Skill ###
-                <skill_id or None>
-            """.trimIndent()
-
-            result += "\n\n$selectionBlock"
-        }
-
-        if (infoPool.accessibilityTree.isNotBlank()) {
-            result += "\n\n### Current UI Tree ###\n${infoPool.accessibilityTree.take(12000)}"
-        }
 
         return result
     }
