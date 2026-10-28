@@ -197,6 +197,7 @@ class VLMClient(
                             "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
+                        println("[VLMClient] 用量 ${cacheStat(json)}")
                         // 空回复是模型侧异常（例如 thinking 把正文吃光），单独重试，不当作动作格式错误
                         if (responseContent.isBlank()) {
                             println("[VLMClient] ⚠️ 空回复（finish=$finishReason），重试 $attempt/$MAX_RETRIES...")
@@ -292,6 +293,7 @@ class VLMClient(
                             "[VLMClient] ✓ 上下文请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
+                        println("[VLMClient] 用量 ${cacheStat(json)}")
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")
@@ -324,6 +326,23 @@ class VLMClient(
         }
 
         Result.failure(lastException ?: Exception("Unknown error"))
+    }
+
+    /**
+     * 从响应里提取用量与缓存命中。
+     * DeepSeek: usage.prompt_cache_hit_tokens
+     * OpenAI 兼容: usage.prompt_tokens_details.cached_tokens
+     */
+    private fun cacheStat(json: JSONObject): String {
+        val usage = json.optJSONObject("usage") ?: return "usage 缺失（该接口不回传用量）"
+        val promptTokens = usage.optInt("prompt_tokens", 0)
+        val completionTokens = usage.optInt("completion_tokens", 0)
+        val hitTokens = usage.optInt("prompt_cache_hit_tokens", -1).let { direct ->
+            if (direct >= 0) direct
+            else usage.optJSONObject("prompt_tokens_details")?.optInt("cached_tokens", 0) ?: 0
+        }
+        val pct = if (promptTokens > 0) hitTokens * 100 / promptTokens else 0
+        return "prompt=$promptTokens cached=$hitTokens ($pct%) completion=$completionTokens"
     }
 
     /**
