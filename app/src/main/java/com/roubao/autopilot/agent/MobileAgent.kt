@@ -113,6 +113,22 @@ Output exactly one action:
      */
     // 模型失败只提醒一次，不中断任务
     private var modelErrorNotified = false
+    // 连续模型失败计数：达到阈值就暂停，交回用户决定
+    private var consecutiveModelFailures = 0
+
+    /**
+     * 模型调用失败：连续两次就暂停任务，交回用户（换模型 / 继续 / 停止）。
+     * 不直接中止——免费模型经常抖动，程序的原则是尽量不打断任务。
+     */
+    private suspend fun onModelFailure(err: String) {
+        consecutiveModelFailures++
+        notifyModelError(err)
+        if (consecutiveModelFailures >= 2 && _state.value.isRunning && !_state.value.isPaused) {
+            log("模型连续失败 $consecutiveModelFailures 次，任务暂停：可切换模型后继续，或停止任务重新设置")
+            OverlayService.update("模型不稳定，已暂停")
+            pause()
+        }
+    }
 
     suspend fun runInstruction(
         instruction: String,
@@ -122,6 +138,7 @@ Output exactly one action:
     ): AgentResult {
         log("开始执行[$source]: $instruction")
         modelErrorNotified = false
+        consecutiveModelFailures = 0
 
         // 三项权限至少开一项：都关掉时没有任何可用的操作通道，先提醒再中止
         val permSettings = try {
@@ -355,15 +372,21 @@ Output exactly one action:
                     if (planResponse.isFailure) {
                         val err = planResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Manager 调用失败: $err")
-                        notifyModelError(err)
+                        onModelFailure(err)
                         log(timer.finish())
                         continue
                     }
 
                     val rawPlan = planResponse.getOrThrow()
+                    consecutiveModelFailures = 0
                     val planResult = manager.parseResponse(rawPlan)
                     infoPool.completedPlan = planResult.completedSubgoal
-                    infoPool.plan = planResult.plan
+                    // Manager 说 KEEP 表示沿用原计划：不覆盖，避免每步重写导致计划抖动
+                    if (planResult.plan.trim().equals("KEEP", ignoreCase = true)) {
+                        log("Manager 沿用现有计划（KEEP）")
+                    } else {
+                        infoPool.plan = planResult.plan
+                    }
 
                     planResult.selectedSkillId?.let { selectedId ->
                         infoPool.selectedSkillId = selectedId
@@ -482,12 +505,13 @@ Output exactly one action:
                 if (actionResponse.isFailure) {
                     val err = actionResponse.exceptionOrNull()?.message ?: "unknown"
                     log("Executor 调用失败: $err")
-                    notifyModelError(err)
+                    onModelFailure(err)
                     log(timer.finish())
                     continue
                 }
 
                 val responseText = actionResponse.getOrThrow()
+                consecutiveModelFailures = 0
                 val executorResult = executor.parseResponse(responseText)
 
                 // 将助手响应添加到记忆

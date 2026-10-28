@@ -136,6 +136,8 @@ fun HistoryRecordCard(
 ) {
     val colors = BaoziTheme.colors
     var showDeleteDialog by remember { mutableStateOf(false) }
+    // 长按复制任务原文，方便在模型不稳时重新提交
+    val context = LocalContext.current
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -162,7 +164,24 @@ fun HistoryRecordCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .pointerInput(record.id) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = {
+                        val clipboard = context.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE
+                        ) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(
+                            android.content.ClipData.newPlainText("task", record.instruction)
+                        )
+                        android.widget.Toast.makeText(
+                            context,
+                            "已复制任务内容",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
     ) {

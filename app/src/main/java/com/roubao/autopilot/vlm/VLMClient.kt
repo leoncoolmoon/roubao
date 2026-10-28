@@ -32,7 +32,8 @@ class VLMClient(
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        // 免费/中转模型经常 60s 以上才吐字，宁可为「不打断任务」多等
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .connectionPool(ConnectionPool(5, 1, TimeUnit.MINUTES))
@@ -196,6 +197,15 @@ class VLMClient(
                             "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
+                        // 空回复是模型侧异常（例如 thinking 把正文吃光），单独重试，不当作动作格式错误
+                        if (responseContent.isBlank()) {
+                            println("[VLMClient] ⚠️ 空回复（finish=$finishReason），重试 $attempt/$MAX_RETRIES...")
+                            lastException = Exception("空回复 finish=$finishReason")
+                            if (attempt < MAX_RETRIES) {
+                                delay(RETRY_DELAY_MS * attempt)
+                            }
+                            continue
+                        }
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")
