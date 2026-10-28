@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
 import com.roubao.autopilot.App
+import com.roubao.autopilot.BuildConfig
 import com.roubao.autopilot.controller.AppInventory
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
@@ -184,6 +185,7 @@ Output exactly one action:
         source: String = "home"
     ): AgentResult {
         log("开始执行[$source]: $instruction")
+        log("肉包 ${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_TIME}")
         modelErrorNotified = false
         consecutiveModelFailures = 0
 

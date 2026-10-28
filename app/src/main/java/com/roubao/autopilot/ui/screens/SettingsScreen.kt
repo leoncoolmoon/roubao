@@ -831,7 +831,7 @@ fun SettingsScreen(
             SettingsItem(
                 icon = Icons.Default.Info,
                 title = "版本",
-                subtitle = BuildConfig.VERSION_NAME,
+                subtitle = "${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_TIME}",
                 onClick = { }
             )
         }
