@@ -1,4 +1,4 @@
-package com.roubao.autopilot.vlm
+﻿package com.roubao.autopilot.vlm
 
 import android.graphics.Bitmap
 import android.util.Base64
@@ -42,6 +42,17 @@ class VLMClient(
     companion object {
         private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 1000L
+
+        /** 把用量/缓存行同时送进 App 内日志（由 MobileAgent 挂上）。 */
+        var logSink: ((String) -> Unit)? = null
+
+        internal fun report(line: String) {
+            println(line)
+            try {
+                logSink?.invoke(line)
+            } catch (_: Exception) {
+            }
+        }
 
         /** 规范化 URL：自动添加 https:// 前缀，移除末尾斜杠 */
         private fun normalizeUrl(url: String): String {
@@ -197,7 +208,7 @@ class VLMClient(
                             "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, 输入 $inputChars 字符, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
-                        println("[VLMClient] 用量 ${cacheStat(json)}")
+                        report("[VLMClient] 用量 ${cacheStat(json)}")
                         // 空回复是模型侧异常（例如 thinking 把正文吃光），单独重试，不当作动作格式错误
                         if (responseContent.isBlank()) {
                             println("[VLMClient] ⚠️ 空回复（finish=$finishReason），重试 $attempt/$MAX_RETRIES...")
@@ -293,7 +304,7 @@ class VLMClient(
                             "[VLMClient] ✓ 上下文请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
-                        println("[VLMClient] 用量 ${cacheStat(json)}")
+                        report("[VLMClient] 用量 ${cacheStat(json)}")
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")

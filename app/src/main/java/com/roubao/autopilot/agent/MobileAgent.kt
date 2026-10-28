@@ -71,6 +71,11 @@ Output exactly one action:
 {"action":"answer","text":"<final report to the user, 1-3 sentences>"}
 """
 
+    init {
+        // 把 VLMClient 的用量行接进 App 内日志，跑测试时能直接看到缓存命中
+        VLMClient.logSink = { line -> log(line) }
+    }
+
     // file 工具：授权目录跟随设置；审批记忆在每次任务开始时重置
     private val fileTool: FileTool by lazy {
         FileTool(controller) {
