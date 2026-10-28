@@ -121,6 +121,13 @@ Output exactly one action:
     // 连续模型失败计数：达到阈值就暂停，交回用户决定
     private var consecutiveModelFailures = 0
 
+    /** 排除 null / None / 空串这类无效文本，避免一次坏响应冲掉计划。 */
+    private fun isUsableText(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        return !trimmed.equals("null", ignoreCase = true) && !trimmed.equals("none", ignoreCase = true)
+    }
+
     /**
      * 模型调用失败：连续两次就暂停并让用户用数字选择怎么继续，而不是中止任务。
      * 注意免费模型经常抖动，程序的原则是尽量把任务做完。
@@ -425,12 +432,18 @@ Output exactly one action:
                     val rawPlan = planResponse.getOrThrow()
                     consecutiveModelFailures = 0
                     val planResult = manager.parseResponse(rawPlan)
-                    infoPool.completedPlan = planResult.completedSubgoal
-                    // Manager 说 KEEP 表示沿用原计划：不覆盖，避免每步重写导致计划抖动
-                    if (planResult.plan.trim().equals("KEEP", ignoreCase = true)) {
-                        log("Manager 沿用现有计划（KEEP）")
-                    } else {
-                        infoPool.plan = planResult.plan
+                    if (isUsableText(planResult.completedSubgoal)) {
+                        infoPool.completedPlan = planResult.completedSubgoal
+                    }
+                    // Manager 说 KEEP 表示沿用原计划；解析出 null/空也算无效，都不要冲掉现有计划
+                    when {
+                        planResult.plan.trim().equals("KEEP", ignoreCase = true) ->
+                            log("Manager 沿用现有计划（KEEP）")
+
+                        !isUsableText(planResult.plan) ->
+                            log("Manager 计划无效（${planResult.plan.take(20)}），沿用上一步计划")
+
+                        else -> infoPool.plan = planResult.plan
                     }
 
                     planResult.selectedSkillId?.let { selectedId ->

@@ -205,10 +205,16 @@ class VLMClient(
                     if (choices.length() > 0) {
                         val choice = choices.getJSONObject(0)
                         val message = choice.getJSONObject("message")
-                        val responseContent = message.getString("content")
+                        // org.json 的 getString 会把 JSON null 变成字符串 "null"，
+                        // 必须显式判 null，否则空回复会被当成正文传进解析器
+                        val responseContent = if (message.isNull("content")) {
+                            ""
+                        } else {
+                            message.optString("content", "")
+                        }
                         val finishReason = choice.optString("finish_reason", "")
                         if (finishReason == "length") {
-                            println("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
+                            report("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
                         }
                         println(
                             "[VLMClient] ✓ 请求完成 ${System.currentTimeMillis() - requestStart}ms " +
@@ -217,8 +223,17 @@ class VLMClient(
                         report("[VLMClient] 用量 ${cacheStat(json)}")
                         // 空回复是模型侧异常（例如 thinking 把正文吃光），单独重试，不当作动作格式错误
                         if (responseContent.isBlank()) {
-                            println("[VLMClient] ⚠️ 空回复（finish=$finishReason），重试 $attempt/$MAX_RETRIES...")
+                            val reasoning = message.optString("reasoning_content", "")
+                            report(
+                                "[VLMClient] ⚠️ 空回复（finish=$finishReason, reasoning=${reasoning.length} 字符），" +
+                                    "重试 $attempt/$MAX_RETRIES..."
+                            )
                             lastException = Exception("空回复 finish=$finishReason")
+                            if (finishReason == "length") {
+                                // 思考占满 max_tokens 后 content 为空：同样的问题重试也不会变，直接失败交给上层
+                                report("[VLMClient] 空回复且输出被截断，重试无意义，放弃本次请求")
+                                break
+                            }
                             if (attempt < MAX_RETRIES) {
                                 delay(RETRY_DELAY_MS * attempt)
                             }
@@ -300,16 +315,38 @@ class VLMClient(
                     if (choices.length() > 0) {
                         val choice = choices.getJSONObject(0)
                         val message = choice.getJSONObject("message")
-                        val responseContent = message.getString("content")
+                        // 同上：JSON null 必须显式判空，否则会变成字符串 "null"
+                        val responseContent = if (message.isNull("content")) {
+                            ""
+                        } else {
+                            message.optString("content", "")
+                        }
                         val finishReason = choice.optString("finish_reason", "")
                         if (finishReason == "length") {
-                            println("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
+                            report("[VLMClient] ⚠️ 输出被 max_tokens 截断（finish_reason=length），动作 JSON 可能不完整")
                         }
                         println(
                             "[VLMClient] ✓ 上下文请求完成 ${System.currentTimeMillis() - requestStart}ms " +
                                 "(attempt=$attempt, ${messagesJson.length()} 条消息, 输出 ${responseContent.length} 字符, finish=$finishReason)"
                         )
                         report("[VLMClient] 用量 ${cacheStat(json)}")
+                        if (responseContent.isBlank()) {
+                            val reasoning = message.optString("reasoning_content", "")
+                            report(
+                                "[VLMClient] ⚠️ 空回复（finish=$finishReason, reasoning=${reasoning.length} 字符），" +
+                                    "重试 $attempt/$MAX_RETRIES..."
+                            )
+                            lastException = Exception("空回复 finish=$finishReason")
+                            if (finishReason == "length") {
+                                // 思考占满 max_tokens 后 content 为空：同样的问题重试也不会变，直接失败交给上层
+                                report("[VLMClient] 空回复且输出被截断，重试无意义，放弃本次请求")
+                                break
+                            }
+                            if (attempt < MAX_RETRIES) {
+                                delay(RETRY_DELAY_MS * attempt)
+                            }
+                            continue
+                        }
                         return@withContext Result.success(responseContent)
                     } else {
                         lastException = Exception("No response from model")

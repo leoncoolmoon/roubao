@@ -169,14 +169,14 @@ class Manager {
         val thought = response
             .substringAfter("### Thought", "")
             .substringBefore("### Historical Operations")
-            .substringBefore("### Plan")
+            .substringBefore("### Plan", "")
             .replace("###", "")
             .trim()
 
         val completedSubgoal = if (response.contains("### Historical Operations")) {
             response
-                .substringAfter("### Historical Operations")
-                .substringBefore("### Plan")
+                .substringAfter("### Historical Operations", "")
+                .substringBefore("### Plan", "")
                 .replace("###", "")
                 .trim()
         } else {
@@ -184,8 +184,8 @@ class Manager {
         }
 
         val plan = response
-            .substringAfter("### Plan")
-            .substringBefore("### Selected Skill")
+            .substringAfter("### Plan", "")
+            .substringBefore("### Selected Skill", "")
             .replace("###", "")
             .trim()
 
