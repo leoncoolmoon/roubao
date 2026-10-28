@@ -4,17 +4,24 @@ import android.graphics.Bitmap
 import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * VLM (Vision Language Model) API 客户端
@@ -190,10 +197,9 @@ class VLMClient(
                     .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+                val (code, responseBody) = executeCancellable(request)
 
-                if (response.isSuccessful) {
+                if (code in 200..299) {
                     val json = JSONObject(responseBody)
                     val choices = json.getJSONArray("choices")
                     if (choices.length() > 0) {
@@ -223,8 +229,8 @@ class VLMClient(
                         lastException = Exception("No response from model")
                     }
                 } else {
-                    println("[VLMClient] ✗ HTTP ${response.code} 用时 ${System.currentTimeMillis() - requestStart}ms")
-                    lastException = Exception("API error: ${response.code} - $responseBody")
+                    println("[VLMClient] ✗ HTTP $code 用时 ${System.currentTimeMillis() - requestStart}ms")
+                    lastException = Exception("API error: $code - $responseBody")
                 }
             } catch (e: UnknownHostException) {
                 // DNS 解析失败，重试
@@ -286,10 +292,9 @@ class VLMClient(
                     .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val response = client.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+                val (code, responseBody) = executeCancellable(request)
 
-                if (response.isSuccessful) {
+                if (code in 200..299) {
                     val json = JSONObject(responseBody)
                     val choices = json.getJSONArray("choices")
                     if (choices.length() > 0) {
@@ -310,8 +315,8 @@ class VLMClient(
                         lastException = Exception("No response from model")
                     }
                 } else {
-                    println("[VLMClient] ✗ 上下文请求 HTTP ${response.code} 用时 ${System.currentTimeMillis() - requestStart}ms")
-                    lastException = Exception("API error: ${response.code} - $responseBody")
+                    println("[VLMClient] ✗ 上下文请求 HTTP $code 用时 ${System.currentTimeMillis() - requestStart}ms")
+                    lastException = Exception("API error: $code - $responseBody")
                 }
             } catch (e: UnknownHostException) {
                 println("[VLMClient] DNS 解析失败，重试 $attempt/$MAX_RETRIES...")
@@ -338,6 +343,43 @@ class VLMClient(
 
         Result.failure(lastException ?: Exception("Unknown error"))
     }
+
+    /**
+     * 可取消的 HTTP 调用。
+     *
+     * 以前用 `call.execute()` 阻塞在 IO 线程里，协程取消打断不了它，
+     * 用户点「停止」后要等这次请求自己超时（readTimeout 120s）才真的停下。
+     * 改成 enqueue + invokeOnCancellation 后，停止会直接 cancel 当前请求。
+     */
+    private suspend fun executeCancellable(request: Request): Pair<Int, String> =
+        suspendCancellableCoroutine { cont ->
+            val call = client.newCall(request)
+            cont.invokeOnCancellation {
+                try {
+                    call.cancel()
+                } catch (_: Exception) {
+                }
+            }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val body = response.body?.string() ?: ""
+                        if (cont.isActive) cont.resume(response.code to body)
+                    } catch (e: Exception) {
+                        if (cont.isActive) cont.resumeWithException(e)
+                    } finally {
+                        try {
+                            response.close()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            })
+        }
 
     /**
      * 从响应里提取用量与缓存命中。
