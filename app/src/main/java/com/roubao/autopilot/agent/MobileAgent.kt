@@ -117,16 +117,51 @@ Output exactly one action:
     private var consecutiveModelFailures = 0
 
     /**
-     * 模型调用失败：连续两次就暂停任务，交回用户（换模型 / 继续 / 停止）。
-     * 不直接中止——免费模型经常抖动，程序的原则是尽量不打断任务。
+     * 模型调用失败：连续两次就暂停并让用户用数字选择怎么继续，而不是中止任务。
+     * 注意免费模型经常抖动，程序的原则是尽量把任务做完。
+     *
+     * @return true 表示用户选择结束任务
      */
-    private suspend fun onModelFailure(err: String) {
+    private suspend fun onModelFailure(err: String): Boolean {
         consecutiveModelFailures++
         notifyModelError(err)
-        if (consecutiveModelFailures >= 2 && _state.value.isRunning && !_state.value.isPaused) {
-            log("模型连续失败 $consecutiveModelFailures 次，任务暂停：可切换模型后继续，或停止任务重新设置")
-            OverlayService.update("模型不稳定，已暂停")
-            pause()
+        if (consecutiveModelFailures < 2 || !_state.value.isRunning) return false
+
+        val count = consecutiveModelFailures
+        log("模型连续失败 $count 次，等待用户选择")
+        OverlayService.update("模型不稳定，等待选择")
+        val reply = withTimeoutOrNull(5 * 60 * 1000L) {
+            waitForUserInput(
+                "模型连续失败 $count 次。回复数字继续：\n1 = 重试当前步骤\n2 = 我已切换模型，继续\n3 = 结束任务"
+            )
+        }
+        OverlayService.dismissAskUser()
+
+        return when {
+            reply == null -> {
+                log("用户 5 分钟未回复，按「重试」继续")
+                consecutiveModelFailures = 0
+                false
+            }
+            reply.trim().startsWith("3") -> {
+                log("用户选择：结束任务")
+                true
+            }
+            reply.trim().startsWith("1") -> {
+                log("用户选择：重试")
+                consecutiveModelFailures = 0
+                false
+            }
+            reply.trim().startsWith("2") -> {
+                log("用户选择：已切换模型，继续")
+                consecutiveModelFailures = 0
+                false
+            }
+            else -> {
+                log("未识别的选择「${reply.take(20)}」，按「重试」继续")
+                consecutiveModelFailures = 0
+                false
+            }
         }
     }
 
@@ -372,7 +407,12 @@ Output exactly one action:
                     if (planResponse.isFailure) {
                         val err = planResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Manager 调用失败: $err")
-                        onModelFailure(err)
+                        if (onModelFailure(err)) {
+                            OverlayService.idle(context)
+                            updateState { copy(isRunning = false) }
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "模型连续失败，用户结束任务")
+                        }
                         log(timer.finish())
                         continue
                     }
@@ -505,7 +545,12 @@ Output exactly one action:
                 if (actionResponse.isFailure) {
                     val err = actionResponse.exceptionOrNull()?.message ?: "unknown"
                     log("Executor 调用失败: $err")
-                    onModelFailure(err)
+                    if (onModelFailure(err)) {
+                        OverlayService.idle(context)
+                        updateState { copy(isRunning = false) }
+                        bringAppToFront()
+                        return AgentResult(success = false, message = "模型连续失败，用户结束任务")
+                    }
                     log(timer.finish())
                     continue
                 }
