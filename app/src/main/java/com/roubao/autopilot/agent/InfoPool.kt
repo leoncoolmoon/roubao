@@ -149,12 +149,19 @@ data class Action(
                 val obj = JSONObject(json)
                 val type = obj.optString("action", "")
 
+                // 模型经常把 swipe 的起终点写成 start/end 数组；这里兼容成坐标，
+                // 避免 optInt 把数组读成 0 导致 (0,0)->(0,0) 的空滑动。
+                val coord = obj.optJSONArray("coordinate")
+                val coord2 = obj.optJSONArray("coordinate2")
+                val startArr = obj.optJSONArray("start")
+                val endArr = obj.optJSONArray("end")
+
                 Action(
                     type = type,
-                    x = obj.optJSONArray("coordinate")?.optInt(0),
-                    y = obj.optJSONArray("coordinate")?.optInt(1),
-                    x2 = obj.optJSONArray("coordinate2")?.optInt(0),
-                    y2 = obj.optJSONArray("coordinate2")?.optInt(1),
+                    x = coord?.optInt(0) ?: startArr?.optInt(0),
+                    y = coord?.optInt(1) ?: startArr?.optInt(1),
+                    x2 = coord2?.optInt(0) ?: endArr?.optInt(0),
+                    y2 = coord2?.optInt(1) ?: endArr?.optInt(1),
                     index = if (obj.has("index")) obj.optInt("index") else null,
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
@@ -164,8 +171,8 @@ data class Action(
                     direction = obj.optString("direction", null),
                     status = obj.optString("status", null),
                     key = obj.optString("key", null),
-                    start = if (obj.has("start")) obj.optInt("start") else null,
-                    end = if (obj.has("end")) obj.optInt("end") else null,
+                    start = if (obj.has("start") && startArr == null) obj.optInt("start") else null,
+                    end = if (obj.has("end") && endArr == null) obj.optInt("end") else null,
                     command = obj.optString("command", null),
                     enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null,
                     op = obj.optString("op", null),

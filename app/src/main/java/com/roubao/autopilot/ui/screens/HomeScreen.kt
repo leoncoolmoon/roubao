@@ -233,7 +233,7 @@ fun HomeScreen(
                     keyboardController?.hide()
                     focusManager.clearFocus()
                     val attachmentSuffix = attachmentPath?.let {
-                        "\n\n[附件] 用户附加了文件：$it\n请用 shell 读取该文件（cat / file / unzip 等），不要打开文件管理器 UI。"
+                        "\n\n[附件] 文件路径：$it"
                     } ?: ""
                     onExecute(inputText + attachmentSuffix)
                     attachmentPath = null

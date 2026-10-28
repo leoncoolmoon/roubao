@@ -62,6 +62,15 @@ class MobileAgent(
     private val reflector = ActionReflector()
     private val notetaker = Notetaker()
 
+    // Manager 判定完成时追加的收尾指令：只让模型写答复，不再操作 UI
+    private val finalAnswerHint = """
+
+### Final Step (AUTHORITATIVE) ###
+The task is complete. Take no further UI action.
+Output exactly one action:
+{"action":"answer","text":"<final report to the user, 1-3 sentences>"}
+"""
+
     // file 工具：授权目录跟随设置；审批记忆在每次任务开始时重置
     private val fileTool: FileTool by lazy {
         FileTool(controller) {
@@ -236,6 +245,8 @@ class MobileAgent(
 
                 // 每步耗时统计（仅日志，不参与决策）
                 val timer = StepTimer().also { it.reset(step + 1) }
+                // Manager 已经判定完成：本步只让 Executor 产出最终答复，不再执行 UI 动作
+                var finishRequested = false
 
                 // 检查是否被用户停止
                 if (!_state.value.isRunning) {
@@ -419,15 +430,10 @@ class MobileAgent(
                         return AgentResult(success = false, message = "检测到敏感页面（支付/密码），已安全停止")
                     }
 
-                    // 检查是否完成
+                    // 检查是否完成：不直接返回，先让 Executor 给用户一句最终答复
                     if (planResult.plan.contains("Finished") && planResult.plan.length < 20) {
-                        log("任务完成!")
-                        log(timer.finish())
-                        OverlayService.update("完成!")
-                        delay(1500)
-                        OverlayService.idle(context)
-                        updateState { copy(isRunning = false, isCompleted = true) }
-                        return AgentResult(success = true, message = "任务完成")
+                        log("Manager 判定任务完成，向 Executor 索取最终答复")
+                        finishRequested = true
                     }
                 }
 
@@ -442,7 +448,8 @@ class MobileAgent(
                     return AgentResult(success = false, message = "用户停止")
                 }
 
-                val actionPrompt = executor.getPrompt(infoPool)
+                val actionPrompt = executor.getPrompt(infoPool) +
+                    if (finishRequested) finalAnswerHint else ""
 
                 // 使用上下文记忆调用 VLM
                 val memory = infoPool.executorMemory
@@ -493,6 +500,23 @@ class MobileAgent(
 
                 infoPool.lastActionThought = executorResult.thought
                 infoPool.lastSummary = executorResult.description
+
+                // Manager 已判定完成：本步只收答复，不再执行动作
+                if (finishRequested) {
+                    val finalAnswer = action?.text?.takeIf { it.isNotBlank() }
+                        ?: action?.message?.takeIf { it.isNotBlank() }
+                        ?: executorResult.description.takeIf { it.isNotBlank() }
+                        ?: executorResult.thought.takeIf { it.isNotBlank() }
+                        ?: infoPool.completedPlan.takeIf { it.isNotBlank() }
+                        ?: "任务完成"
+                    log("回答: $finalAnswer")
+                    log(timer.finish())
+                    OverlayService.update("${finalAnswer.take(20)}...")
+                    delay(1500)
+                    OverlayService.idle(context)
+                    updateState { copy(isRunning = false, isCompleted = true, answer = finalAnswer) }
+                    return AgentResult(success = true, message = "回答: $finalAnswer")
+                }
 
                 if (action == null) {
                     log("动作解析失败")
