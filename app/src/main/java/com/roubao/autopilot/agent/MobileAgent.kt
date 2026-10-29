@@ -766,7 +766,8 @@ Output exactly one action:
                         val err = reflectResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Reflector 调用失败: $err")
                         notifyModelError(err)
-                        ReflectorResult("C", "Failed to call reflector: ${err.take(160)}")
+                        // U = 反思不可用，不等于动作失败；不参与 B/C 连败计数
+                        ReflectorResult("U", "reflector unavailable (not an action failure): ${err.take(160)}")
                     }
                 }
 

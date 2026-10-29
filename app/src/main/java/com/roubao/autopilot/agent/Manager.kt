@@ -64,7 +64,7 @@ class Manager {
             val recentOutcomes = infoPool.actionOutcomes.takeLast(3)
             val failCount = recentOutcomes.count { it in listOf("B", "C") }
             if (failCount > 0) {
-                "### Recent Action Results ###\nLast ${recentOutcomes.size} actions: ${recentOutcomes.joinToString(", ")} (A=success, B=partial, C=failed)\nFailed attempts: $failCount\n\n"
+                "### Recent Action Results ###\nLast ${recentOutcomes.size} actions: ${recentOutcomes.joinToString(", ")} (A=success, B=partial, C=failed, U=unknown because the reflection model failed)\nFailed attempts: $failCount\n\n"
             } else ""
         } else ""
 

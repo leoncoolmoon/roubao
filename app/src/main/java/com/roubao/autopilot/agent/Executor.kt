@@ -42,10 +42,11 @@ class Executor {
             buildString {
                 latestActions.forEachIndexed { i, act ->
                     val outcome = latestOutcomes.getOrNull(i) ?: "?"
-                    if (outcome == "A") {
-                        append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Successful\n")
-                    } else {
-                        append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Failed | Error: ${latestErrors.getOrNull(i)}\n")
+                    when (outcome) {
+                        "A" -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Successful\n")
+                        // U = 反思模型没跑成功，不代表动作失败
+                        "U" -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Unknown (reflection unavailable)\n")
+                        else -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Failed | Error: ${latestErrors.getOrNull(i)}\n")
                     }
                 }
             }
