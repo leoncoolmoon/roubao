@@ -329,7 +329,15 @@ Output exactly one action:
                 // 1. 提取无障碍 UI 树；截图必须实时获取，不能复用旧帧
                 val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
                 if (accessibilityModeEnabled && accessibilityService != null) {
-                    infoPool.accessibilityTree = accessibilityService.dumpNodeTree()
+                    // 截图会被缩到长边 900；UI 树坐标按同一比例缩放，
+                    // 模型看到的「UI 树坐标」和「截图像素」才是同一个坐标系。
+                    val screenLongEdge = maxOf(infoPool.screenWidth, infoPool.screenHeight)
+                    val shotScale = if (screenLongEdge <= DeviceController.SCREENSHOT_MAX_LONG_EDGE) {
+                        1f
+                    } else {
+                        DeviceController.SCREENSHOT_MAX_LONG_EDGE.toFloat() / screenLongEdge
+                    }
+                    infoPool.accessibilityTree = accessibilityService.dumpNodeTree(scale = shotScale)
                     log("已成功提取无障碍 UI 元素树")
                 } else {
                     infoPool.accessibilityTree = ""

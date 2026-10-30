@@ -171,11 +171,11 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     /**
      * Dump 当前窗口所有可用的 UI 节点树结构信息
      */
-    fun dumpNodeTree(maxNodes: Int = 80): String {
+    fun dumpNodeTree(maxNodes: Int = 80, scale: Float = 1f): String {
         val root = rootInActiveWindow ?: return "UI 元素树为空 (未获取到 active window)"
         // 收集比展示上限更多的节点，用于检测重复文本候选；展示仍只取前 maxNodes。
         val allElements = mutableListOf<UIElementNode>()
-        collectNodes(root, allElements, maxOf(maxNodes, 300))
+        collectNodes(root, allElements, maxOf(maxNodes, 300), scale)
         val elements = allElements.take(maxNodes)
 
         if (elements.isEmpty()) {
@@ -510,12 +510,26 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     /**
      * 递归收集可用 UI 节点
      */
-    private fun collectNodes(node: AccessibilityNodeInfo?, list: MutableList<UIElementNode>, maxNodes: Int) {
+    private fun collectNodes(
+        node: AccessibilityNodeInfo?,
+        list: MutableList<UIElementNode>,
+        maxNodes: Int,
+        scale: Float = 1f
+    ) {
         if (node == null || list.size >= maxNodes) return
 
         if (node.isVisibleToUser) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
+            // 截图被缩小后，坐标也要按同一比例缩放，保证「UI 树坐标 == 截图坐标」
+            if (scale != 1f) {
+                rect.set(
+                    (rect.left * scale).toInt(),
+                    (rect.top * scale).toInt(),
+                    (rect.right * scale).toInt(),
+                    (rect.bottom * scale).toInt()
+                )
+            }
 
             val text = node.text?.toString()?.trim() ?: ""
             val desc = node.contentDescription?.toString()?.trim() ?: ""
@@ -541,7 +555,7 @@ class AutoPilotAccessibilityService : AccessibilityService() {
 
         for (i in 0 until node.childCount) {
             if (list.size >= maxNodes) break
-            collectNodes(node.getChild(i), list, maxNodes)
+            collectNodes(node.getChild(i), list, maxNodes, scale)
         }
     }
 

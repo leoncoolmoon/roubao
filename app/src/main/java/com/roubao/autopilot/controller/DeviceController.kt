@@ -38,6 +38,12 @@ class DeviceController(private val context: Context? = null) {
     companion object {
         // 使用 /data/local/tmp，shell 用户有权限访问
         private const val SCREENSHOT_PATH = "/data/local/tmp/autopilot_screen.png"
+
+        /**
+         * 截图长边上限。视觉 token 与上传体积都随像素数线性下降：
+         * 1080x2400 -> 900x2000 约省 31%。要更激进就调小（注意小字会糊）。
+         */
+        const val SCREENSHOT_MAX_LONG_EDGE = 900
     }
 
     private var shellService: IShellService? = null
@@ -462,6 +468,23 @@ class DeviceController(private val context: Context? = null) {
      * 失败时返回黑屏占位图（降级处理）
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
+        val raw = captureScreenshotRaw()
+        val bitmap = raw.bitmap
+        val longEdge = maxOf(bitmap.width, bitmap.height)
+        if (longEdge <= SCREENSHOT_MAX_LONG_EDGE) return@withContext raw
+        val ratio = SCREENSHOT_MAX_LONG_EDGE.toFloat() / longEdge
+        val width = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+        val height = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
+        println("[DeviceController] 截图缩放 ${bitmap.width}x${bitmap.height} -> ${width}x$height（坐标按同比例回映射）")
+        raw.copy(bitmap = scaled)
+    }
+
+    /**
+     * 原始分辨率截图（不做缩放）。
+     * 失败时返回黑屏占位图（降级处理）
+     */
+    private suspend fun captureScreenshotRaw(): ScreenshotResult = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         // 优先无障碍截图（API 30+）：全屏、无 shell 也能用，basic 包的关键路径。
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
