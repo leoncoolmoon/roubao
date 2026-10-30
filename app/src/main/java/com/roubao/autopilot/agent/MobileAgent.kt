@@ -446,8 +446,11 @@ Output exactly one action:
                             planResult.plan.trim().equals("KEEP", ignoreCase = true) ->
                                 log("Manager 沿用现有计划（KEEP）")
 
-                            !isUsableText(planResult.plan) ->
+                            !isUsableText(planResult.plan) -> {
                                 log("Manager 计划无效（${planResult.plan.take(20)}），沿用上一步计划")
+                                // 打原始输出，才能判断是模型没写标题、还是写成了别的格式
+                                log("Manager 原始输出: ${rawPlan.replace("\n", " ⏎ ").take(400)}")
+                            }
 
                             else -> infoPool.plan = planResult.plan
                         }
