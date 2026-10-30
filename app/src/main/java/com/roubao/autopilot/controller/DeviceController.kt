@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -460,8 +461,35 @@ class DeviceController(private val context: Context? = null) {
     data class ScreenshotResult(
         val bitmap: Bitmap,
         val isSensitive: Boolean = false,  // 是否是敏感页面（截图失败）
-        val isFallback: Boolean = false    // 是否是降级的黑屏占位图
+        val isFallback: Boolean = false,   // 是否是降级的黑屏占位图
+        val debugPath: String? = null      // 调试模式下落盘的文件名
     )
+
+    /** 截图长边上限；0 表示不缩放。运行时读设置，默认 900。 */
+    private fun screenshotMaxEdge(): Int = try {
+        com.roubao.autopilot.App.getInstance().settingsManager.settings.value.screenshotMaxLongEdge
+    } catch (e: Exception) {
+        900
+    }
+
+    /** 调试模式下把这一帧存成 PNG，返回文件名（失败返回 null）。 */
+    private fun saveDebugShot(bitmap: Bitmap): String? {
+        if (!com.roubao.autopilot.data.DebugOptions.enabled) return null
+        return try {
+            val base = context?.getExternalFilesDir(null) ?: context?.filesDir ?: return null
+            val dir = File(base, "screenshots").apply { mkdirs() }
+            val name = "shot-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US)
+                .format(java.util.Date()) + ".png"
+            FileOutputStream(File(dir, name)).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            println("[DeviceController] 调试截图: ${dir.absolutePath}/$name")
+            name
+        } catch (e: Exception) {
+            println("[DeviceController] 调试截图保存失败: ${e.message}")
+            null
+        }
+    }
 
     /**
      * 截图 - 使用 /data/local/tmp 并设置全局可读权限
@@ -470,14 +498,18 @@ class DeviceController(private val context: Context? = null) {
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
         val raw = captureScreenshotRaw()
         val bitmap = raw.bitmap
+        val maxEdge = screenshotMaxEdge()
         val longEdge = maxOf(bitmap.width, bitmap.height)
-        if (longEdge <= SCREENSHOT_MAX_LONG_EDGE) return@withContext raw
-        val ratio = SCREENSHOT_MAX_LONG_EDGE.toFloat() / longEdge
-        val width = (bitmap.width * ratio).toInt().coerceAtLeast(1)
-        val height = (bitmap.height * ratio).toInt().coerceAtLeast(1)
-        val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
-        println("[DeviceController] 截图缩放 ${bitmap.width}x${bitmap.height} -> ${width}x$height（坐标按同比例回映射）")
-        raw.copy(bitmap = scaled)
+        val scaled = if (maxEdge > 0 && longEdge > maxEdge) {
+            val ratio = maxEdge.toFloat() / longEdge
+            val width = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+            val height = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+            println("[DeviceController] 截图缩放 ${bitmap.width}x${bitmap.height} -> ${width}x$height（坐标按同比例回映射）")
+            Bitmap.createScaledBitmap(bitmap, width, height, true)
+        } else {
+            bitmap
+        }
+        raw.copy(bitmap = scaled, debugPath = saveDebugShot(scaled))
     }
 
     /**

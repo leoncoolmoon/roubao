@@ -30,6 +30,8 @@ class App : Application() {
 
         // 初始化 Firebase Crashlytics（根据用户设置决定是否启用）
         settingsManager = SettingsManager(this)
+        // 调试开关的运行时镜像（截图落盘 + 详细日志）
+        com.roubao.autopilot.data.DebugOptions.enabled = settingsManager.settings.value.debugEnabled
         val cloudCrashReportEnabled = settingsManager.settings.value.cloudCrashReportEnabled
         FirebaseCrashlytics.getInstance().apply {
             setCrashlyticsCollectionEnabled(cloudCrashReportEnabled)

@@ -400,6 +400,12 @@ class MainActivity : ComponentActivity() {
                                     settingsManager.updateOverlayScale(it)
                                     OverlayService.setScale(it)
                                 },
+                                onUpdateScreenshotMaxLongEdge = { px ->
+                                    settingsManager.updateScreenshotMaxLongEdge(px)
+                                },
+                                onUpdateDebugEnabled = { enabled ->
+                                    settingsManager.updateDebugEnabled(enabled)
+                                },
                                 onUpdateCloudCrashReport = { enabled ->
                                     settingsManager.updateCloudCrashReportEnabled(enabled)
                                     App.getInstance().updateCloudCrashReportEnabled(enabled)

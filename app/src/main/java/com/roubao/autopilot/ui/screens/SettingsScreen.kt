@@ -68,6 +68,8 @@ fun SettingsScreen(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
     onUpdateOverlayScale: (Float) -> Unit = {},
+    onUpdateScreenshotMaxLongEdge: (Int) -> Unit = {},
+    onUpdateDebugEnabled: (Boolean) -> Unit = {},
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
@@ -91,6 +93,7 @@ fun SettingsScreen(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMaxStepsDialog by remember { mutableStateOf(false) }
     var showOverlayScaleDialog by remember { mutableStateOf(false) }
+    var showScreenshotSizeDialog by remember { mutableStateOf(false) }
     var showBaseUrlDialog by remember { mutableStateOf(false) }
     var showShizukuHelpDialog by remember { mutableStateOf(false) }
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
@@ -193,6 +196,82 @@ fun SettingsScreen(
                 subtitle = "${(settings.overlayScale * 100).toInt()}%",
                 onClick = { showOverlayScaleDialog = true }
             )
+        }
+
+        // 截图大小（决定发给模型的图像像素数）
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "截图大小",
+                subtitle = if (settings.screenshotMaxLongEdge <= 0) {
+                    "原始分辨率（最费 token）"
+                } else {
+                    "长边 ${settings.screenshotMaxLongEdge}px · 越小越省 token"
+                },
+                onClick = { showScreenshotSizeDialog = true }
+            )
+        }
+
+        // 调试模式：截图落盘 + 详细日志
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.warning.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = null,
+                            tint = colors.warning,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "调试模式",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (settings.debugEnabled) {
+                                "开：截图存到应用目录，详细日志进 App 日志"
+                            } else {
+                                "关：只保留每步耗时汇总"
+                            },
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = settings.debugEnabled,
+                        onCheckedChange = onUpdateDebugEnabled,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.warning,
+                            checkedTrackColor = colors.warning.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput
+                        )
+                    )
+                }
+            }
         }
 
         // 权限与服务：无障碍 / Shizuku / Root 相邻
@@ -902,6 +981,44 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showOverlayScaleDialog = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // 截图大小（长边像素）
+    if (showScreenshotSizeDialog) {
+        AlertDialog(
+            onDismissRequest = { showScreenshotSizeDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("截图大小") },
+            text = {
+                Column {
+                    Text(
+                        text = "数值是图片长边像素。越小越省 token，但屏上小字也越容易糊。",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    val options = listOf(720, 900, 1080, 1440, 0)
+                    options.forEach { px ->
+                        TextButton(
+                            onClick = {
+                                onUpdateScreenshotMaxLongEdge(px)
+                                showScreenshotSizeDialog = false
+                            }
+                        ) {
+                            val mark = if (settings.screenshotMaxLongEdge == px) "  ✓" else ""
+                            Text(
+                                text = (if (px == 0) "原始分辨率" else "长边 $px px") + mark,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showScreenshotSizeDialog = false }) { Text("关闭") }
             }
         )
     }

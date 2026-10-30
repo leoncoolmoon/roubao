@@ -1,4 +1,4 @@
-﻿package com.roubao.autopilot.vlm
+package com.roubao.autopilot.vlm
 
 import android.graphics.Bitmap
 import android.util.Base64
@@ -55,6 +55,8 @@ class VLMClient(
 
         internal fun report(line: String) {
             println(line)
+            // 详细日志只在调试模式下进 App 日志，避免刷屏
+            if (!com.roubao.autopilot.data.DebugOptions.enabled) return
             try {
                 logSink?.invoke(line)
             } catch (_: Exception) {

@@ -92,6 +92,10 @@ data class AppSettings(
     val shizukuModeEnabled: Boolean = true,
     // file 工具的授权目录：所有文件操作必须落在这个目录内
     val fileAccessRoot: String = "/sdcard/Download/肉包",
+    // 截图长边上限（px）；0 = 原始分辨率。越小越省 token，小字也越容易糊
+    val screenshotMaxLongEdge: Int = 900,
+    // 调试模式：截图落盘 + 输出详细日志
+    val debugEnabled: Boolean = false,
     val accessibilityModeEnabled: Boolean = true,
     val advancedModeEnabled: Boolean = false,
     val overlayScale: Float = 0.65f,
@@ -238,6 +242,9 @@ class SettingsManager(context: Context) {
             fileAccessRoot = prefs.getString("file_access_root", "/sdcard/Download/肉包")
                 ?.takeIf { it.isNotBlank() }
                 ?: "/sdcard/Download/肉包",
+            screenshotMaxLongEdge = prefs.getInt("screenshot_max_long_edge", 900)
+                .takeIf { it >= 0 } ?: 900,
+            debugEnabled = prefs.getBoolean("debug_enabled", false),
             accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", true),
             advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
             overlayScale = prefs.getFloat("overlay_scale", 0.65f).coerceIn(0.4f, 1.2f),
@@ -388,6 +395,18 @@ class SettingsManager(context: Context) {
         val safe = path.trim().trimEnd('/').ifBlank { "/sdcard/Download/肉包" }
         prefs.edit().putString("file_access_root", safe).apply()
         _settings.value = _settings.value.copy(fileAccessRoot = safe)
+    }
+
+    fun updateScreenshotMaxLongEdge(px: Int) {
+        val safe = px.coerceIn(0, 4000)
+        prefs.edit().putInt("screenshot_max_long_edge", safe).apply()
+        _settings.value = _settings.value.copy(screenshotMaxLongEdge = safe)
+    }
+
+    fun updateDebugEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("debug_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(debugEnabled = enabled)
+        DebugOptions.enabled = enabled
     }
 
     fun updateAccessibilityModeEnabled(enabled: Boolean) {
