@@ -1506,7 +1506,18 @@ Output exactly one action:
                     if (setDirectly) {
                         log("type: 已通过无障碍直接写入 ${text.length} 个字符（无需切换键盘）")
                     } else {
-                        controller.type(text)
+                        // 微信这类自绘输入框不认 ACTION_SET_TEXT：
+                        // 走「写剪贴板 + 无障碍 ACTION_PASTE」，比全局粘贴键（keyevent 279）可靠，
+                        // 也不需要模型去长按弹菜单（那样经常点到语音按钮）。
+                        val pasted = if (accessibilityModeEnabled && accessibilityService != null) {
+                            controller.setClipboard(text) && accessibilityService.pasteOnFocusedEditable()
+                        } else false
+                        if (pasted) {
+                            log("type: ACTION_SET_TEXT 无效，已通过「剪贴板 + ACTION_PASTE」写入 ${text.length} 个字符")
+                        } else {
+                            log("type: 无障碍写入与粘贴都失败，回退 shell 输入")
+                            controller.type(text)
+                        }
                     }
                 }
             }

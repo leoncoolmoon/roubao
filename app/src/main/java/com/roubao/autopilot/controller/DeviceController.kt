@@ -261,6 +261,31 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
+     * 把文本写进系统剪贴板（必须在主线程），成功返回 true。
+     * 供「无障碍 ACTION_PASTE」这条路径使用。
+     */
+    fun setClipboard(text: String): Boolean {
+        val cm = clipboardManager ?: return false
+        val latch = CountDownLatch(1)
+        var ok = false
+        mainHandler.post {
+            try {
+                cm.setPrimaryClip(ClipData.newPlainText("baozi_input", text))
+                ok = true
+            } catch (e: Exception) {
+                println("[DeviceController] 设置剪贴板失败: ${e.message}")
+            } finally {
+                latch.countDown()
+            }
+        }
+        return try {
+            latch.await(1, TimeUnit.SECONDS) && ok
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * 输入文本 (使用剪贴板方式，支持中文)
      */
     fun type(text: String) {

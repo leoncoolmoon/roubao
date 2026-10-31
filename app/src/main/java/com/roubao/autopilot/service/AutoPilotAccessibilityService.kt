@@ -303,7 +303,36 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 在焦点输入框里设置选区（start == end 就是移动光标）。
+     * 对当前焦点（或第一个）可编辑节点执行 ACTION_PASTE。
+     *
+     * 微信这类自绘输入框不响应 ACTION_SET_TEXT，但对 ACTION_PASTE 有效；
+     * 比 `input keyevent 279` 可靠（那种全局粘贴键在微信里经常没反应）。
+     */
+    fun pasteOnFocusedEditable(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = try {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        } catch (e: Exception) {
+            null
+        }
+        val target = if (focused?.isEditable == true) focused else findFirstEditable(root)
+        if (target == null) {
+            println("[AccessibilityService] paste: 找不到可编辑节点")
+            return false
+        }
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val ok = target.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (!ok) println("[AccessibilityService] paste: ACTION_PASTE 返回 false")
+            ok
+        } catch (e: Exception) {
+            println("[AccessibilityService] paste failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 直接在输入框里设置选区（start == end 就是移动光标）。
      * 比长按拖拽/方向键更精确，适合“选中几个字/移动光标”。
      */
     fun setSelection(start: Int, end: Int): Boolean {
