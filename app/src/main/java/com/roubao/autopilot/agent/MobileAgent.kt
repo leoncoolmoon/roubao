@@ -872,6 +872,10 @@ Output exactly one action:
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -1005,6 +1009,10 @@ Output exactly one action:
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -1227,6 +1235,10 @@ Output exactly one action:
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -1370,10 +1382,17 @@ Output exactly one action:
             "click", "double_tap", "long_press" -> {
                 // 可选索引模式：模型显式给出 index 时优先按 UI 树编号操作
                 if (action.index != null && accessibilityModeEnabled && accessibilityService != null) {
-                    val ok = when (action.type) {
-                        "click" -> accessibilityService.clickByIndex(action.index)
-                        "long_press" -> accessibilityService.longPressByIndex(action.index)
-                        else -> false
+                    val ok = try {
+                        when (action.type) {
+                            "click" -> accessibilityService.clickByIndex(action.index)
+                            "long_press" -> accessibilityService.longPressByIndex(action.index)
+                            else -> false
+                        }
+                    } catch (e: Exception) {
+                        // 索引操作内部已经兜底；这里再包一层，确保任何意外都只降级、不中断任务
+                        log("索引${action.type}异常，回退文本/坐标: ${e.message}")
+                        e.printStackTrace()
+                        false
                     }
                     if (ok) {
                         log("🤖 无障碍索引${action.type}: index=${action.index}")

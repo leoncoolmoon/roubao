@@ -423,6 +423,26 @@ fun HistoryDetailScreen(
                         Text(record.formattedDuration, fontSize = 14.sp, color = colors.textPrimary)
                     }
                 }
+                // 失败/中断时把结果原因显示出来，不再只藏在 Toast 里
+                if (record.resultMessage.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("结果", fontSize = 12.sp, color = colors.textHint)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = record.resultMessage,
+                        fontSize = 13.sp,
+                        color = when (record.status) {
+                            ExecutionStatus.FAILED -> colors.error
+                            ExecutionStatus.STOPPED -> colors.warning
+                            else -> colors.textSecondary
+                        },
+                        modifier = Modifier.pointerInput(record.resultMessage) {
+                            detectTapGestures(onLongPress = {
+                                copyToClipboard(context, "执行结果", record.resultMessage)
+                            })
+                        }
+                    )
+                }
             }
         }
 

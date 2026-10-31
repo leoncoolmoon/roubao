@@ -774,6 +774,9 @@ class OverlayService : Service() {
         isMinimized = false
         overlayView?.post {
             resetBunAnimation()
+            // 之前动作执行会用 setVisible(false) 把整窗隐藏；空闲态必须显式恢复，
+            // 否则会出现“服务还活着、窗口却看不见”的隐身状态。
+            overlayView?.visibility = View.VISIBLE
             panelView?.visibility = View.GONE
             idleIconView?.visibility = View.VISIBLE
             askUserPanel?.visibility = View.GONE

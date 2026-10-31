@@ -801,12 +801,21 @@ class MainActivity : ComponentActivity() {
                     shouldNavigateToRecord.value = true
                 }
             } catch (e: Exception) {
-                // 更新失败记录
+                // 更新失败记录：steps 必须一起保存，否则记录会显示“0 步/暂无执行步骤”，
+                // 看起来像进程被杀；异常堆栈也要落到日志里，后台 Toast 会被系统丢掉。
+                val agentState = mobileAgent.value?.state?.value
+                val steps = agentState?.executionSteps ?: emptyList()
                 val currentLogs = mobileAgent.value?.logs?.value ?: emptyList()
+                val trace = e.stackTraceToString()
+                android.util.Log.e(TAG, "runAgent failed", e)
                 val updatedRecord = record.copy(
                     endTime = System.currentTimeMillis(),
                     status = ExecutionStatus.FAILED,
-                    logs = currentLogs,
+                    steps = steps,
+                    logs = currentLogs + listOf(
+                        "❌ 执行异常: ${e.javaClass.simpleName}: ${e.message}",
+                        trace
+                    ),
                     resultMessage = "错误: ${e.message}"
                 )
                 executionRepository.saveRecord(updatedRecord)

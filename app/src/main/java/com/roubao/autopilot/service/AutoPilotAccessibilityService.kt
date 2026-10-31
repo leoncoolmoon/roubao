@@ -395,68 +395,76 @@ class AutoPilotAccessibilityService : AccessibilityService() {
      * 编号与 dumpNodeTree() 中的序号一致，每次动作前重新取树，避免使用过期节点。
      */
     fun clickByIndex(index: Int): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isClickable) {
-            node = node.parent
-        }
+        // 整段都要兜住：nodeByIndex 的树遍历、node.parent 上溯、performAction
+        // 都可能因为节点过期/窗口切换抛异常。之前只包了 performAction，
+        // 结果异常直接冒到任务协程，把整次执行打断（表现为“失败 + 0 步”）。
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isClickable) {
+                node = node.parent
+            }
             node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] clickByIndex failed: ${e.message}")
+            logNodeError("clickByIndex($index)", e)
             false
         }
     }
 
     fun longPressByIndex(index: Int): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isLongClickable) {
-            node = node.parent
-        }
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isLongClickable) {
+                node = node.parent
+            }
             node?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] longPressByIndex failed: ${e.message}")
+            logNodeError("longPressByIndex($index)", e)
             false
         }
     }
 
     fun setTextByIndex(index: Int, text: String): Boolean {
-        val node = nodeByIndex(index) ?: return false
-        val target = if (node.isEditable) node else findEditableChild(node) ?: return false
         return try {
+            val node = nodeByIndex(index) ?: return false
+            val target = if (node.isEditable) node else findEditableChild(node) ?: return false
             target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
             val args = android.os.Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
             target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         } catch (e: Exception) {
-            println("[AccessibilityService] setTextByIndex failed: ${e.message}")
+            logNodeError("setTextByIndex($index)", e)
             false
         }
     }
 
     fun scrollByIndex(index: Int, forward: Boolean): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isScrollable) {
-            node = node.parent
-        }
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isScrollable) {
+                node = node.parent
+            }
             node?.performAction(
                 if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
                 else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
             ) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] scrollByIndex failed: ${e.message}")
+            logNodeError("scrollByIndex($index)", e)
             false
         }
     }
 
     private fun nodeByIndex(index: Int): AccessibilityNodeInfo? {
         if (index <= 0) return null
-        val root = rootInActiveWindow ?: return null
-        val nodes = mutableListOf<AccessibilityNodeInfo>()
-        collectNodeRefs(root, nodes, 80)
-        return nodes.getOrNull(index - 1)
+        return try {
+            val root = rootInActiveWindow ?: return null
+            val nodes = mutableListOf<AccessibilityNodeInfo>()
+            collectNodeRefs(root, nodes, 80)
+            nodes.getOrNull(index - 1)
+        } catch (e: Exception) {
+            logNodeError("nodeByIndex($index)", e)
+            null
+        }
     }
 
     private fun collectNodeRefs(
@@ -465,23 +473,34 @@ class AutoPilotAccessibilityService : AccessibilityService() {
         maxNodes: Int
     ) {
         if (node == null || list.size >= maxNodes) return
-        if (node.isVisibleToUser) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val text = node.text?.toString()?.trim() ?: ""
-            val desc = node.contentDescription?.toString()?.trim() ?: ""
-            val id = node.viewIdResourceName?.toString() ?: ""
-            if (!rect.isEmpty &&
-                (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() ||
-                    node.isClickable || node.isEditable)
-            ) {
-                list.add(node)
+        try {
+            if (node.isVisibleToUser) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                val text = node.text?.toString()?.trim() ?: ""
+                val desc = node.contentDescription?.toString()?.trim() ?: ""
+                val id = node.viewIdResourceName?.toString() ?: ""
+                if (!rect.isEmpty &&
+                    (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() ||
+                        node.isClickable || node.isEditable)
+                ) {
+                    list.add(node)
+                }
             }
+            for (i in 0 until node.childCount) {
+                if (list.size >= maxNodes) break
+                collectNodeRefs(node.getChild(i), list, maxNodes)
+            }
+        } catch (e: Exception) {
+            // 单个节点失效不应该让整棵树的遍历失败
+            logNodeError("collectNodeRefs", e)
         }
-        for (i in 0 until node.childCount) {
-            if (list.size >= maxNodes) break
-            collectNodeRefs(node.getChild(i), list, maxNodes)
-        }
+    }
+
+    /** 无障碍节点操作统一兜底：打印完整堆栈，方便在任务日志里定位。 */
+    private fun logNodeError(where: String, e: Throwable) {
+        println("[AccessibilityService] $where failed: ${e.javaClass.simpleName}: ${e.message}")
+        e.printStackTrace()
     }
 
     private fun findEditableChild(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -511,29 +530,30 @@ class AutoPilotAccessibilityService : AccessibilityService() {
      * @return 操作是否成功触发
      */
     fun performActionByAttribute(query: String, textToType: String? = null): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val targetNode = findMatchingNode(root, query) ?: return false
+        return try {
+            val root = rootInActiveWindow ?: return false
+            val targetNode = findMatchingNode(root, query) ?: return false
 
-        if (!textToType.isNullOrEmpty() && targetNode.isEditable) {
-            // 设置文本盲操
-            val args = android.os.Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
+            if (!textToType.isNullOrEmpty() && targetNode.isEditable) {
+                // 设置文本盲操
+                val args = android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
+                }
+                val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                if (success) return true
             }
-            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (success) return true
-        }
 
-        // 尝试触发点击盲操（若节点不可点击，向父节点查找可点击节点）
-        var clickableNode: AccessibilityNodeInfo? = targetNode
-        while (clickableNode != null && !clickableNode.isClickable) {
-            clickableNode = clickableNode.parent
-        }
+            // 尝试触发点击盲操（若节点不可点击，向父节点查找可点击节点）
+            var clickableNode: AccessibilityNodeInfo? = targetNode
+            while (clickableNode != null && !clickableNode.isClickable) {
+                clickableNode = clickableNode.parent
+            }
 
-        if (clickableNode != null && clickableNode.isClickable) {
-            return clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            clickableNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        } catch (e: Exception) {
+            logNodeError("performActionByAttribute($query)", e)
+            false
         }
-
-        return false
     }
 
     /**
