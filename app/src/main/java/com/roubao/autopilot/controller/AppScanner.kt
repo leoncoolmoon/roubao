@@ -247,6 +247,9 @@ class AppScanner(private val context: Context) {
     fun searchApps(query: String, topK: Int = 5, includeSystem: Boolean = true): List<SearchResult> {
         val apps = getApps()
         val lowerQuery = query.lowercase().trim()
+        // 按非字母数字切词："Google Maps" -> [google, maps]，中文整体算一个词
+        val queryTokens = lowerQuery.split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.length >= 2 }
         val results = mutableListOf<SearchResult>()
 
         // 先检查是否是语义查询，转换为分类
@@ -258,6 +261,14 @@ class AppScanner(private val context: Context) {
 
             var score = 0f
             var matchType = ""
+
+            // 分词匹配用的可搜索文本：应用名 + 拼音 + 包名 + 关键词
+            // 这样 "Google Maps" 能通过包名 com.google.android.apps.maps 命中「地图」
+            val searchable = (
+                app.appName + " " + app.pinyin + " " +
+                    app.packageName + " " + app.keywords.joinToString(" ")
+                ).lowercase()
+            val allTokensHit = queryTokens.isNotEmpty() && queryTokens.all { searchable.contains(it) }
 
             // 1. 精确匹配应用名 (最高优先级)
             if (app.appName.equals(query, ignoreCase = true)) {
@@ -274,22 +285,27 @@ class AppScanner(private val context: Context) {
                 score = 0.9f
                 matchType = "contains"
             }
-            // 4. 拼音包含
+            // 4. 分词全命中（跨语言最常见：英文查询命中中文应用名）
+            else if (allTokensHit) {
+                score = 0.85f
+                matchType = "tokens"
+            }
+            // 5. 拼音包含
             else if (app.pinyin.contains(lowerQuery)) {
                 score = 0.8f
                 matchType = "pinyin"
             }
-            // 5. 关键词匹配
-            else if (app.keywords.any { it.contains(lowerQuery) || lowerQuery.contains(it) }) {
+            // 6. 关键词包含查询词（只做正向包含，反向会把 "google" 类关键词扩散到所有 Google 应用）
+            else if (app.keywords.any { it.length >= 2 && it.contains(lowerQuery) }) {
                 score = 0.7f
                 matchType = "keyword"
             }
-            // 6. 分类匹配（语义查询）
+            // 7. 分类匹配（语义查询）
             else if (semanticCategory != null && app.category == semanticCategory) {
                 score = 0.6f
                 matchType = "semantic"
             }
-            // 7. 包名包含
+            // 8. 包名包含
             else if (app.packageName.lowercase().contains(lowerQuery)) {
                 score = 0.5f
                 matchType = "package"

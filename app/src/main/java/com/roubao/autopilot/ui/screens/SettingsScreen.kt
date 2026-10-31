@@ -1,4 +1,4 @@
-package com.roubao.autopilot.ui.screens
+﻿package com.roubao.autopilot.ui.screens
 
 import android.content.Intent
 import android.provider.Settings
@@ -68,7 +68,7 @@ fun SettingsScreen(
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
     onUpdateOverlayScale: (Float) -> Unit = {},
-    onUpdateScreenshotMaxLongEdge: (Int) -> Unit = {},
+    onUpdateScreenshotMaxWidth: (Int) -> Unit = {},
     onUpdateDebugEnabled: (Boolean) -> Unit = {},
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
@@ -203,10 +203,10 @@ fun SettingsScreen(
             SettingsItem(
                 icon = Icons.Default.Settings,
                 title = "截图大小",
-                subtitle = if (settings.screenshotMaxLongEdge <= 0) {
+                subtitle = if (settings.screenshotMaxWidth <= 0) {
                     "原始分辨率（最费 token）"
                 } else {
-                    "长边 ${settings.screenshotMaxLongEdge}px · 越小越省 token"
+                    "宽 ${settings.screenshotMaxWidth}px · 越小越省 token"
                 },
                 onClick = { showScreenshotSizeDialog = true }
             )
@@ -985,7 +985,7 @@ fun SettingsScreen(
         )
     }
 
-    // 截图大小（长边像素）
+    // 截图大小（宽度像素）
     if (showScreenshotSizeDialog) {
         AlertDialog(
             onDismissRequest = { showScreenshotSizeDialog = false },
@@ -994,22 +994,22 @@ fun SettingsScreen(
             text = {
                 Column {
                     Text(
-                        text = "数值是图片长边像素。越小越省 token，但屏上小字也越容易糊。",
+                        text = "数值是截图宽度（竖屏手机看宽度最直观）。越小越省 token，但小字也越容易糊。1080 宽 ≈ 原图。",
                         fontSize = 12.sp,
                         color = colors.textSecondary,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
-                    val options = listOf(720, 900, 1080, 1440, 0)
+                    val options = listOf(540, 720, 900, 1080, 0)
                     options.forEach { px ->
                         TextButton(
                             onClick = {
-                                onUpdateScreenshotMaxLongEdge(px)
+                                onUpdateScreenshotMaxWidth(px)
                                 showScreenshotSizeDialog = false
                             }
                         ) {
-                            val mark = if (settings.screenshotMaxLongEdge == px) "  ✓" else ""
+                            val mark = if (settings.screenshotMaxWidth == px) "  ✓" else ""
                             Text(
-                                text = (if (px == 0) "原始分辨率" else "长边 $px px") + mark,
+                                text = (if (px == 0) "不缩放（原图）" else "宽 $px px") + mark,
                                 modifier = Modifier.fillMaxWidth(),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Start
                             )

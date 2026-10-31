@@ -465,9 +465,9 @@ class DeviceController(private val context: Context? = null) {
         val debugPath: String? = null      // 调试模式下落盘的文件名
     )
 
-    /** 截图长边上限；0 表示不缩放。运行时读设置，默认 900。 */
-    private fun screenshotMaxEdge(): Int = try {
-        com.roubao.autopilot.App.getInstance().settingsManager.settings.value.screenshotMaxLongEdge
+    /** 截图宽度上限；0 表示不缩放。运行时读设置，默认 900。 */
+    private fun screenshotMaxWidth(): Int = try {
+        com.roubao.autopilot.App.getInstance().settingsManager.settings.value.screenshotMaxWidth
     } catch (e: Exception) {
         900
     }
@@ -498,11 +498,10 @@ class DeviceController(private val context: Context? = null) {
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
         val raw = captureScreenshotRaw()
         val bitmap = raw.bitmap
-        val maxEdge = screenshotMaxEdge()
-        val longEdge = maxOf(bitmap.width, bitmap.height)
-        val scaled = if (maxEdge > 0 && longEdge > maxEdge) {
-            val ratio = maxEdge.toFloat() / longEdge
-            val width = (bitmap.width * ratio).toInt().coerceAtLeast(1)
+        val maxWidth = screenshotMaxWidth()
+        val scaled = if (maxWidth > 0 && bitmap.width > maxWidth) {
+            val ratio = maxWidth.toFloat() / bitmap.width
+            val width = maxWidth
             val height = (bitmap.height * ratio).toInt().coerceAtLeast(1)
             println("[DeviceController] 截图缩放 ${bitmap.width}x${bitmap.height} -> ${width}x$height（坐标按同比例回映射）")
             Bitmap.createScaledBitmap(bitmap, width, height, true)

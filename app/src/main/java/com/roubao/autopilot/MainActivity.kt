@@ -1,4 +1,4 @@
-package com.roubao.autopilot
+﻿package com.roubao.autopilot
 
 import android.Manifest
 import android.content.Intent
@@ -400,8 +400,8 @@ class MainActivity : ComponentActivity() {
                                     settingsManager.updateOverlayScale(it)
                                     OverlayService.setScale(it)
                                 },
-                                onUpdateScreenshotMaxLongEdge = { px ->
-                                    settingsManager.updateScreenshotMaxLongEdge(px)
+                                onUpdateScreenshotMaxWidth = { px ->
+                                    settingsManager.updateScreenshotMaxWidth(px)
                                 },
                                 onUpdateDebugEnabled = { enabled ->
                                     settingsManager.updateDebugEnabled(enabled)
