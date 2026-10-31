@@ -117,6 +117,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // 重新打开 App：清掉上次「退出应用」留下的屏蔽标记
+        OverlayService.resetShutdownFlag()
         readScheduledIntent(intent)
         applyOverlayIntent(intent)
 
@@ -588,9 +590,8 @@ class MainActivity : ComponentActivity() {
             Log.w(TAG, "exitApp: stop agent failed: ${e.message}")
         }
         try {
-            OverlayService.idle(this)
-            OverlayService.hide(this)
-            stopService(Intent(this, OverlayService::class.java))
+            // 不要用 idle()：它会把悬浮窗重新拉起来（肉包图标）
+            OverlayService.shutdown(this)
         } catch (e: Exception) {
             Log.w(TAG, "exitApp: stop overlay failed: ${e.message}")
         }

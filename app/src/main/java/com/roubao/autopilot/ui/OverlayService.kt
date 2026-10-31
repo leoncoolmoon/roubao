@@ -79,6 +79,9 @@ class OverlayService : Service() {
 
     companion object {
         private var instance: OverlayService? = null
+        /** 用户点了「退出应用」：之后任何 idle/show 都不允许再拉起悬浮窗。 */
+        @Volatile
+        private var shuttingDown = false
         private var stopCallback: (() -> Unit)? = null
         private var pauseCallback: (() -> Unit)? = null
         private var continueCallback: (() -> Unit)? = null
@@ -106,6 +109,7 @@ class OverlayService : Service() {
 
         /** 结束任务后回到桌面肉包图标，不停止服务 */
         fun idle(context: Context) {
+            if (shuttingDown) return
             stopCallback = null
             pauseCallback = null
             continueCallback = null
@@ -119,6 +123,7 @@ class OverlayService : Service() {
 
         /** 非工作状态：桌面上只显示一个可点击的肉包图标 */
         fun showIdle(context: Context) {
+            if (shuttingDown) return
             val instance = instance
             if (instance != null) {
                 instance.setIdleMode()
@@ -131,6 +136,7 @@ class OverlayService : Service() {
         }
 
         fun show(context: Context, text: String, onStop: (() -> Unit)? = null) {
+            if (shuttingDown) return
             stopCallback = onStop
             isTakeOverMode = false
             isConfirmMode = false
@@ -158,6 +164,44 @@ class OverlayService : Service() {
             if (instance != null) {
                 context.stopService(Intent(context, OverlayService::class.java))
             }
+        }
+
+        /** 退出应用时用：彻底关掉悬浮窗，并且挡住之后任何 idle/show 的重新拉起。 */
+        fun shutdown(context: Context) {
+            shuttingDown = true
+            stopCallback = null
+            pauseCallback = null
+            continueCallback = null
+            confirmCallback = null
+            isTakeOverMode = false
+            isConfirmMode = false
+            isPaused = false
+            pendingCallbacks.clear()
+            instance?.let { svc ->
+                try {
+                    Handler(Looper.getMainLooper()).post {
+                        svc.overlayView?.let { view ->
+                            try {
+                                svc.windowManager?.removeView(view)
+                            } catch (_: Exception) {
+                            }
+                        }
+                        svc.overlayView = null
+                        try {
+                            svc.stopForeground(true)
+                        } catch (_: Exception) {
+                        }
+                        svc.stopSelf()
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            context.stopService(Intent(context, OverlayService::class.java))
+        }
+
+        /** 重新打开 App 时清掉退出标记，否则悬浮窗再也起不来。 */
+        fun resetShutdownFlag() {
+            shuttingDown = false
         }
 
         fun update(text: String) {
