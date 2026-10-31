@@ -1,4 +1,4 @@
-﻿package com.roubao.autopilot.ui.screens
+package com.roubao.autopilot.ui.screens
 
 import android.content.Intent
 import android.provider.Settings
@@ -70,6 +70,7 @@ fun SettingsScreen(
     onUpdateOverlayScale: (Float) -> Unit = {},
     onUpdateScreenshotMaxWidth: (Int) -> Unit = {},
     onUpdateDebugEnabled: (Boolean) -> Unit = {},
+    onExitApp: () -> Unit = {},
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
@@ -99,6 +100,7 @@ fun SettingsScreen(
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
     var showFileRootDialog by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
     var showPackDialog by remember { mutableStateOf(false) }
     var showRootShellConfirmDialog by remember { mutableStateOf(false) }
@@ -924,10 +926,77 @@ fun SettingsScreen(
             )
         }
 
+        // 退出应用（部分 ROM 上返回键退不掉，这里给一个明确入口）
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .clickable { showExitDialog = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.error.copy(alpha = 0.12f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = colors.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "退出应用",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.error
+                    )
+                }
+            }
+        }
+
         // 底部间距
         item {
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+
+    // 退出确认
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("退出肉包", color = colors.textPrimary) },
+            text = {
+                Text(
+                    text = if (isExecuting) {
+                        "当前有任务在执行，退出会先停止任务，再关闭悬浮窗并退出应用。确定退出？"
+                    } else {
+                        "将停止悬浮窗并关闭应用。无障碍服务本身由系统持有，需要在系统设置里单独关闭。"
+                    },
+                    color = colors.textSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitDialog = false
+                    onExitApp()
+                }) {
+                    Text("退出", color = colors.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitDialog = false }) {
+                    Text("取消", color = colors.textSecondary)
+                }
+            }
+        )
     }
 
     // 主题选择对话框

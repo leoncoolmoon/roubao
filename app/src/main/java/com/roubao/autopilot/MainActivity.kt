@@ -1,4 +1,4 @@
-﻿package com.roubao.autopilot
+package com.roubao.autopilot
 
 import android.Manifest
 import android.content.Intent
@@ -448,6 +448,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onRefreshShizuku = { refreshShizukuStatus() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
+                                onExitApp = { exitApp() },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
                                     when (deviceController.getShizukuPrivilegeLevel()) {
@@ -572,6 +573,28 @@ class MainActivity : ComponentActivity() {
             Log.e(TAG, "checkAndUpdateShizukuStatus error", e)
             shizukuAvailable.value = false
         }
+    }
+
+    /**
+     * 彻底退出：停任务 → 停悬浮窗前台服务 → 关掉所有 Activity。
+     * 部分 ROM（如 moto / Android 15）上返回键只会把任务退到后台，这里给一个明确出口。
+     */
+    private fun exitApp() {
+        try {
+            currentExecutionJob?.cancel()
+            currentExecutionJob = null
+            mobileAgent.value?.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "exitApp: stop agent failed: ${e.message}")
+        }
+        try {
+            OverlayService.idle(this)
+            OverlayService.hide(this)
+            stopService(Intent(this, OverlayService::class.java))
+        } catch (e: Exception) {
+            Log.w(TAG, "exitApp: stop overlay failed: ${e.message}")
+        }
+        finishAffinity()
     }
 
     private fun refreshShizukuStatus() {
