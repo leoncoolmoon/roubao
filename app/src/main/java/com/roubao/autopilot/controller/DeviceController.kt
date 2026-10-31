@@ -6,12 +6,16 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import com.roubao.autopilot.App
 import com.roubao.autopilot.IShellService
 import com.roubao.autopilot.service.AutoPilotAccessibilityService
@@ -22,6 +26,7 @@ import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -34,6 +39,12 @@ class DeviceController(private val context: Context? = null) {
     companion object {
         // 使用 /data/local/tmp，shell 用户有权限访问
         private const val SCREENSHOT_PATH = "/data/local/tmp/autopilot_screen.png"
+
+        /**
+         * 截图长边上限。视觉 token 与上传体积都随像素数线性下降：
+         * 1080x2400 -> 900x2000 约省 31%。要更激进就调小（注意小字会糊）。
+         */
+        const val SCREENSHOT_MAX_LONG_EDGE = 900
     }
 
     private var shellService: IShellService? = null
@@ -183,6 +194,45 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
+     * root shell：走 su -c，仅在高级模式/root provider 下使用。
+     * 每次 spawn 一个 su 进程，超时 20 秒；失败返回明确错误，不做静默降级。
+     */
+    fun rootShell(command: String): String {
+        if (command.isBlank()) return "Error: empty root command"
+        // 优先 Shizuku Root：ShellService 本身已经是 uid 0，不需要每次 spawn su。
+        try {
+            if (isAvailable() && Shizuku.getUid() == 0) {
+                return exec(command)
+            }
+        } catch (_: Exception) {
+        }
+        var process: Process? = null
+        return try {
+            process = ProcessBuilder("su", "-c", command)
+                .redirectErrorStream(true)
+                .start()
+            val finished = process.waitFor(20, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                return "Error: root command timeout"
+            }
+            val output = BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
+            if (process.exitValue() != 0) {
+                "Error(${process.exitValue()}): ${output.take(2000)}"
+            } else {
+                output
+            }
+        } catch (e: Exception) {
+            "Error: root provider unavailable: ${e.message}"
+        } finally {
+            try {
+                process?.destroy()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
      * 点击屏幕
      */
     fun tap(x: Int, y: Int) {
@@ -208,6 +258,31 @@ class DeviceController(private val context: Context? = null) {
      */
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int = 500) {
         exec("input swipe $x1 $y1 $x2 $y2 $durationMs")
+    }
+
+    /**
+     * 把文本写进系统剪贴板（必须在主线程），成功返回 true。
+     * 供「无障碍 ACTION_PASTE」这条路径使用。
+     */
+    fun setClipboard(text: String): Boolean {
+        val cm = clipboardManager ?: return false
+        val latch = CountDownLatch(1)
+        var ok = false
+        mainHandler.post {
+            try {
+                cm.setPrimaryClip(ClipData.newPlainText("baozi_input", text))
+                ok = true
+            } catch (e: Exception) {
+                println("[DeviceController] 设置剪贴板失败: ${e.message}")
+            } finally {
+                latch.countDown()
+            }
+        }
+        return try {
+            latch.await(1, TimeUnit.SECONDS) && ok
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**
@@ -411,14 +486,62 @@ class DeviceController(private val context: Context? = null) {
     data class ScreenshotResult(
         val bitmap: Bitmap,
         val isSensitive: Boolean = false,  // 是否是敏感页面（截图失败）
-        val isFallback: Boolean = false    // 是否是降级的黑屏占位图
+        val isFallback: Boolean = false,   // 是否是降级的黑屏占位图
+        val debugPath: String? = null      // 调试模式下落盘的文件名
     )
+
+    /** 截图宽度上限；0 表示不缩放。运行时读设置，默认 900。 */
+    private fun screenshotMaxWidth(): Int = try {
+        com.roubao.autopilot.App.getInstance().settingsManager.settings.value.screenshotMaxWidth
+    } catch (e: Exception) {
+        900
+    }
+
+    /** 调试模式下把这一帧存成 PNG，返回文件名（失败返回 null）。 */
+    private fun saveDebugShot(bitmap: Bitmap): String? {
+        if (!com.roubao.autopilot.data.DebugOptions.enabled) return null
+        return try {
+            val base = context?.getExternalFilesDir(null) ?: context?.filesDir ?: return null
+            val dir = File(base, "screenshots").apply { mkdirs() }
+            val name = "shot-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss-SSS", java.util.Locale.US)
+                .format(java.util.Date()) + ".png"
+            FileOutputStream(File(dir, name)).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            println("[DeviceController] 调试截图: ${dir.absolutePath}/$name")
+            name
+        } catch (e: Exception) {
+            println("[DeviceController] 调试截图保存失败: ${e.message}")
+            null
+        }
+    }
 
     /**
      * 截图 - 使用 /data/local/tmp 并设置全局可读权限
      * 失败时返回黑屏占位图（降级处理）
      */
     suspend fun screenshotWithFallback(): ScreenshotResult = withContext(Dispatchers.IO) {
+        val raw = captureScreenshotRaw()
+        val bitmap = raw.bitmap
+        val maxWidth = screenshotMaxWidth()
+        val scaled = if (maxWidth > 0 && bitmap.width > maxWidth) {
+            val ratio = maxWidth.toFloat() / bitmap.width
+            val width = maxWidth
+            val height = (bitmap.height * ratio).toInt().coerceAtLeast(1)
+            println("[DeviceController] 截图缩放 ${bitmap.width}x${bitmap.height} -> ${width}x$height（坐标按同比例回映射）")
+            Bitmap.createScaledBitmap(bitmap, width, height, true)
+        } else {
+            bitmap
+        }
+        raw.copy(bitmap = scaled, debugPath = saveDebugShot(scaled))
+    }
+
+    /**
+     * 原始分辨率截图（不做缩放）。
+     * 失败时返回黑屏占位图（降级处理）
+     */
+    private suspend fun captureScreenshotRaw(): ScreenshotResult = withContext(Dispatchers.IO) {
+        val startedAt = System.currentTimeMillis()
         // 优先无障碍截图（API 30+）：全屏、无 shell 也能用，basic 包的关键路径。
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             try {
@@ -426,6 +549,7 @@ class DeviceController(private val context: Context? = null) {
                 val bitmap = service?.takeScreenshotBitmap()
                 if (bitmap != null) {
                     println("[DeviceController] Screenshot via accessibility takeScreenshot")
+                    logShotElapsed(startedAt, "无障碍", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             } catch (e: Exception) {
@@ -450,6 +574,7 @@ class DeviceController(private val context: Context? = null) {
                 println("[DeviceController] Reading screenshot from: $SCREENSHOT_PATH, size: ${file.length()}")
                 val bitmap = BitmapFactory.decodeFile(SCREENSHOT_PATH)
                 if (bitmap != null) {
+                    logShotElapsed(startedAt, "screencap 文件", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             }
@@ -464,6 +589,7 @@ class DeviceController(private val context: Context? = null) {
                 println("[DeviceController] Read ${bytes.size} bytes via shell")
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bitmap != null) {
+                    logShotElapsed(startedAt, "shell cat", bitmap)
                     return@withContext ScreenshotResult(bitmap)
                 }
             }
@@ -475,6 +601,14 @@ class DeviceController(private val context: Context? = null) {
             println("[DeviceController] Screenshot exception, returning fallback")
             createFallbackScreenshot(isSensitive = false)
         }
+    }
+
+    /** 打印截图耗时与来源，用于定位每步延迟。 */
+    private fun logShotElapsed(startedAt: Long, source: String, bitmap: Bitmap) {
+        println(
+            "[DeviceController] 截图($source) ${bitmap.width}x${bitmap.height} " +
+                "用时 ${System.currentTimeMillis() - startedAt}ms"
+        )
     }
 
     /**
@@ -528,43 +662,64 @@ class DeviceController(private val context: Context? = null) {
     }
 
     /**
-     * 获取屏幕尺寸（考虑屏幕方向）
+     * 获取屏幕尺寸（tap / input 使用的当前 display 坐标空间，含方向）。
+     *
+     * 不依赖 `wm size`：basic / 无 Shizuku 时 `wm size` 会以 App uid 执行失败，
+     * 旧实现会静默回退到 1080x2400，导致换手机后所有坐标偏移。
      */
     fun getScreenSize(): Pair<Int, Int> {
+        val ctx = context ?: try {
+            App.getInstance()
+        } catch (e: Exception) {
+            null
+        }
+
+        if (ctx != null) {
+            try {
+                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                if (wm != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        // maximumWindowMetrics 是完整 display 边界，已按当前旋转方向返回。
+                        val bounds = wm.maximumWindowMetrics.bounds
+                        if (bounds.width() > 0 && bounds.height() > 0) {
+                            println("[DeviceController] screen via maximumWindowMetrics: ${bounds.width()}x${bounds.height()}")
+                            return Pair(bounds.width(), bounds.height())
+                        }
+                    } else {
+                        val dm = DisplayMetrics()
+                        @Suppress("DEPRECATION")
+                        wm.defaultDisplay.getRealMetrics(dm)
+                        if (dm.widthPixels > 0 && dm.heightPixels > 0) {
+                            println("[DeviceController] screen via getRealMetrics: ${dm.widthPixels}x${dm.heightPixels}")
+                            return Pair(dm.widthPixels, dm.heightPixels)
+                        }
+                    }
+                }
+
+                val dm = ctx.resources.displayMetrics
+                if (dm.widthPixels > 0 && dm.heightPixels > 0) {
+                    println("[DeviceController] screen via resources.displayMetrics: ${dm.widthPixels}x${dm.heightPixels}")
+                    return Pair(dm.widthPixels, dm.heightPixels)
+                }
+            } catch (e: Exception) {
+                println("[DeviceController] WindowManager screen size failed: ${e.message}")
+            }
+        }
+
+        // 最后兜底：解析 wm size；有 Override size 时取最后一个（override 优先）。
         val output = exec("wm size")
-        // 输出格式: Physical size: 1080x2400
-        val match = Regex("(\\d+)x(\\d+)").find(output)
-        val (physicalWidth, physicalHeight) = if (match != null) {
-            val (w, h) = match.destructured
-            Pair(w.toInt(), h.toInt())
-        } else {
-            Pair(1080, 2400)
+        val matches = Regex("(\\d+)x(\\d+)").findAll(output).toList()
+        if (matches.isNotEmpty()) {
+            val (w, h) = matches.last().destructured
+            val width = w.toInt()
+            val height = h.toInt()
+            val landscape = ctx?.resources?.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
+            println("[DeviceController] screen via wm size: ${width}x${height}, landscape=$landscape")
+            return if (landscape) Pair(height, width) else Pair(width, height)
         }
 
-        // 检测屏幕方向
-        val orientation = getScreenOrientation()
-        return if (orientation == 1 || orientation == 3) {
-            // 横屏：交换宽高
-            Pair(physicalHeight, physicalWidth)
-        } else {
-            // 竖屏
-            Pair(physicalWidth, physicalHeight)
-        }
-    }
-
-    /**
-     * 获取屏幕方向
-     * @return 0=竖屏, 1=横屏(90°), 2=倒置竖屏, 3=横屏(270°)
-     */
-    private fun getScreenOrientation(): Int {
-        // 部分 ROM（如 HyperOS）的 `dumpsys window displays` 不输出 mCurrentOrientation，
-        // 但 `dumpsys display` 有。先查后者，再回退到前者。
-        val regex = Regex("mCurrentOrientation=(\\d)")
-        val displayOutput = exec("dumpsys display | grep -m1 mCurrentOrientation")
-        regex.find(displayOutput)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
-
-        val windowOutput = exec("dumpsys window displays | grep -m1 mCurrentOrientation")
-        return regex.find(windowOutput)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        println("[DeviceController] WARNING: cannot determine screen size, fallback 1080x2400")
+        return Pair(1080, 2400)
     }
 
     /**

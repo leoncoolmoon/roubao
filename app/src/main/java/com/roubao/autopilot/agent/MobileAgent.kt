@@ -5,11 +5,15 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
 import com.roubao.autopilot.App
+import com.roubao.autopilot.BuildConfig
+import com.roubao.autopilot.controller.AppInventory
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.controller.DeviceController
 import com.roubao.autopilot.data.ExecutionStep
 import com.roubao.autopilot.data.PromptRepository
 import com.roubao.autopilot.skills.SkillManager
+import com.roubao.autopilot.skills.SkillResult
+import com.roubao.autopilot.tools.FileTool
 import com.roubao.autopilot.ui.OverlayService
 import com.roubao.autopilot.vlm.GUIOwlClient
 import com.roubao.autopilot.vlm.MAIUIClient
@@ -52,15 +56,42 @@ class MobileAgent(
     private val useMAIUIMode: Boolean = maiuiClient != null
     // App 扫描器 (使用 App 单例中的实例)
     private val appScanner: AppScanner = App.getInstance().appScanner
+    // 常驻清单：系统默认应用 + Skill 关联应用；完整列表按需 search_apps
+    private val appInventory = AppInventory(context, appScanner)
     private val manager = Manager()
     private val executor = Executor()
     private val reflector = ActionReflector()
     private val notetaker = Notetaker()
 
+    // Manager 判定完成时追加的收尾指令：只让模型写答复，不再操作 UI
+    private val finalAnswerHint = """
+
+### Final Step (AUTHORITATIVE) ###
+The task is complete. Take no further UI action.
+Output exactly one action:
+{"action":"answer","text":"<final report to the user, 1-3 sentences>"}
+"""
+
+    init {
+        // 把 VLMClient 的用量行接进 App 内日志，跑测试时能直接看到缓存命中
+        VLMClient.logSink = { line -> log(line) }
+    }
+
+    // file 工具：授权目录跟随设置；审批记忆在每次任务开始时重置
+    private val fileTool: FileTool by lazy {
+        FileTool(controller) {
+            try {
+                App.getInstance().settingsManager.settings.value.fileAccessRoot
+            } catch (e: Exception) {
+                FileTool.DEFAULT_ROOT
+            }
+        }
+    }
+
     // Skill 管理器
     private val skillManager: SkillManager? = try {
         SkillManager.getInstance().also {
-            println("[肉包] SkillManager 已加载，共 ${it.getAllSkills().size} 个 Skills")
+            println("[肉包] SkillManager 使用 DB Skill 目录")
             // 设置 VLM 客户端用于意图匹配（仅在 OpenAI 兼容模式下）
             vlmClient?.let { client -> it.setVLMClient(client) }
         }
@@ -88,14 +119,135 @@ class MobileAgent(
      */
     // 模型失败只提醒一次，不中断任务
     private var modelErrorNotified = false
+    // 连续模型失败计数：达到阈值就暂停，交回用户决定
+    private var consecutiveModelFailures = 0
+
+    /** 启动信息：模型 + 服务商，方便从日志判断这次跑的是哪个组合。 */
+    private fun startupInfo(): String {
+        val model = try {
+            vlmClient?.modelName()?.takeIf { it.isNotBlank() } ?: "未配置"
+        } catch (e: Exception) {
+            "未知"
+        }
+        val provider = try {
+            App.getInstance().settingsManager.settings.value.currentProvider.name
+        } catch (e: Exception) {
+            "未知"
+        }
+        return "模型: $model · 服务商: $provider"
+    }
+
+    /** Agent 提示词来源：默认还是被改过，以及每个 agent 是否启用。 */
+    private fun promptSourceInfo(packId: String): String {
+        val repo = try {
+            PromptRepository.getInstance()
+        } catch (e: Exception) {
+            null
+        } ?: return "Agent 提示词: 未知"
+
+        val ids = listOf("manager", "executor", "reflector", "notetaker")
+        val customized = ids.filter {
+            runCatching { repo.isAgentCustomizedForPack(it, packId) }.getOrDefault(false)
+        }
+        val enabled = ids.filter {
+            runCatching { repo.isAgentEnabled(it) }.getOrDefault(true)
+        }
+        val source = if (customized.isEmpty()) "默认" else "自定义(${customized.joinToString(",")})"
+        val states = ids.joinToString(" ") { if (it in enabled) "$it✓" else "$it✗" }
+        return "Agent 提示词: $source · 启用: $states"
+    }
+
+    /** 排除 null / None / 空串这类无效文本，避免一次坏响应冲掉计划。 */    private fun isUsableText(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return false
+        return !trimmed.equals("null", ignoreCase = true) && !trimmed.equals("none", ignoreCase = true)
+    }
+
+    /**
+     * 模型调用失败：连续两次就暂停并让用户用数字选择怎么继续，而不是中止任务。
+     * 注意免费模型经常抖动，程序的原则是尽量把任务做完。
+     *
+     * @return true 表示用户选择结束任务
+     */
+    private suspend fun onModelFailure(err: String): Boolean {
+        consecutiveModelFailures++
+        notifyModelError(err)
+        if (consecutiveModelFailures < 2 || !_state.value.isRunning) return false
+
+        val count = consecutiveModelFailures
+        log("模型连续失败 $count 次，等待用户选择")
+        OverlayService.update("模型不稳定，等待选择")
+        val reply = withTimeoutOrNull(5 * 60 * 1000L) {
+            waitForUserInput(
+                "模型连续失败 $count 次。回复数字继续：\n1 = 重试当前步骤\n2 = 我已切换模型，继续\n3 = 结束任务"
+            )
+        }
+        OverlayService.dismissAskUser()
+
+        return when {
+            reply == null -> {
+                log("用户 5 分钟未回复，按「重试」继续")
+                consecutiveModelFailures = 0
+                false
+            }
+            reply.trim().startsWith("3") -> {
+                log("用户选择：结束任务")
+                true
+            }
+            reply.trim().startsWith("1") -> {
+                log("用户选择：重试")
+                consecutiveModelFailures = 0
+                false
+            }
+            reply.trim().startsWith("2") -> {
+                log("用户选择：已切换模型，继续")
+                consecutiveModelFailures = 0
+                false
+            }
+            else -> {
+                log("未识别的选择「${reply.take(20)}」，按「重试」继续")
+                consecutiveModelFailures = 0
+                false
+            }
+        }
+    }
 
     suspend fun runInstruction(
         instruction: String,
         maxSteps: Int = 25,
-        useNotetaker: Boolean = false
+        useNotetaker: Boolean = false,
+        source: String = "home"
     ): AgentResult {
-        log("开始执行: $instruction")
+        log("开始执行[$source]: $instruction")
+        log("肉包 ${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_TIME}")
         modelErrorNotified = false
+        consecutiveModelFailures = 0
+
+        // 三项权限至少开一项：都关掉时没有任何可用的操作通道，先提醒再中止
+        val permSettings = try {
+            App.getInstance().settingsManager.settings.value
+        } catch (e: Exception) {
+            null
+        }
+        if (permSettings != null &&
+            !permSettings.accessibilityModeEnabled &&
+            !permSettings.shizukuModeEnabled &&
+            !permSettings.rootModeEnabled
+        ) {
+            log("未开启任何权限（无障碍 / ADB / Root），已中止")
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(
+                    context,
+                    "请先在「设置 → 权限与服务」开启至少一项权限（无障碍 / ADB / Root）",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            updateState { copy(isRunning = false) }
+            return AgentResult(
+                success = false,
+                message = "未开启任何权限：请先开启无障碍 / ADB / Root 中的至少一项"
+            )
+        }
 
         // 立即显示悬浮窗，不等意图分析/应用扫描完成
         OverlayService.show(context, "准备执行...") {
@@ -125,31 +277,23 @@ class MobileAgent(
         }
 
         log("使用 OpenAI 兼容模式")
+        fileTool.resetApprovals()
+        log(startupInfo())
 
         AccessLevelManager.refresh(context)
         val accessLevel = AccessLevelManager.current()
-        val packMode = try {
-            App.getInstance().settingsManager.settings.value.promptPackMode
-        } catch (e: Exception) {
-            "auto"
-        }
-        val pack = PromptPackResolver.resolve(accessLevel, packMode)
+        // 运行时 Agent 策略包按权限等级自动选；settings.promptPackMode 只用于预览/编辑。
+        val pack = PromptPackResolver.resolveRuntime(accessLevel)
         val packId = pack?.id ?: "basic"
 
-        // 使用 LLM 匹配 Skill，生成上下文信息给 Agent（不执行任何操作）
-        // basic 包不做 LLM 技能匹配，避免把 shell/root 技能上下文注入 UI-only prompt。
-        log("正在分析意图...")
-        val skillContext = if (packId == "basic") {
-            null
-        } else {
-            skillManager?.generateAgentContextWithLLM(instruction)
-        }
+        // 使用 LLM 匹配 Skill 的旧 assets 路径已移除；运行时 Skill 目录来自 DB。
+        log("Skill 目录: DB roster")
 
         val infoPool = InfoPool(instruction = instruction)
         infoPool.packId = packId
-        infoPool.packLevel = pack?.level ?: "user"
         infoPool.accessLevel = accessLevel.id
-        log("访问等级: ${accessLevel.id}, 提示词包: $packId (cap=${infoPool.packLevel})")
+        log("访问等级: ${accessLevel.id}, Agent 策略包: $packId")
+        log(promptSourceInfo(packId))
         infoPool.availableSkills = try {
             skillManager?.getEnabledSkillRoster(infoPool.effectiveLevel())
                 ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
@@ -169,32 +313,29 @@ class MobileAgent(
         infoPool.executorMemory = ConversationMemory.withSystemPrompt(executorSystemPrompt)
         log("已初始化对话记忆")
 
-        // 如果有 Skill 上下文，添加到 InfoPool，让 Manager 知道可用的工具
-        if (!skillContext.isNullOrEmpty() && skillContext != "未找到相关技能或可用应用，请使用通用 GUI 自动化完成任务。") {
-            infoPool.skillContext = skillContext
-            log("已匹配到可用技能:\n$skillContext")
-        } else {
-            log("未匹配到特定技能，使用通用 GUI 自动化")
-        }
-
         // 获取屏幕尺寸
         val (width, height) = controller.getScreenSize()
         infoPool.screenWidth = width
         infoPool.screenHeight = height
+        infoPool.imageWidth = width
+        infoPool.imageHeight = height
         log("屏幕尺寸: ${width}x${height}")
 
-        // 获取已安装应用列表（只取非系统应用，限制数量避免 prompt 过长）
-        // 60 秒内复用缓存；超过 TTL 才全量刷新，避免每个任务都扫一遍。
-        val apps = try {
-            appScanner.refreshAppsIfStale()
+        // 常驻 App 清单：系统默认应用 + 当前等级可用的 Skill 关联应用。
+        // 不再注入“全部非系统应用按名字排序的前 50 个”，完整列表由 search_apps 按需查询。
+        infoPool.installedApps = try {
+            withContext(Dispatchers.IO) {
+                appInventory.brief(infoPool.effectiveLevel())
+            }
         } catch (e: Exception) {
-            appScanner.getApps()
+            println("[肉包] AppInventory failed: ${e.message}")
+            ""
         }
-            .filter { !it.isSystem }
-            .take(50)
-            .map { it.appName }
-        infoPool.installedApps = apps.joinToString(", ")
-        log("已加载 ${apps.size} 个应用")
+        log(
+            "App Inventory: ${
+                infoPool.installedApps.lineSequence().count { it.startsWith("- ") }
+            } 项（系统默认 + Skill 关联）"
+        )
 
         updateState { copy(isRunning = true, isPaused = false, currentStep = 0, instruction = instruction) }
 
@@ -203,6 +344,11 @@ class MobileAgent(
                 // 检查协程是否被取消
                 coroutineContext.ensureActive()
                 awaitIfPaused()
+
+                // 每步耗时统计（仅日志，不参与决策）
+                val timer = StepTimer().also { it.reset(step + 1) }
+                // Manager 已经判定完成：本步只让 Executor 产出最终答复，不再执行 UI 动作
+                var finishRequested = false
 
                 // 检查是否被用户停止
                 if (!_state.value.isRunning) {
@@ -219,11 +365,24 @@ class MobileAgent(
                 // 1. 提取无障碍 UI 树；截图必须实时获取，不能复用旧帧
                 val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
                 if (accessibilityModeEnabled && accessibilityService != null) {
-                    infoPool.accessibilityTree = accessibilityService.dumpNodeTree()
+                    // 截图会按设置缩到某个宽度；UI 树坐标按同一比例缩放，
+                    // 模型看到的「UI 树坐标」和「截图像素」才是同一个坐标系。
+                    val maxWidth = try {
+                        App.getInstance().settingsManager.settings.value.screenshotMaxWidth
+                    } catch (e: Exception) {
+                        DeviceController.SCREENSHOT_MAX_LONG_EDGE
+                    }
+                    val shotScale = if (maxWidth <= 0 || infoPool.screenWidth <= maxWidth) {
+                        1f
+                    } else {
+                        maxWidth.toFloat() / infoPool.screenWidth
+                    }
+                    infoPool.accessibilityTree = accessibilityService.dumpNodeTree(scale = shotScale)
                     log("已成功提取无障碍 UI 元素树")
                 } else {
                     infoPool.accessibilityTree = ""
                 }
+                timer.mark("tree")
 
                 val treeOnly = !infoPool.visionEnabled && infoPool.accessibilityTree.isNotBlank()
                 var screenshot: Bitmap? = null
@@ -236,6 +395,15 @@ class MobileAgent(
                     val screenshotResult = controller.screenshotWithFallback()
                     OverlayService.setVisible(true)
                     screenshot = screenshotResult.bitmap
+                    infoPool.imageWidth = screenshot.width
+                    infoPool.imageHeight = screenshot.height
+                    screenshotResult.debugPath?.let { log("截图文件: $it") }
+                    if (screenshot.width != infoPool.screenWidth || screenshot.height != infoPool.screenHeight) {
+                        log(
+                            "坐标空间: 截图 ${screenshot.width}x${screenshot.height} != display " +
+                                "${infoPool.screenWidth}x${infoPool.screenHeight}，按比例映射"
+                        )
+                    }
 
                     // 处理敏感页面（截图被系统阻止）
                     if (screenshotResult.isSensitive) {
@@ -254,6 +422,7 @@ class MobileAgent(
                         log("⚠️ 截图失败，使用黑屏占位图及无障碍元素树继续盲操")
                     }
                 }
+                timer.mark("shot")
 
                 val modelClient = vlmClient
                     ?: return AgentResult(success = false, message = "VLMClient 未初始化")
@@ -288,6 +457,7 @@ class MobileAgent(
 
                     val planPrompt = manager.getPrompt(infoPool)
                     val planResponse = modelClient.predict(planPrompt, screenshot?.let { listOf(it) } ?: emptyList())
+                    timer.mark("manager")
 
                     // VLM 调用后检查停止状态
                     if (!_state.value.isRunning) {
@@ -300,14 +470,39 @@ class MobileAgent(
                     if (planResponse.isFailure) {
                         val err = planResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Manager 调用失败: $err")
-                        notifyModelError(err)
-                        continue
-                    }
+                        if (onModelFailure(err)) {
+                            log(timer.finish())
+                            OverlayService.idle(context)
+                            updateState { copy(isRunning = false) }
+                            bringAppToFront()
+                            return AgentResult(success = false, message = "模型连续失败，用户结束任务")
+                        }
+                        // 已经有可用计划时不该被一次规划失败卡住：继续走 Executor，用旧计划推进
+                        if (infoPool.plan.isBlank()) {
+                            log(timer.finish())
+                            continue
+                        }
+                        log("Manager 失败但已有计划，本步跳过重规划直接执行")
+                    } else {
+                        val rawPlan = planResponse.getOrThrow()
+                        consecutiveModelFailures = 0
+                        val planResult = manager.parseResponse(rawPlan)
+                        if (isUsableText(planResult.completedSubgoal)) {
+                            infoPool.completedPlan = planResult.completedSubgoal
+                        }
+                        // Manager 说 KEEP 表示沿用原计划；解析出 null/空也算无效，都不要冲掉现有计划
+                        when {
+                            planResult.plan.trim().equals("KEEP", ignoreCase = true) ->
+                                log("Manager 沿用现有计划（KEEP）")
 
-                    val rawPlan = planResponse.getOrThrow()
-                    val planResult = manager.parseResponse(rawPlan)
-                    infoPool.completedPlan = planResult.completedSubgoal
-                    infoPool.plan = planResult.plan
+                            !isUsableText(planResult.plan) -> {
+                                log("Manager 计划无效（${planResult.plan.take(20)}），沿用上一步计划")
+                                // 打原始输出，才能判断是模型没写标题、还是写成了别的格式
+                                log("Manager 原始输出: ${rawPlan.replace("\n", " ⏎ ").take(400)}")
+                            }
+
+                            else -> infoPool.plan = planResult.plan
+                        }
 
                     planResult.selectedSkillId?.let { selectedId ->
                         infoPool.selectedSkillId = selectedId
@@ -319,6 +514,43 @@ class MobileAgent(
                         if (!selectedPrompt.isNullOrBlank()) {
                             infoPool.activeSkillContext = selectedPrompt
                             log("Manager 选择 Skill: $selectedId")
+
+                            // Manager 选中 Skill 之后、Executor 决策之前：尝试一次快速路径。
+                            // Delegation -> DeepLink 直接打开；GUI -> 把 ExecutionPlan 注入上下文。
+                            // 只做一次，避免 Manager 每步重复打开应用。
+                            if (!infoPool.skillFastPathDone && infoPool.actionHistory.isEmpty()) {
+                                infoPool.skillFastPathDone = true
+                                try {
+                                    when (val fast = skillManager?.executeFromDb(
+                                        selectedId,
+                                        mapOf("_raw_query" to infoPool.instruction),
+                                        infoPool.effectiveLevel()
+                                    )) {
+                                        is SkillResult.Delegated -> {
+                                            log("Skill 快速路径: ${fast.message} (${fast.deepLink})")
+                                            infoPool.activeSkillContext +=
+                                                "\n\n### Skill Fast Path (AUTHORITATIVE) ###\n" +
+                                                "Already opened ${fast.app.name} via ${fast.deepLink}. " +
+                                                "Verify the app state before the next action."
+                                        }
+                                        is SkillResult.NeedAutomation -> {
+                                            log("Skill 执行计划: ${fast.plan.app.name} / ${fast.plan.app.type}")
+                                            infoPool.activeSkillContext +=
+                                                "\n\n### Skill Execution Plan (AUTHORITATIVE) ###\n" +
+                                                fast.plan.toAgentContext()
+                                        }
+                                        is SkillResult.NoAvailableApp -> {
+                                            log("Skill 无可用应用: ${fast.requiredApps.joinToString(", ")}")
+                                        }
+                                        is SkillResult.Failed -> {
+                                            log("Skill 快速路径失败: ${fast.error}")
+                                        }
+                                        null -> Unit
+                                    }
+                                } catch (e: Exception) {
+                                    log("Skill 快速路径异常: ${e.message}")
+                                }
+                            }
                         } else {
                             log("Manager 选择了未知/不可用 Skill: $selectedId")
                         }
@@ -337,14 +569,11 @@ class MobileAgent(
                         return AgentResult(success = false, message = "检测到敏感页面（支付/密码），已安全停止")
                     }
 
-                    // 检查是否完成
+                    // 检查是否完成：不直接返回，先让 Executor 给用户一句最终答复
                     if (planResult.plan.contains("Finished") && planResult.plan.length < 20) {
-                        log("任务完成!")
-                        OverlayService.update("完成!")
-                        delay(1500)
-                        OverlayService.idle(context)
-                        updateState { copy(isRunning = false, isCompleted = true) }
-                        return AgentResult(success = true, message = "任务完成")
+                        log("Manager 判定任务完成，向 Executor 索取最终答复")
+                        finishRequested = true
+                    }
                     }
                 }
 
@@ -359,7 +588,8 @@ class MobileAgent(
                     return AgentResult(success = false, message = "用户停止")
                 }
 
-                val actionPrompt = executor.getPrompt(infoPool)
+                val actionPrompt = executor.getPrompt(infoPool) +
+                    if (finishRequested) finalAnswerHint else ""
 
                 // 使用上下文记忆调用 VLM
                 val memory = infoPool.executorMemory
@@ -379,6 +609,7 @@ class MobileAgent(
                     // 降级：使用普通方式
                     modelClient.predict(actionPrompt, screenshot?.let { listOf(it) } ?: emptyList())
                 }
+                timer.mark("executor")
 
                 // VLM 调用后检查停止状态
                 if (!_state.value.isRunning) {
@@ -391,11 +622,18 @@ class MobileAgent(
                 if (actionResponse.isFailure) {
                     val err = actionResponse.exceptionOrNull()?.message ?: "unknown"
                     log("Executor 调用失败: $err")
-                    notifyModelError(err)
+                    if (onModelFailure(err)) {
+                        OverlayService.idle(context)
+                        updateState { copy(isRunning = false) }
+                        bringAppToFront()
+                        return AgentResult(success = false, message = "模型连续失败，用户结束任务")
+                    }
+                    log(timer.finish())
                     continue
                 }
 
                 val responseText = actionResponse.getOrThrow()
+                consecutiveModelFailures = 0
                 val executorResult = executor.parseResponse(responseText)
 
                 // 将助手响应添加到记忆
@@ -409,12 +647,30 @@ class MobileAgent(
                 infoPool.lastActionThought = executorResult.thought
                 infoPool.lastSummary = executorResult.description
 
+                // Manager 已判定完成：本步只收答复，不再执行动作
+                if (finishRequested) {
+                    val finalAnswer = action?.text?.takeIf { it.isNotBlank() }
+                        ?: action?.message?.takeIf { it.isNotBlank() }
+                        ?: executorResult.description.takeIf { it.isNotBlank() }
+                        ?: executorResult.thought.takeIf { it.isNotBlank() }
+                        ?: infoPool.completedPlan.takeIf { it.isNotBlank() }
+                        ?: "任务完成"
+                    log("回答: $finalAnswer")
+                    log(timer.finish())
+                    OverlayService.update("${finalAnswer.take(20)}...")
+                    delay(1500)
+                    OverlayService.idle(context)
+                    updateState { copy(isRunning = false, isCompleted = true, answer = finalAnswer) }
+                    return AgentResult(success = true, message = "回答: $finalAnswer")
+                }
+
                 if (action == null) {
                     log("动作解析失败")
                     infoPool.actionHistory.add(Action(type = "invalid"))
                     infoPool.summaryHistory.add(executorResult.description)
                     infoPool.actionOutcomes.add("C")
                     infoPool.errorDescriptions.add("Invalid action format")
+                    log(timer.finish())
                     continue
                 }
 
@@ -437,6 +693,7 @@ class MobileAgent(
                     infoPool.actionHistory.add(action)
                     infoPool.summaryHistory.add("等待用户补充")
                     infoPool.actionOutcomes.add("A")
+                    log(timer.finish())
                     continue
                 }
 
@@ -447,6 +704,7 @@ class MobileAgent(
                         ?: action.message?.takeIf { it.isNotBlank() }
                         ?: "任务完成"
                     log("回答: $answerText")
+                    log(timer.finish())
                     OverlayService.update("${answerText.take(20)}...")
                     delay(1500)
                     OverlayService.idle(context)
@@ -458,6 +716,7 @@ class MobileAgent(
                 if (action.type == "terminate") {
                     val success = action.status == "success"
                     log("任务${if (success) "完成" else "失败"}")
+                    log(timer.finish())
                     OverlayService.update(if (success) "完成!" else "失败")
                     delay(1500)
                     OverlayService.idle(context)
@@ -499,6 +758,7 @@ class MobileAgent(
                     log("工具结果已回填: ${toolResult.take(120)}...")
                 }
                 infoPool.lastAction = action
+                timer.mark("action")
 
                 // 立即记录执行步骤（outcome 暂时为 "?" 表示进行中）
                 val currentStepIndex = _state.value.executionSteps.size
@@ -514,6 +774,7 @@ class MobileAgent(
 
                 // 等待动作生效
                 delay(if (step == 0) 5000 else 2000)
+                timer.mark("wait")
 
                 // 检查停止状态
                 if (!_state.value.isRunning) {
@@ -532,6 +793,8 @@ class MobileAgent(
                 if (afterScreenshotResult.isFallback) {
                     log("动作后截图失败，使用黑屏占位图")
                 }
+                afterScreenshotResult.debugPath?.let { log("动作后截图文件: $it") }
+                timer.mark("shot2")
 
                 // 9. Reflector 反思
                 // 检查停止状态
@@ -556,11 +819,13 @@ class MobileAgent(
                         val err = reflectResponse.exceptionOrNull()?.message ?: "unknown"
                         log("Reflector 调用失败: $err")
                         notifyModelError(err)
-                        ReflectorResult("C", "Failed to call reflector: ${err.take(160)}")
+                        // U = 反思不可用，不等于动作失败；不参与 B/C 连败计数
+                        ReflectorResult("U", "reflector unavailable (not an action failure): ${err.take(160)}")
                     }
                 }
 
                 log("结果: ${reflectResult.outcome} - ${reflectResult.errorDescription.take(50)}")
+                timer.mark("reflector")
 
                 // 更新历史
                 infoPool.actionHistory.add(action)
@@ -598,6 +863,8 @@ class MobileAgent(
                         infoPool.importantNotes = notetaker.parseResponse(noteResponse.getOrThrow())
                     }
                 }
+                timer.mark("notetaker")
+                log(timer.finish())
             }
         } catch (e: CancellationException) {
             log("任务被取消")
@@ -605,6 +872,10 @@ class MobileAgent(
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -738,6 +1009,10 @@ class MobileAgent(
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -796,7 +1071,7 @@ class MobileAgent(
                 }
             }
             "system_button" -> {
-                when (action.text?.lowercase()) {
+                when ((action.text)?.lowercase()) {
                     "back" -> {
                         log("按返回键")
                         controller.back()
@@ -960,6 +1235,10 @@ class MobileAgent(
             updateState { copy(isRunning = false) }
             bringAppToFront()
             throw e
+        } finally {
+            // 任何退出路径（完成/失败/取消/异常）都要把悬浮窗恢复显示，
+            // 否则动作前的 setVisible(false) 会让悬浮窗一直“消失”。
+            OverlayService.setVisible(true)
         }
 
         log("达到最大步数限制")
@@ -1049,7 +1328,7 @@ class MobileAgent(
                 controller.openApp(appName)
             }
             "system_button" -> {
-                when (action.button?.lowercase()) {
+                when ((action.button ?: action.text)?.lowercase()) {
                     "back" -> {
                         log("按返回键")
                         controller.back()
@@ -1084,24 +1363,36 @@ class MobileAgent(
      */
     private suspend fun executeAction(action: Action, infoPool: InfoPool): String? = withContext(Dispatchers.IO) {
         val level = infoPool.effectiveLevel()
-        val gateError = ActionGate.check(action, level, infoPool.packId)
+        val gateError = ActionGate.check(action, level)
         if (gateError != null) {
             log("动作被拒绝: $gateError")
-            ActionGate.audit(action, level, infoPool.packId, "rejected: $gateError")
+            ActionGate.audit(action, level, "rejected: $gateError")
             return@withContext "Action rejected: $gateError"
         }
         // 动态获取屏幕尺寸（处理横竖屏切换）
         val (screenWidth, screenHeight) = controller.getScreenSize()
+        val imageWidth = infoPool.imageWidth.takeIf { it > 0 } ?: screenWidth
+        val imageHeight = infoPool.imageHeight.takeIf { it > 0 } ?: screenHeight
         val accessibilityService = com.roubao.autopilot.service.AutoPilotAccessibilityService.getInstance()
+        if (action.type !in setOf("click", "double_tap", "long_press")) {
+            infoPool.lastClickTarget = ""
+        }
 
         when (action.type) {
             "click", "double_tap", "long_press" -> {
                 // 可选索引模式：模型显式给出 index 时优先按 UI 树编号操作
                 if (action.index != null && accessibilityModeEnabled && accessibilityService != null) {
-                    val ok = when (action.type) {
-                        "click" -> accessibilityService.clickByIndex(action.index)
-                        "long_press" -> accessibilityService.longPressByIndex(action.index)
-                        else -> false
+                    val ok = try {
+                        when (action.type) {
+                            "click" -> accessibilityService.clickByIndex(action.index)
+                            "long_press" -> accessibilityService.longPressByIndex(action.index)
+                            else -> false
+                        }
+                    } catch (e: Exception) {
+                        // 索引操作内部已经兜底；这里再包一层，确保任何意外都只降级、不中断任务
+                        log("索引${action.type}异常，回退文本/坐标: ${e.message}")
+                        e.printStackTrace()
+                        false
                     }
                     if (ok) {
                         log("🤖 无障碍索引${action.type}: index=${action.index}")
@@ -1110,10 +1401,11 @@ class MobileAgent(
                     log("索引操作失败，回退文本/坐标: index=${action.index}")
                 }
 
-                var x = mapCoordinate(action.x ?: 0, screenWidth)
-                var y = mapCoordinate(action.y ?: 0, screenHeight)
+                var x = mapCoordinate(action.x ?: 0, screenWidth, imageWidth)
+                var y = mapCoordinate(action.y ?: 0, screenHeight, imageHeight)
                 val modelX = x
                 val modelY = y
+                val hasModelCoordinate = action.x != null && action.y != null
                 var calibrated = false
 
                 // 只使用模型显式给出的元素文本做无障碍匹配；
@@ -1122,12 +1414,44 @@ class MobileAgent(
 
                 if (accessibilityModeEnabled && accessibilityService != null) {
                     if (query != null) {
-                        val exactCoords = accessibilityService.findElementCoordinates(query)
-                        if (exactCoords != null) {
-                            x = exactCoords.first
-                            y = exactCoords.second
-                            calibrated = true
-                            log("🎯 无障碍文本校准${action.type}: ($x, $y) [查询: $query]")
+                        val candidates = accessibilityService.findElementCandidates(query)
+                        if (candidates.isNotEmpty()) {
+                            // 唯一候选直接用；多个候选必须用模型坐标包含/距离来选择，
+                            // 绝不能因为 text 命中就取第一个。
+                            val chosen = when {
+                                candidates.size == 1 -> candidates.first()
+                                hasModelCoordinate -> {
+                                    val containing = candidates
+                                        .filter { it.bounds.contains(modelX, modelY) }
+                                        .minByOrNull { it.bounds.width().toLong() * it.bounds.height().toLong() }
+                                    containing ?: candidates.minByOrNull { candidate ->
+                                        val dx = (candidate.centerX - modelX).toLong()
+                                        val dy = (candidate.centerY - modelY).toLong()
+                                        dx * dx + dy * dy
+                                    }?.takeIf { candidate ->
+                                        val dx = (candidate.centerX - modelX).toLong()
+                                        val dy = (candidate.centerY - modelY).toLong()
+                                        kotlin.math.sqrt((dx * dx + dy * dy).toDouble()) <= 240.0
+                                    }
+                                }
+                                else -> candidates.first()
+                            }
+
+                            if (chosen != null) {
+                                x = chosen.centerX
+                                y = chosen.centerY
+                                calibrated = true
+                                infoPool.lastClickTarget =
+                                    "text='$query' center=($x,$y) bounds=[" +
+                                        "${chosen.bounds.left},${chosen.bounds.top}," +
+                                        "${chosen.bounds.right},${chosen.bounds.bottom}] candidates=${candidates.size}"
+                                log(
+                                    "🎯 候选选择${action.type}: ($x, $y) [查询: $query, " +
+                                        "候选: ${candidates.size}, bounds: ${infoPool.lastClickTarget}]"
+                                )
+                            } else {
+                                log("候选集有 ${candidates.size} 个，坐标 ($modelX,$modelY) 不匹配，回退原始坐标")
+                            }
                         } else if (action.type == "click" && accessibilityService.performActionByAttribute(query)) {
                             log("🤖 无障碍直接触发节点点击: [查询: $query]")
                             return@withContext null
@@ -1164,8 +1488,8 @@ class MobileAgent(
                 // 2. 方向方式: direction (up/down/left/right) + optional coordinate
                 if (action.direction != null) {
                     // 方向方式 (MAI-UI 格式)
-                    val centerX = action.x?.let { mapCoordinate(it, screenWidth) } ?: (screenWidth / 2)
-                    val centerY = action.y?.let { mapCoordinate(it, screenHeight) } ?: (screenHeight / 2)
+                    val centerX = action.x?.let { mapCoordinate(it, screenWidth, imageWidth) } ?: (screenWidth / 2)
+                    val centerY = action.y?.let { mapCoordinate(it, screenHeight, imageHeight) } ?: (screenHeight / 2)
                     val distance = 400  // 滑动距离
                     when (action.direction.lowercase()) {
                         "up" -> swipeOrGesture(centerX, centerY + distance, centerX, centerY - distance)
@@ -1176,10 +1500,10 @@ class MobileAgent(
                     }
                 } else {
                     // 坐标方式
-                    val x1 = mapCoordinate(action.x ?: 0, screenWidth)
-                    val y1 = mapCoordinate(action.y ?: 0, screenHeight)
-                    val x2 = mapCoordinate(action.x2 ?: 0, screenWidth)
-                    val y2 = mapCoordinate(action.y2 ?: 0, screenHeight)
+                    val x1 = mapCoordinate(action.x ?: 0, screenWidth, imageWidth)
+                    val y1 = mapCoordinate(action.y ?: 0, screenHeight, imageHeight)
+                    val x2 = mapCoordinate(action.x2 ?: 0, screenWidth, imageWidth)
+                    val y2 = mapCoordinate(action.y2 ?: 0, screenHeight, imageHeight)
                     swipeOrGesture(x1, y1, x2, y2)
                 }
             }
@@ -1201,7 +1525,18 @@ class MobileAgent(
                     if (setDirectly) {
                         log("type: 已通过无障碍直接写入 ${text.length} 个字符（无需切换键盘）")
                     } else {
-                        controller.type(text)
+                        // 微信这类自绘输入框不认 ACTION_SET_TEXT：
+                        // 走「写剪贴板 + 无障碍 ACTION_PASTE」，比全局粘贴键（keyevent 279）可靠，
+                        // 也不需要模型去长按弹菜单（那样经常点到语音按钮）。
+                        val pasted = if (accessibilityModeEnabled && accessibilityService != null) {
+                            controller.setClipboard(text) && accessibilityService.pasteOnFocusedEditable()
+                        } else false
+                        if (pasted) {
+                            log("type: ACTION_SET_TEXT 无效，已通过「剪贴板 + ACTION_PASTE」写入 ${text.length} 个字符")
+                        } else {
+                            log("type: 无障碍写入与粘贴都失败，回退 shell 输入")
+                            controller.type(text)
+                        }
                     }
                 }
             }
@@ -1227,6 +1562,60 @@ class MobileAgent(
                     log("shell 输出: ${output.take(800)}")
                     return@withContext output
                 }
+            }
+            "root_shell" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("root_shell")) {
+                    log("root_shell 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
+                val command = action.command
+                if (!command.isNullOrBlank()) {
+                    val confirmMode = try {
+                        App.getInstance().settingsManager.settings.value.rootShellConfirmMode
+                    } catch (e: Exception) {
+                        "always"
+                    }
+                    if (confirmMode != "auto") {
+                        val confirmed = withTimeoutOrNull(2 * 60 * 1000L) {
+                            withContext(Dispatchers.Main) {
+                                waitForUserConfirm(
+                                    "即将以 Root 执行：\n${command.take(300)}\n\n是否继续？"
+                                )
+                            }
+                        } ?: false
+                        if (!confirmed) {
+                            log("root_shell 用户取消或确认超时")
+                            return@withContext "root_shell: cancelled by user"
+                        }
+                    }
+                    log("root_shell: $command")
+                    val output = controller.rootShell(command)
+                    log("root_shell 输出: ${output.take(800)}")
+                    return@withContext output
+                }
+            }
+            "file" -> {
+                if (!PromptRepository.getInstance().isToolSkillEnabled("file")) {
+                    log("file 工具已禁用，拒绝执行")
+                    return@withContext null
+                }
+                val op = action.op?.trim().orEmpty()
+                val path = action.path?.trim().orEmpty()
+                if (op.isEmpty() || path.isEmpty()) {
+                    log("file: 缺少 op/path")
+                    return@withContext "Error: file 动作需要 op 和 path 参数"
+                }
+                log("file: $op $path${action.dest?.let { " -> $it" } ?: ""}")
+                val result = fileTool.execute(
+                    op = op,
+                    path = path,
+                    dest = action.dest,
+                    content = action.text
+                ) { message ->
+                    withContext(Dispatchers.Main) { waitForUserConfirm(message) }
+                }
+                log("file 结果: ${result.take(300)}")
+                return@withContext result
             }
             "key" -> {
                 val key = action.key
@@ -1290,8 +1679,8 @@ class MobileAgent(
                 }
             }
             "system_button" -> {
-                // 模型可能返回 HOME/BACK/ENTER（大写）；统一按小写处理。
-                when (action.button?.lowercase()) {
+                // 模型可能返回 HOME/BACK/ENTER（大写）；button 或 text 都兼容。
+                when ((action.button ?: action.text)?.lowercase()) {
                     "back" -> {
                         if (accessibilityModeEnabled && accessibilityService?.pressBack() == true) {
                             log("🤖 无障碍 BACK")
@@ -1317,22 +1706,60 @@ class MobileAgent(
                     else -> log("未知系统按钮: ${action.button}")
                 }
             }
+            "search_apps" -> {
+                val query = action.text?.trim()
+                if (query.isNullOrBlank()) {
+                    return@withContext "search_apps: missing query"
+                }
+                val results = try {
+                    appInventory.search(query)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                if (results.isEmpty()) {
+                    log("search_apps: $query -> 0 results")
+                    return@withContext "search_apps: no match for '$query'. The app may not be installed."
+                }
+                log("search_apps: $query -> ${results.size} results")
+                val text = results.joinToString("\n") { entry ->
+                    "- ${entry.appName} (${entry.packageName})${if (entry.isSystem) " [system]" else ""}"
+                }
+                return@withContext "search_apps '$query':\n$text"
+            }
             "open_app" -> {
                 if (!PromptRepository.getInstance().isToolSkillEnabled("open_app")) {
                     log("open_app 工具已禁用，拒绝执行")
                     return@withContext null
                 }
-                action.text?.let { appName ->
-                    // 智能匹配包名 (客户端模糊搜索，省 token)
-                    val packageName = appScanner.findPackage(appName)
-                    if (packageName != null) {
-                        log("找到应用: $appName -> $packageName")
-                        controller.openApp(packageName)
-                    } else {
-                        log("未找到应用: $appName，尝试直接打开")
-                        controller.openApp(appName)
-                    }
+                val appName = action.text?.trim()
+                if (appName.isNullOrBlank()) {
+                    return@withContext "open_app: missing app name"
                 }
+                // 智能匹配包名 (客户端模糊搜索，省 token)
+                val packageName = appScanner.findPackage(appName)
+                if (packageName != null) {
+                    log("找到应用: $appName -> $packageName")
+                    controller.openApp(packageName)
+                    return@withContext "open_app: $appName -> $packageName"
+                }
+
+                // 精确/模糊都没找到：刷新一次缓存，再给模型候选，不要静默拿原始字符串去 startActivity。
+                val candidates = try {
+                    appInventory.search(appName, limit = 3)
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                if (candidates.isNotEmpty()) {
+                    val best = candidates.first()
+                    log("模糊匹配应用: $appName -> ${best.appName} (${best.packageName})")
+                    controller.openApp(best.packageName)
+                    return@withContext "open_app: '$appName' not exact; opened ${best.appName} (${best.packageName}). " +
+                        "Candidates: " + candidates.joinToString(", ") { "${it.appName}(${it.packageName})" }
+                }
+
+                log("未找到应用: $appName")
+                return@withContext "open_app: '$appName' not found. " +
+                    "It may not be installed; call search_apps or ask the user for the exact app name."
             }
             "wait" -> {
                 // 智能等待：模型决定等待时长
@@ -1412,8 +1839,15 @@ class MobileAgent(
         }
     }
 
-    private fun mapCoordinate(value: Int, screenMax: Int): Int {
-        return value.coerceIn(0, (screenMax - 1).coerceAtLeast(0))
+    private fun mapCoordinate(value: Int, targetMax: Int, sourceMax: Int = 0): Int {
+        if (targetMax <= 0) return value
+        val scaled = if (sourceMax > 0 && sourceMax != targetMax) {
+            // 模型坐标在截图空间，tap 在 display 空间；按比例映射。
+            (value.toLong() * targetMax / sourceMax).toInt()
+        } else {
+            value
+        }
+        return scaled.coerceIn(0, (targetMax - 1).coerceAtLeast(0))
     }
 
     /**
@@ -1547,3 +1981,5 @@ data class AgentResult(
     val success: Boolean,
     val message: String
 )
+
+

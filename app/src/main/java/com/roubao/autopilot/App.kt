@@ -30,6 +30,8 @@ class App : Application() {
 
         // 初始化 Firebase Crashlytics（根据用户设置决定是否启用）
         settingsManager = SettingsManager(this)
+        // 调试开关的运行时镜像（截图落盘 + 详细日志）
+        com.roubao.autopilot.data.DebugOptions.enabled = settingsManager.settings.value.debugEnabled
         val cloudCrashReportEnabled = settingsManager.settings.value.cloudCrashReportEnabled
         FirebaseCrashlytics.getInstance().apply {
             setCrashlyticsCollectionEnabled(cloudCrashReportEnabled)
@@ -70,13 +72,17 @@ class App : Application() {
         }.start()
 
         // 初始化 Skills 层（传入 appScanner 用于检测已安装应用）
-        val skillManager = SkillManager.init(this, toolManager, appScanner)
-        println("[App] SkillManager 已加载 ${skillManager.getAllSkills().size} 个 Skills")
+        SkillManager.init(this, toolManager, appScanner)
+        println("[App] SkillManager 使用 DB Skill 目录")
 
         println("[App] 组件初始化完成")
 
         // 刷新访问等级（只读缓存，不触发 su 弹窗）
         com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        // 高级模式已开启时，启动阶段补一次 root 探测，否则重启后 root 缓存为空，等级会停在上一次刷新。
+        if (settingsManager.settings.value.advancedModeEnabled) {
+            com.roubao.autopilot.agent.AccessLevelManager.ensureRoot(this)
+        }
     }
 
     override fun onTerminate() {

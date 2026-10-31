@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import com.roubao.autopilot.controller.AppScanner
 import com.roubao.autopilot.data.PromptRepository
+import com.roubao.autopilot.data.ToolSkillPromptEntity
 import com.roubao.autopilot.tools.ToolManager
 import com.roubao.autopilot.vlm.VLMClient
 import org.json.JSONArray
@@ -45,11 +46,14 @@ class SkillManager private constructor(
     }
 
     /**
-     * 初始化：加载 Skills 配置
+     * 初始化。
+     *
+     * assets/skills.json 现在只作为「首次建库/迁移」的种子源，
+     * 由 PromptRepository.seedBuiltInSkillsFromAssets() 读取并写入 DB。
+     * 运行时 Skill 目录、权限过滤、prompt 和快速路径都走 DB，不再加载 assets 到 registry。
      */
     fun initialize() {
-        val loadedCount = registry.loadFromAssets("skills.json")
-        println("[SkillManager] 已加载 $loadedCount 个 Skills")
+        println("[SkillManager] 使用 DB Skill 目录（assets/skills.json 仅作种子）")
     }
 
     /**
@@ -65,8 +69,8 @@ class SkillManager private constructor(
             .map {
                 val (installed, missing) = installedRelatedApps(it)
                 val availability = when {
-                    installed.isNotEmpty() -> " [installed related apps: ${installed.joinToString(", ")}]"
-                    missing.isNotEmpty() -> " [none of its related apps are installed; ask the user with numbered choices]"
+                    installed.isNotEmpty() -> " [related apps installed: ${installed.joinToString(", ")}]"
+                    missing.isNotEmpty() -> " [related apps not installed; use a similar installed app or GUI; ask user only if none]"
                     else -> ""
                 }
                 EnabledSkillInfo(
@@ -95,17 +99,18 @@ class SkillManager private constructor(
             } else {
                 buildString {
                     append(item.prompt)
-                    append("\n\n### Runtime Installed Apps (AUTHORITATIVE) ###\n")
+                    append("\n\n### Runtime Related Apps (HINTS, NOT REQUIREMENTS) ###\n")
                     if (installed.isNotEmpty()) {
-                        append("Installed: ").append(installed.joinToString(", ")).append('\n')
-                        append("Only operate these installed apps. Ignore any other app names in this skill.\n")
+                        append("Related apps installed: ").append(installed.joinToString(", ")).append('\n')
+                        append("Prefer them, but you may use a similar installed app or GUI if they fail.\n")
                     } else {
                         append("None of this skill's related apps are installed.\n")
+                        append("This is not a hard requirement: use a similar installed app, web version, or GUI to complete the task.\n")
                     }
                     if (missing.isNotEmpty()) {
-                        append("NOT installed (ignore): ").append(missing.joinToString(", ")).append('\n')
+                        append("Related but not installed (do not assume required): ").append(missing.joinToString(", ")).append('\n')
                     }
-                    append("If no related app is installed, ask the user with numbered choices; only run the install flow when install_app is enabled.\n")
+                    append("Only ask the user to install/choose an app when no suitable installed app or GUI path exists; install flow requires install_app enabled.\n")
                 }
             }
         } catch (e: Exception) {
@@ -361,6 +366,127 @@ $skillsInfo
             } else {
                 append("通过 GUI 自动化操作 ${app.name} 完成任务。")
             }
+        }
+    }
+
+    /**
+     * 从数据库 Skill 执行快速路径。
+     *
+     * DB 的 related_apps_json 已经保存了 type / deep_link / steps / priority，
+     * 这里重建 SkillConfig，然后复用现有 execute()：
+     * - DELEGATION -> DeepLink 直接打开
+     * - GUI_AUTOMATION -> ExecutionPlan 返回给 Agent
+     */
+    suspend fun executeFromDb(
+        skillId: String,
+        params: Map<String, Any?>,
+        level: com.roubao.autopilot.agent.AccessLevel
+    ): SkillResult {
+        val item = try {
+            PromptRepository.getInstance().getToolSkillPrompt(skillId)
+        } catch (e: Exception) {
+            null
+        } ?: return SkillResult.Failed("skill '$skillId' not found")
+
+        if (item.category != "skill" || !item.enabled) {
+            return SkillResult.Failed("skill '$skillId' is disabled or not a skill")
+        }
+        if (!com.roubao.autopilot.agent.AccessLevel.satisfies(level, item.dependenceJson)) {
+            return SkillResult.Failed("skill '$skillId' requires higher permission than ${level.id}")
+        }
+
+        val skill = skillFromDb(item)
+            ?: return SkillResult.Failed("skill '$skillId' has invalid related_apps/params")
+        if (skill.config.relatedApps.isEmpty()) {
+            return SkillResult.Failed("skill '$skillId' has no related apps")
+        }
+
+        val installed = try {
+            appScanner.refreshAppsIfStale().map { it.packageName.lowercase() }.toSet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+        val app = skill.config.relatedApps
+            .filter { it.packageName.lowercase() in installed }
+            .maxByOrNull { it.priority }
+            ?: return SkillResult.NoAvailableApp(
+                skillName = item.displayName,
+                requiredApps = skill.config.relatedApps.map { it.name }
+            )
+
+        return execute(AvailableAppMatch(skill = skill, app = app, params = params, score = 1f))
+    }
+
+    /** 把 DB 行还原成 SkillConfig（related_apps_json 含 type/deep_link/steps/priority）。 */
+    private fun skillFromDb(item: ToolSkillPromptEntity): Skill? {
+        return try {
+            val related = mutableListOf<RelatedApp>()
+            val relatedArray = JSONArray(item.relatedAppsJson.ifBlank { "[]" })
+            for (i in 0 until relatedArray.length()) {
+                val obj = relatedArray.optJSONObject(i) ?: continue
+                val pkg = obj.optString("package").trim()
+                if (pkg.isBlank()) continue
+                val steps = mutableListOf<String>()
+                obj.optJSONArray("steps")?.let { arr ->
+                    for (j in 0 until arr.length()) steps.add(arr.optString(j))
+                }
+                related.add(
+                    RelatedApp(
+                        packageName = pkg,
+                        name = obj.optString("name", pkg),
+                        type = if (obj.optString("type") == "delegation") {
+                            ExecutionType.DELEGATION
+                        } else {
+                            ExecutionType.GUI_AUTOMATION
+                        },
+                        deepLink = obj.optString("deep_link").takeIf { it.isNotBlank() },
+                        steps = steps.takeIf { it.isNotEmpty() },
+                        priority = obj.optInt("priority", 0),
+                        description = obj.optString("description").takeIf { it.isNotBlank() }
+                    )
+                )
+            }
+
+            val params = mutableListOf<SkillParam>()
+            val paramsArray = JSONArray(item.paramsJson.ifBlank { "[]" })
+            for (i in 0 until paramsArray.length()) {
+                val obj = paramsArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                if (name.isBlank()) continue
+                val examples = mutableListOf<String>()
+                obj.optJSONArray("examples")?.let { arr ->
+                    for (j in 0 until arr.length()) examples.add(arr.optString(j))
+                }
+                params.add(
+                    SkillParam(
+                        name = name,
+                        type = obj.optString("type", "string"),
+                        description = obj.optString("description"),
+                        required = obj.optBoolean("required", false),
+                        examples = examples
+                    )
+                )
+            }
+
+            val keywords = mutableListOf<String>()
+            val keywordsArray = JSONArray(item.keywordsJson.ifBlank { "[]" })
+            for (i in 0 until keywordsArray.length()) keywords.add(keywordsArray.optString(i))
+
+            Skill(
+                SkillConfig(
+                    id = item.id,
+                    name = item.displayName,
+                    description = item.description,
+                    category = item.domain.ifBlank { "skill" },
+                    keywords = keywords,
+                    params = params,
+                    relatedApps = related,
+                    promptHint = item.promptHint.takeIf { it.isNotBlank() }
+                )
+            )
+        } catch (e: Exception) {
+            println("[SkillManager] skillFromDb failed for ${item.id}: ${e.message}")
+            null
         }
     }
 

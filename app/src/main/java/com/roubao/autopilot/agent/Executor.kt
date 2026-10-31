@@ -42,10 +42,11 @@ class Executor {
             buildString {
                 latestActions.forEachIndexed { i, act ->
                     val outcome = latestOutcomes.getOrNull(i) ?: "?"
-                    if (outcome == "A") {
-                        append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Successful\n")
-                    } else {
-                        append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Failed | Error: ${latestErrors.getOrNull(i)}\n")
+                    when (outcome) {
+                        "A" -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Successful\n")
+                        // U = 反思模型没跑成功，不代表动作失败
+                        "U" -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Unknown (reflection unavailable)\n")
+                        else -> append("- Action: $act | Description: ${latestSummaries.getOrNull(i)} | Outcome: Failed | Error: ${latestErrors.getOrNull(i)}\n")
                     }
                 }
             }
@@ -83,9 +84,11 @@ class Executor {
         }
 
         prompt += "\n\n### App Availability Rule (AUTHORITATIVE) ###\n" +
-            "Only open or operate apps from Installed apps: $installedApps\n" +
-            "If the current skill's preferred app is not installed, do not open it. " +
-            "Use `ask_user` with 2-3 candidate app names and ask whether the user wants to install one; do not silently try uninstalled apps.\n" +
+            "App inventory (partial: system defaults + skill-related apps):\n$installedApps\n" +
+            "This is NOT the full installed-app list. If the app you need is not listed, call `search_apps` with its name " +
+            "before concluding it is not installed. Never call open_app with a package you invented.\n" +
+            "If the current skill's related apps are not installed, they are not hard requirements: " +
+            "use a similar installed app, web version, or GUI; only use `ask_user` when no suitable app/GUI path exists.\n" +
             "App installation via app store: ${if (installAllowed) "ALLOWED (install_app skill is ON)" else "NOT ALLOWED (install_app skill is OFF; ask the user to enable 安装应用 first)"}.\n" +
             "If the user explicitly names an installed app, call open_app with that exact name first; only ask if open_app fails.\n"
 
@@ -109,20 +112,25 @@ class Executor {
 
         if (infoPool.accessibilityTree.isNotEmpty()) {
             prompt += "\n\n### Accessibility UI Tree (AUTHORITATIVE) ###\n"
-            prompt += "Screen: ${infoPool.screenWidth}x${infoPool.screenHeight}. " +
-                "Coordinates here are ABSOLUTE PIXELS.\n"
-            prompt += "For click/double_tap/long_press: find the target node below, put its EXACT text " +
-                "into `text`, and its center coordinate into `coordinate` as fallback.\n"
+            val modelWidth = if (infoPool.imageWidth > 0) infoPool.imageWidth else infoPool.screenWidth
+            val modelHeight = if (infoPool.imageHeight > 0) infoPool.imageHeight else infoPool.screenHeight
+            prompt += "Screen: ${modelWidth}x${modelHeight}. " +
+                "Coordinates here are ABSOLUTE PIXELS of this screen/image. " +
+                "Ignore any older 1080x2400 example; use the Screen size above.\n"
+            prompt += "For click/double_tap/long_press: `text` identifies the control; `coordinate` disambiguates duplicate text. " +
+                "If the same text appears more than once, you MUST use the Duplicate Text Candidates section and put the " +
+                "chosen occurrence's center into `coordinate`. Never assume the first duplicate. " +
+                "This overrides any earlier 'Text > coordinates' rule for duplicate text.\n"
             prompt += "Optional index mode: each node is numbered 1..N. You may use " +
                 "{\"action\":\"click\",\"index\":N}, {\"action\":\"long_press\",\"index\":N}, " +
                 "{\"action\":\"type\",\"index\":N,\"text\":\"...\"} or " +
                 "{\"action\":\"scroll\",\"index\":N,\"direction\":\"down\"}. " +
-                "Index is a snapshot; if the page animates or an ad is moving, prefer text/coordinate.\n"
+                "Index is a snapshot; if the page animates, scrolls, or an ad is moving, prefer text + coordinate.\n"
             prompt += "${infoPool.accessibilityTree}\n"
         } else {
             println("[Executor] Accessibility UI Tree is EMPTY; falling back to screenshot coordinates")
         }
-        val policy = toolPolicySection(infoPool.packId, infoPool.effectiveLevel())
+        val policy = toolPolicySection(infoPool.effectiveLevel())
         if (policy.isNotBlank()) prompt += policy
 
         println("[Executor] prompt=${prompt.length} chars, uiTree=${infoPool.accessibilityTree.length} chars")

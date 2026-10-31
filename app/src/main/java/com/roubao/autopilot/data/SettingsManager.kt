@@ -88,9 +88,19 @@ data class AppSettings(
     val cloudCrashReportEnabled: Boolean = true,
     val rootModeEnabled: Boolean = false,
     val suCommandEnabled: Boolean = false,
-    val accessibilityModeEnabled: Boolean = false,
+    // Shizuku 总开关：关闭后不再探测 Shizuku，权限等级退回 su-user / 无障碍
+    val shizukuModeEnabled: Boolean = true,
+    // file 工具的授权目录：所有文件操作必须落在这个目录内
+    val fileAccessRoot: String = "/sdcard/Download/肉包",
+    // 截图宽度上限（px）；0 = 不缩放。按宽度算才符合竖屏直觉（1080 → 900 约 83%）
+    val screenshotMaxWidth: Int = 900,
+    // 调试模式：截图落盘 + 输出详细日志
+    val debugEnabled: Boolean = false,
+    val accessibilityModeEnabled: Boolean = true,
     val advancedModeEnabled: Boolean = false,
-    val promptPackMode: String = "auto"  // auto / basic / standard / advanced
+    val overlayScale: Float = 0.65f,
+    val promptPackMode: String = "auto",  // auto / basic / standard / advanced
+    val rootShellConfirmMode: String = "always"  // always / auto
 ) {
     // 便捷属性：获取当前服务商的配置
     val currentConfig: ProviderConfig
@@ -228,9 +238,18 @@ class SettingsManager(context: Context) {
             cloudCrashReportEnabled = prefs.getBoolean("cloud_crash_report_enabled", true),
             rootModeEnabled = prefs.getBoolean("root_mode_enabled", false),
             suCommandEnabled = prefs.getBoolean("su_command_enabled", false),
-            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", false),
+            shizukuModeEnabled = prefs.getBoolean("shizuku_mode_enabled", true),
+            fileAccessRoot = prefs.getString("file_access_root", "/sdcard/Download/肉包")
+                ?.takeIf { it.isNotBlank() }
+                ?: "/sdcard/Download/肉包",
+            screenshotMaxWidth = prefs.getInt("screenshot_max_width", 900)
+                .takeIf { it >= 0 } ?: 900,
+            debugEnabled = prefs.getBoolean("debug_enabled", false),
+            accessibilityModeEnabled = prefs.getBoolean("accessibility_mode_enabled", true),
             advancedModeEnabled = prefs.getBoolean("advanced_mode_enabled", false),
-            promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto"
+            overlayScale = prefs.getFloat("overlay_scale", 0.65f).coerceIn(0.4f, 1.2f),
+            promptPackMode = prefs.getString("prompt_pack_mode", "auto") ?: "auto",
+            rootShellConfirmMode = prefs.getString("root_shell_confirm_mode", "always") ?: "always"
         )
     }
 
@@ -363,6 +382,33 @@ class SettingsManager(context: Context) {
         _settings.value = _settings.value.copy(suCommandEnabled = enabled)
     }
 
+    fun updateShizukuModeEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("shizuku_mode_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(shizukuModeEnabled = enabled)
+        // 关闭 Shizuku 时不再以 Root 身份操作，避免出现「Shizuku 关掉但 root 模式还开着」的错位
+        if (!enabled && _settings.value.rootModeEnabled) {
+            updateRootModeEnabled(false)
+        }
+    }
+
+    fun updateFileAccessRoot(path: String) {
+        val safe = path.trim().trimEnd('/').ifBlank { "/sdcard/Download/肉包" }
+        prefs.edit().putString("file_access_root", safe).apply()
+        _settings.value = _settings.value.copy(fileAccessRoot = safe)
+    }
+
+    fun updateScreenshotMaxWidth(px: Int) {
+        val safe = px.coerceIn(0, 4000)
+        prefs.edit().putInt("screenshot_max_width", safe).apply()
+        _settings.value = _settings.value.copy(screenshotMaxWidth = safe)
+    }
+
+    fun updateDebugEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("debug_enabled", enabled).apply()
+        _settings.value = _settings.value.copy(debugEnabled = enabled)
+        DebugOptions.enabled = enabled
+    }
+
     fun updateAccessibilityModeEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("accessibility_mode_enabled", enabled).apply()
         _settings.value = _settings.value.copy(accessibilityModeEnabled = enabled)
@@ -373,6 +419,12 @@ class SettingsManager(context: Context) {
         _settings.value = _settings.value.copy(advancedModeEnabled = enabled)
     }
 
+    fun updateOverlayScale(scale: Float) {
+        val safe = scale.coerceIn(0.4f, 1.2f)
+        prefs.edit().putFloat("overlay_scale", safe).apply()
+        _settings.value = _settings.value.copy(overlayScale = safe)
+    }
+
     fun updatePromptPackMode(mode: String) {
         val safe = when (mode) {
             "basic", "standard", "advanced" -> mode
@@ -380,5 +432,14 @@ class SettingsManager(context: Context) {
         }
         prefs.edit().putString("prompt_pack_mode", safe).apply()
         _settings.value = _settings.value.copy(promptPackMode = safe)
+    }
+
+    fun updateRootShellConfirmMode(mode: String) {
+        val safe = when (mode) {
+            "auto" -> "auto"
+            else -> "always"
+        }
+        prefs.edit().putString("root_shell_confirm_mode", safe).apply()
+        _settings.value = _settings.value.copy(rootShellConfirmMode = safe)
     }
 }

@@ -1,15 +1,15 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/images/logo.png" alt="肉包 Roubao - AI Android Automation" width="120" height="120">
 </p>
 
 <h1 align="center">肉包 Roubao</h1>
 
 <p align="center">
-  <strong>首款无需电脑的开源 AI 手机自动化助手 | AI Phone Automation Assistant</strong>
+  <strong>无需电脑的开源 AI 手机自动化助手 · 权限感知 · Prompt 全数据库化</strong>
 </p>
 
 <p align="center">
-  基于视觉语言模型 (VLM) · 原生 Android Kotlin · 多 Agent 协作架构
+  视觉语言模型 (VLM) · 原生 Android Kotlin · 无障碍 + Shizuku + Root 三级权限
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Version-1.4.7-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
   <img src="https://img.shields.io/badge/Min%20SDK-26-blue.svg" alt="Min SDK">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License">
@@ -36,198 +37,307 @@
 
 ---
 
-## 项目背景
+## 项目简介
 
-2025 年 12 月，字节跳动联合中兴发布了「豆包手机助手」，一款能够自动操作手机完成复杂任务的 AI 助手。它能帮你比价下单、批量投简历、刷视频、抢票，甚至在复杂电商和社交场景下启动一整套自动化流程。
+肉包是一个完全开源、原生运行在 Android 上的 AI 手机自动化助手。  
+它不需要电脑、不需要数据线，安装后配置模型 API Key 即可用自然语言操作手机。
 
-首批 3 万台工程机定价 3499 元，上线当天即告售罄，二手市场一度炒到 5000+。
+和只依赖 Shizuku 的方案不同，肉包把手机真正能拿到的权限拆成三层：
 
-**买不到？那就自己做一个。**
+```text
+无特权 / 无障碍（user） < Shizuku ADB（adb） < Root（root）
+```
 
-于是有了肉包——一个完全开源的 AI 手机自动化助手。
+每一层都只向模型暴露**当前真的能执行**的 Tool / Skill，避免模型把步数浪费在系统必然拒绝的路径上。
 
-为什么叫「肉包」？因为作者不爱吃素。🥟
+> 当前版本：**1.4.7 (versionCode 13)**  
+> 本轮重点：权限模型收敛、Prompt DB v23、无障碍增强、Root Shell、任务暂停/提醒、应用清单按需注入。
 
 ---
 
-## 与同类项目的对比
+## 完成度
 
-| 特性 | 肉包 | 豆包手机 | 其他开源方案 |
-|------|------|----------|--------------|
-| 需要电脑 | ❌ 不需要 | ❌ 不需要 | ✅ 大多需要 |
-| 需要购买硬件 | ❌ 不需要 | ✅ 需要 3499+ | ❌ 不需要 |
-| 原生 Android 实现 | ✅ Kotlin | ✅ 原生 | ❌ Python |
-| 开源 | ✅ MIT | ❌ 闭源 | ✅ 开源 |
-| Skills/Tools 架构 | ✅ 完整 | ❓ 未知 | ❌ 无 |
-| UI 树 / 无障碍混合定位 | ✅ 支持 Index/坐标双模式 | ❓ 未知 | ❌ 仅坐标点击 |
-| Prompt 统一编辑器 | ✅ 支持 SQLite 数据库化管理 | ❌ 无法修改 | ❌ 配置文件/硬编码 |
-| UI 设计 | ⭐⭐⭐½ | ⭐⭐⭐⭐ | ⭐⭐ |
-| 自定义模型 | ✅ Qwen/GPT/Claude/GUIOwl/MAIUI | ❌ 仅豆包 | ✅ 部分支持 |
-
-### 我们解决了什么问题？
-
-**传统的手机自动化方案痛点：**
-
-- 必须连接电脑运行 ADB 命令
-- 需要部署 Python 环境和各种依赖
-- 只能在电脑端操作，手机必须通过数据线连接
-- 技术门槛高，普通用户难以使用
-
-**肉包的解决方案：**
-
-一个 App，装上就能用。无需电脑、无需数据线、无需任何技术背景。
-
-打开 App → 配置 API Key → 说出你想做的事 → 完成。
-
----
-
-## 为什么选择肉包？
-
-### 原生 Android 实现，不是 Python 脚本的封装
-
-市面上几乎所有手机自动化开源项目（包括阿里的 MobileAgent）都是 **Python 实现**，需要：
-- 在电脑上运行 Python 脚本
-- 手机通过 USB/WiFi ADB 连接电脑
-- 截图通过 ADB 传输到电脑，处理后再把操作指令传回手机
-
-**肉包完全不同。**
-
-我们用 **Kotlin 重写了整个 MobileAgent 框架**，原生运行在 Android 设备上：
-- 截图、分析、执行全部在手机本地完成
-- 无需电脑中转，延迟更低
-- 利用 Shizuku 获得系统级权限，而非繁琐的 ADB 命令
-
-### 为什么需要 Shizuku？
-
-Android 系统出于安全考虑，普通 App 无法：
-- 模拟用户点击、滑动屏幕
-- 读取其他 App 的界面内容
-- 执行 `input tap`、`screencap` 等系统命令
-
-传统方案需要连接电脑执行 ADB 命令。而 **Shizuku** 是一个优雅的解决方案：
-
-1. 通过无线调试或电脑 ADB **启动一次** Shizuku 服务
-2. 之后普通 App 就可以获得 ADB 级别的权限
-3. **无需 Root**，无需每次都连接电脑
-
-这让肉包可以直接在手机上执行截图、点击、输入等操作，真正实现「一个 App 搞定一切」。
-
-### 类 Claude Code 的 Tools/Skills 双层架构
-
-受 [Claude Code](https://claude.ai/claude-code) 架构启发，肉包实现了 **Tools + Skills 双层 Agent 框架**：
-
-```
-用户: "帮我点份外卖"
-         │
-         ▼
-   ┌─────────────┐
-   │ SkillManager │  ← 意图识别
-   └─────────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-🚀 快速路径    🤖 标准路径
-(Delegation)  (GUI 自动化)
-    │              │
-    ▼              ▼
- 直接 DeepLink   Agent 循环
- 打开小美 AI     操作美团 App
-```
-
-**Tools 层（原子能力）**
-
-底层工具集，每个 Tool 完成一个独立操作：
-
-| Tool | 功能 |
-|------|------|
-| `search_apps` | 智能搜索已安装应用（支持拼音、语义） |
-| `open_app` | 打开应用 |
-| `deep_link` | 通过 DeepLink 跳转到 App 特定页面 |
-| `clipboard` | 读写剪贴板 |
-| `shell` | 执行 Shell 命令 |
-| `http` | HTTP 请求（调用外部 API） |
-
-**Skills 层（用户意图）**
-
-面向用户的任务层，将自然语言映射到具体操作：
-
-| Skill | 类型 | 描述 |
-|-------|------|------|
-| 点外卖(小美) | Delegation | 直接打开小美 AI 让它帮你点 |
-| 点外卖(美团) | GUI 自动化 | 在美团 App 上一步步操作 |
-| 导航(高德) | Delegation | DeepLink 直达高德搜索 |
-| 生成图片(即梦) | Delegation | 打开即梦 AI 生成图片 |
-| 发微信 | GUI 自动化 | 自动操作微信发消息 |
-
-**两种执行模式：**
-
-1. **Delegation（委托）**：高置信度匹配时，直接通过 DeepLink 打开有 AI 能力的 App（如小美、豆包、即梦），让它们完成任务。**快速、一步到位。**
-
-2. **GUI 自动化**：没有 AI 能力的 App（如美团、微信），通过传统的截图-分析-操作循环完成。Skill 会提供操作步骤指导，提高成功率。
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| 无障碍基础自动化 | ✅ 完成 | UI 树、index 点击/长按/输入/滚动、坐标校准、盲操兜底 |
+| 无障碍截图 | ✅ 完成 | API 30+ `takeScreenshot`；失败回退 shell / tree-only |
+| Shizuku ADB | ✅ 完成 | shell、文件、`pm`/`am`/`settings`、截图 fallback |
+| Root Shell | ✅ 已实现，待真机验证 | Shizuku Root 或 `su -c`；`root_shell` tool + 确认开关 |
+| 三级权限 / 按权限过滤 | ✅ 完成 | Tool/Skill 只看权限；向上禁止、向下允许 |
+| Prompt 数据库化 | ✅ 完成 | SQLite v23；Agent / Tool / Skill / 反馈 / Pack / Overlay / 审计 |
+| Prompt 导入导出 / 编辑器 | ✅ 完成 | v3 导入导出、占位符面板、格式检查、单条重设 |
+| 任务暂停 / 继续 | ✅ 完成 | 主界面 + 悬浮窗检查点 |
+| 定时提醒 | ✅ 完成 | AlarmManager + 通知；精确/近似模式 |
+| 应用清单按需注入 | ✅ 完成 | 系统默认 + Skill 关联；`search_apps` 查全量 |
+| Root Shell 确认 | ✅ 完成 | 设置里可选“每次提醒 / 默认通过” |
+| `su-user` provider | ❌ 未实现 | su-only 设备的 adb 级 shell 暂不可用 |
+| MediaProjection | ❌ 未实现 | API <30 仍以 tree-only / shell 截图为主 |
+| 宏脚本 | ❌ 未实现 | 当前没有录制/回放 |
+| `SkillManager.execute` / DB Skill 快速路径 | ✅ 已接入主链 | Manager 选中 Skill 后、Executor 决策前：Delegation → DeepLink；GUI → ExecutionPlan；仅首次尝试 |
 
 ---
 
 ## 核心特性
 
-### 🤖 智能 AI Agent
+### 🧱 三级权限模型（重点）
 
-- 基于先进的视觉语言模型（VLM），能够"看懂"屏幕内容
-- 自然语言指令，说人话就能操作手机
-- 智能决策，根据屏幕状态自动规划下一步操作
+| 等级 | 来源 | 能做什么 | 默认 Agent 策略 |
+|---|---|---|---|
+| `user` | 无障碍服务 | UI 树、截图、点击/滑动/输入、`open_app`、`search_apps` | `basic` |
+| `adb` | Shizuku ADB | 增加 `shell`、文件、`pm`/`am`/`settings`、截图 fallback | `standard` |
+| `root` | `su` 或 Shizuku Root + 高级模式 | 增加 `root_shell`（默认逐次确认） | `advanced` |
 
-### 🗃️ 统一 Prompt 编辑器与数据库化持久层
+规则：
 
-- **Prompt 数据库化**：Agent、Tool 与 Skill 的 Prompt 模板均通过 SQLite 数据库（`PromptRepository`）统一持久化管理。
-- **模板变量与灵活编辑**：支持动态变量占位符，提供 UI 预览、长按多行编辑器修改、一键恢复默认值。
-- **自定义扩充**：支持用户自定义创建与删除 Agent、Tool 或 Skill 的 Prompt，极大地拓展了 Agent 的能力边界。
+- Tool / Skill 的 `dependence` 是**最低权限要求**；`minLevel <= currentLevel` 才可用。
+- **向上越权禁止**：user 环境看不到 adb/root 工具；adb 环境看不到 root 工具。
+- **向下越权允许**：root 环境可以使用 adb/user 工具。
+- 权限过滤只负责“减少无效 prompt”，真正的系统门禁仍是 Android 权限 / provider / `ActionGate`。
+- **Pack 只决定 Agent prompt**，不限制 Tool / Skill 的可用性。
+- 能力页始终显示全部 Tool / Skill，只在权限不足时标“权限不足”。
+- 无障碍只是 UI provider，不是 adb 的前置条件：无障碍断开、Shizuku ADB 仍在时，`level` 仍是 `adb`，shell 仍可用。
 
-### ♿ 无障碍服务与 UI 树混合定位 (Index / 坐标双模式)
+### ♿ 无障碍增强
 
-- **UI 树结构感知**：内置 `AutoPilotAccessibilityService` 无障碍服务，实时 Dump 界面 UI 节点树，提取文本、控件类型与布局位置。
-- **元素索引准确点击 (Index Mode)**：直接通过元素 index 触发控件操作，摆脱屏幕分辨率限制与动态 UI 变动影响，显著提高复杂界面场景的执行成功率。
-- **智能兜底保障**：索引模式失败或无障碍节点不可用时，自动回退到视觉坐标点击模式，确保自动化流程稳健运行。
+- UI 元素树 dump（文本、描述、ID、坐标、可点击/可输入）
+- 可选 **index 模式**：`{"action":"click","index":5}`，失败自动回退文本/坐标
+- 文本校准：模型给 `text` 时优先按无障碍节点中心坐标点击
+- 手势：`dispatchGesture` 完成 tap/swipe/long-press/double-tap
+- `ACTION_SET_TEXT` 直接写入，不依赖输入法中英文状态
+- `ACTION_SET_SELECTION` 设置光标/选区
+- `ACTION_SCROLL_*` 翻页
+- API 30+ 无障碍截图；失败回退 shell / tree-only
+- 无 Shizuku 也能完成纯 UI 任务（basic 模式）
 
-### ⏰ 定时任务与提醒调度
+### 🧠 Tools + Skills 双层能力
 
-- **提醒调度器**：内置 `ReminderScheduler` 与 `ReminderReceiver`，支持按设定时间自动调度与触发提醒任务。
+**Tool = 肉包内部命令，绑定权限。**
 
-### 💬 多轮对话与上下文记忆
+| Tool | 作用 | 最低权限 |
+|---|---|---|
+| `tap` / `swipe` / `type` / `press_key` | UI 操作 | user |
+| `open_app` / `deep_link` | 打开应用 / 深链 | user |
+| `search_apps` | 搜索已安装应用（名称/包名/语义） | user |
+| `http` / `clipboard` | 外部 API / 剪贴板 | user |
+| `shell` | ADB Shell（文件、pm、am、settings、截图 fallback） | adb |
+| `root_shell` | Root Shell（su / Shizuku Root） | root |
 
-- **上下文记忆 (Conversation Memory)**：支持多轮对话上下文管理，能够精准追踪任务执行进度与历史交互，提升复杂多步骤指令的处理能力。
+**Skill = 调用外部 App / GUI 的能力。**
 
-### 🎨 精心设计的 UI
+- Skill 和 App **不是一对一绑定**；`related_apps` 只是提示。
+- 没有相关 App 时，优先找类似已安装 App、网页版或 GUI 路径。
+- 实在没有合适路径，才用 `ask_user` 询问用户；不会因为没有某个 App 就直接判 Skill 不可用。
+- `shell_calc` 已删除：它本质是内部命令，不是外部 GUI Skill；算术规则改为 `shell` prompt + 反馈注入。
 
-**这可能是所有手机自动化开源项目中 UI 做得最好看的。**
+### 🗃️ Prompt 全数据库化
 
-- 现代化 Material 3 设计语言
-- 流畅的动画效果
-- 深色/浅色主题自适应
-- 精心设计的首次使用引导
-- 完整的中英文双语支持
+- SQLite `prompts.db` v23：
+  - `agent_prompts`
+  - `tool_skill_prompts`
+  - `user_feedback`
+  - `prompt_packs`
+  - `agent_pack_overlays`
+  - `action_audit`
+  - `meta`
+- 首次安装从 `assets/prompts_seed.db` 复制种子库；老版本按版本迁移。
+- Agent / Tool / Skill / 反馈 / Pack Overlay 都可以在 App 内编辑。
+- 支持 v3 导入/导出、单条导入/导出、单条重设、完全重设。
+- Prompt 编辑器带动态占位符面板和格式检查：
+  - Agent：`{{instruction}}` 等必需占位符
+  - Tool：`工具: name` + `说明:`
+  - Skill：`技能: name` + `说明:`
+- 反馈按权限过滤注入 Manager / Executor。
+- 内置默认反馈 + 可自定义建议/吐槽。
 
-### 🔧 高度可定制
+### 🧩 应用清单按需注入
 
-- 支持多种 VLM 及专用 UI 模型：阿里云通义千问、OpenAI GPT-4V、Claude、GUIOwl、MAIUI 等
-- 预设 API 服务商：阿里云、OpenAI、OpenRouter 一键切换
-- 从 API 动态获取可用模型列表，支持模糊搜索
-- 可配置自定义 API 端点，支持本地模型（Ollama、vLLM 等）
+- 不再把 500+ 个已安装应用名全部塞进 prompt。
+- 常驻清单 = **系统默认应用**（浏览器/电话/短信/桌面/相册/相机/邮件/音乐/日历/设置/文件/助手）+ **当前权限可用 Skill 的已安装关联应用**。
+- 需要但不在清单里的 App，调用 `search_apps` 查全量：
+  - 返回 `应用名 + 包名 + 是否系统应用`
+  - `open_app` 会回传解析到的包名/候选，不再静默失败
+- 这样既保留上下文，又避免按名字截断导致“微信/百度网盘明明装了却找不到”。
 
-### 🔐 安全保护
+### 🎛️ 任务控制 / 交互
+
+- 执行中可暂停/继续（主界面 + 悬浮窗）
+- 悬浮窗常驻 idle 包子图标、可拖动、可缩放
+- `ask_user` 内联输入，5 分钟超时策略
+- `take_over` 人机协作、敏感操作确认
+- 定时提醒：AlarmManager + 通知；精确/近似模式明确提示
+- 任务执行期间持有 partial wake lock
+- 成功任务停留在目标 App；失败/停止才回主界面
+- 执行历史自动清理上次进程残留的 RUNNING 记录
+
+### 🔐 Root / 高风险
+
+- `root_shell` 作为独立 Tool，`dependence = ["root"]`
+- Root provider：
+  - Shizuku 以 Root 运行 → 走 ShellService
+  - 否则走 `su -c`
+- 设置 → **Root 命令确认**：
+  - **每次提醒（默认）**：执行前弹确认，2 分钟无响应按取消
+  - **默认通过**：不再逐次确认
+- 高级模式 + Root provider 才暴露 `root_shell`；adb 环境会被 `ActionGate` 拒绝
+- 普通 `shell` 不受 Root 确认开关影响
+
+### 🤖 多模型 / 多服务商
+
+- OpenAI 兼容接口
+- 阿里云通义千问
+- OpenAI / OpenRouter / 自定义端点
+- GUI-Owl 模式
+- MAI-UI 模式
+- 暂停期间可切换模型，任务内存保留
+
+### 🎨 UI / 体验
+
+- Material 3、深色/浅色主题
+- 首页预设任务、附件、长按定时
+- 能力页：Agents / Tools / Skills / 建议吐槽
+- Prompt 预览 + 长按编辑
+- 设置页权限分组、Agent 策略包预览、Shizuku 授权、Root 确认
+- 完整中英文界面
+
+### 🔒 安全
 
 - API Key 使用 AES-256-GCM 加密存储
-- 检测到支付、密码等敏感页面自动停止
-- 任务执行全程可视，悬浮窗显示进度
-- 随时可以手动停止任务
-- 可选的云端崩溃上报（可在设置中关闭）
+- 支付/密码/生物识别等敏感页面自动停止或请求确认
+- 高风险动作可确认；`ActionGate` 对查不到的 Tool 采用 fail-closed
+- 可关闭云端崩溃上报
+- 审计日志记录等级 / 动作 / 结果
 
-### 🔓 Root 模式支持
+---
 
-当 Shizuku 以 Root 权限运行时，肉包可以启用 Root 模式：
+## 权限模型：为什么这么设计
 
-- **Root 模式**：解锁更多系统级操作能力
-- **su 命令**：允许执行 `su -c` 命令（需谨慎使用）
-- **自动检测**：自动检测 Shizuku 权限等级（ADB/Root），非 Root 环境下该选项为灰色不可用
+```text
+user(0) < adb(1) < root(2)
+
+item.minLevel = max(dependence)      // [] = user
+currentLevel  = 当前可用 provider 的最高等级
+available     = item.enabled && item.minLevel <= currentLevel
+```
+
+- **无权限 / 无障碍**：只有 UI 能力；适合 basic。
+- **Shizuku ADB**：增加 shell/文件/系统命令；适合 standard。
+- **Root**：增加 root_shell；适合 advanced。
+- **Pack**：只切换 Agent 的 prompt 策略，不改变 Tool / Skill 可用性。
+- **Skill 的 App 关系**：提示，不是绑定；没有相关 App 时用类似 App / 网页 / GUI。
+
+这样做的目的不是“卡死用户”，而是：
+
+1. 不让模型看到当前权限根本执行不了的工具；
+2. 不把 500+ 应用名全部塞进 prompt；
+3. 让不同权限等级使用各自合适的 Agent 策略；
+4. 真正的高风险仍然由系统权限 + 确认 + 审计兜底。
+
+---
+
+## 技术架构
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                         肉包 App                              │
+├──────────────────────────────────────────────────────────────┤
+│  UI (Compose)                                                │
+│    Home / Capabilities / History / Settings / Onboarding     │
+│    OverlayService（idle / 暂停 / ask_user / confirm）          │
+├──────────────────────────────────────────────────────────────┤
+│  Prompt 层                                                    │
+│    PromptRepository (SQLite v23)                             │
+│    Agent / Tool / Skill / Feedback / Pack / Overlay / Audit  │
+├──────────────────────────────────────────────────────────────┤
+│  Skill 层                                                     │
+│    SkillManager → DB roster → 权限过滤 → Agent 选择 Skill     │
+│    相关 App 只作为提示；没有就走类似 App / GUI                │
+├──────────────────────────────────────────────────────────────┤
+│  Agent 层                                                     │
+│    MobileAgent → Manager → Executor → ActionGate             │
+│                 → Reflector / Notetaker                      │
+│    Tool Policy 由权限 + DB 动态生成                           │
+├──────────────────────────────────────────────────────────────┤
+│  执行层                                                       │
+│    DeviceController                                          │
+│      ├─ AccessibilityService（UI 树 / index / 手势 / 截图）    │
+│      ├─ Shizuku ShellService（adb shell / 文件 / 系统命令）    │
+│      └─ su -c / Shizuku Root（root_shell）                    │
+├──────────────────────────────────────────────────────────────┤
+│  VLM Client                                                   │
+│    OpenAI-compatible / Qwen-VL / GUI-Owl / MAI-UI            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 工作流程
+
+```text
+用户指令
+  │
+  ▼
+AccessLevelManager.refresh()
+  │  无障碍 / Shizuku ADB / su / Shizuku Root
+  ▼
+SkillManager / PromptRepository
+  │  按权限过滤 DB Skill；相关 App 只做提示
+  ▼
+MobileAgent 主循环
+  │
+  ├─ 无障碍 UI 树 + 截图（或 tree-only）
+  ├─ Manager 规划（Agent 策略包）
+  ├─ Executor 决策
+  ├─ ActionGate 权限 / provider / enabled 检查
+  ├─ DeviceController 执行
+  │    ├─ 无障碍手势 / index / ACTION_SET_TEXT
+  │    ├─ shell（Shizuku ADB）
+  │    └─ root_shell（Root + 确认）
+  ├─ Reflector 反思
+  └─ 循环直到完成 / 敏感页 / 用户停止
+```
+
+---
+
+## 项目结构
+
+```text
+app/src/main/java/com/roubao/autopilot/
+├── agent/
+│   ├── MobileAgent.kt              # 主循环 / 暂停 / 动作分发
+│   ├── Manager.kt                  # 规划 Agent
+│   ├── Executor.kt                 # 执行 Agent
+│   ├── ActionReflector.kt          # 反思 Agent
+│   ├── Notetaker.kt                # 笔记 Agent
+│   ├── InfoPool.kt                 # 状态池
+│   ├── AccessLevel.kt              # user / adb / root
+│   ├── AccessLevelManager.kt       # provider 探测与等级刷新
+│   ├── ActionGate.kt               # 执行前门禁
+│   ├── CapabilityPromptSupport.kt  # Tool Policy
+│   └── PromptPackResolver.kt       # Agent 策略包选择
+├── controller/
+│   ├── DeviceController.kt         # 无障碍 / Shizuku / root_shell
+│   ├── AppScanner.kt               # 全量应用扫描 / 搜索
+│   └── AppInventory.kt             # 默认应用 + Skill 关联清单
+├── data/
+│   ├── PromptRepository.kt         # SQLite v23 / 导入导出 / 迁移
+│   ├── SettingsManager.kt          # 设置
+│   └── ExecutionHistory.kt         # 执行历史
+├── service/
+│   ├── AutoPilotAccessibilityService.kt
+│   ├── ShellService.kt             # Shizuku UserService
+│   ├── ReminderReceiver.kt
+│   └── ReminderScheduler.kt
+├── skills/
+│   ├── SkillManager.kt             # DB roster / 相关应用提示
+│   └── SkillRegistry.kt            # assets skills.json loader（仅建库种子，运行时不再加载）
+├── tools/                          # Tool 接口 / ToolManager / 内置 Tool
+├── ui/
+│   ├── OverlayService.kt           # idle / 暂停 / ask_user / confirm
+│   └── screens/                    # Home / Capabilities / Settings / ...
+└── vlm/                            # VLM / GUI-Owl / MAI-UI 客户端
+
+prompt-seed/                        # 可读种子源
+scripts/build_prompt_seed.py        # 生成 assets/prompts_seed.db
+app/src/main/assets/prompts_seed.db # 种子 DB（v23）
+```
 
 ---
 
@@ -235,321 +345,129 @@ Android 系统出于安全考虑，普通 App 无法：
 
 ### 前置要求
 
-1. **Android 8.0 (API 26)** 或更高版本
-2. **WiFi 网络** - Shizuku 无线调试依赖 WiFi 连接，确保手机已连接 WiFi
-3. **Shizuku** - 用于获取系统级控制权限
-4. **VLM API Key** - 需要视觉语言模型的 API 密钥（如阿里云通义千问）
+1. Android 8.0 (API 26)+
+2. **无障碍服务**：basic 模式必需
+3. **Shizuku**：standard/adb 模式需要（可选）
+4. **Root（可选）**：advanced + `root_shell`
+5. VLM API Key
 
-### 安装步骤
+> basic 模式不需要 Shizuku；只有文件/系统命令、`shell`、`root_shell` 才需要更高权限。
 
-#### 1. 安装并启动 Shizuku
+### 安装
 
-Shizuku 是一个开源工具，可以让普通应用获得 ADB 权限，无需 Root。
+1. 从 [Releases](../../releases) 下载 APK；
+2. 安装后打开肉包；
+3. 按引导开启无障碍；
+4. 需要 adb 能力时，在 Shizuku 中授权肉包；
+5. 设置里配置 API Key / 服务商 / 模型。
 
-- [Google Play](https://play.google.com/store/apps/details?id=moe.shizuku.privileged.api)
-- [GitHub Releases](https://github.com/RikkaApps/Shizuku/releases)
+### 权限建议
 
-**启动方式（二选一）：**
+| 场景 | 建议 |
+|---|---|
+| 只做 UI 自动化 | 无障碍 + basic |
+| 需要文件/系统命令 | 无障碍 + Shizuku ADB + standard |
+| 需要 root_shell | Shizuku Root 或 su + 高级模式 + advanced |
+| 没有无障碍但 Shizuku ADB 在 | 等级仍是 adb；shell 可用，UI 工具按 provider 实际能力降级 |
 
-**无线调试（推荐，需 Android 11+）**
-1. 进入 `设置 > 开发者选项 > 无线调试`
-2. 开启无线调试
-3. 在 Shizuku App 中选择"无线调试"方式启动
+### API Key
 
-**电脑 ADB**
-1. 手机连接电脑，开启 USB 调试
-2. 执行：`adb shell sh /storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh`
-
-#### 2. 安装肉包
-
-从 [Releases](../../releases) 页面下载最新 APK 安装。
-
-#### 3. 授权与配置
-
-1. 打开肉包 App
-2. 在 Shizuku 中授权肉包
-3. **⚠️ 重要：进入设置页面，配置你的 API Key**
-
-### 获取 API Key
-
-**阿里云通义千问（推荐国内用户）**
-1. 访问 [阿里云百炼平台](https://bailian.console.aliyun.com/)
-2. 开通 DashScope 服务
-3. 在 API-KEY 管理中创建密钥
-
-**OpenAI（需要代理）**
-1. 访问 [OpenAI Platform](https://platform.openai.com/)
-2. 创建 API Key
+- 阿里云百炼 / DashScope（国内推荐）
+- OpenAI / OpenRouter
+- 自定义 OpenAI 兼容端点（Ollama、vLLM 等）
 
 ---
 
-## 使用示例
+## Prompt 管理与自定义
 
-```
-帮我点个附近好吃的汉堡
-打开网易云音乐播放每日推荐
-帮我把最后一张照片发送到微博
-帮我在美团点一份猪脚饭
-打开B站看热门视频
-```
-
----
-
-## 技术架构
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                         肉包 App                              │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │                    UI 层 (Compose)                   │   │
-│   │          HomeScreen / Settings / History            │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                   Skills 层                          │   │
-│   │    SkillManager → 意图识别 → 快速路径/标准路径        │   │
-│   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ 点外卖 │ 导航 │ 打车 │ 发微信 │ AI画图 │ ... │  │   │
-│   │    └─────────────────────────────────────────────┘  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                   Tools 层                           │   │
-│   │    ToolManager → 原子能力封装                        │   │
-│   │    ┌─────────────────────────────────────────────┐  │   │
-│   │    │ search_apps │ open_app │ deep_link │ clipboard │  │
-│   │    │ shell │ http │ screenshot │ tap │ swipe │ type │  │
-│   │    └─────────────────────────────────────────────┘  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                  Agent 层                            │   │
-│   │    MobileAgent (移植自 MobileAgent-v3)               │   │
-│   │    ┌───────────┬───────────┬───────────┬──────────┐ │   │
-│   │    │  Manager  │ Executor  │ Reflector │ Notetaker│ │   │
-│   │    │  (规划)   │  (执行)   │  (反思)   │  (记录)  │ │   │
-│   │    └───────────┴───────────┴───────────┴──────────┘ │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-│   ┌────────────────────────▼────────────────────────────┐   │
-│   │                  VLM Client                          │   │
-│   │           Qwen-VL / GPT-4V / Claude                  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                 │
-├────────────────────────────┼────────────────────────────────┤
-│                            ▼                                 │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │                    Shizuku                           │   │
-│   │              System-level Control                    │   │
-│   │     screencap │ input tap │ input swipe │ am start  │   │
-│   └─────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### 工作流程
-
-```
-用户输入指令
-      │
-      ▼
-┌─────────────────┐
-│  Skills 匹配     │ ← 检查是否有对应的 Skill
-└─────────────────┘
-      │
-      ├── 高置信度 Delegation Skill ──▶ 直接 DeepLink 跳转 ──▶ 完成
-      │
-      ▼
-┌─────────────────┐
-│  标准 Agent 循环 │
-└─────────────────┘
-      │
-      ▼
-   ┌──────────────────────────────────────────────┐
-   │  1. 截图 - Shizuku screencap                 │
-   │  2. Manager 规划 - VLM 分析当前状态          │
-   │  3. Executor 决策 - 确定下一步操作           │
-   │  4. 执行动作 - tap/swipe/type/open_app       │
-   │  5. Reflector 反思 - 评估操作效果            │
-   │  6. 循环直到完成或安全限制                   │
-   └──────────────────────────────────────────────┘
-```
-
-### 项目结构
-
-```
-app/src/main/java/com/roubao/autopilot/
-├── agent/                    # AI Agent 核心 (移植自 MobileAgent-v3)
-│   ├── MobileAgent.kt        # Agent 主循环
-│   ├── Manager.kt            # 规划 Agent
-│   ├── Executor.kt           # 执行 Agent
-│   ├── ActionReflector.kt    # 反思 Agent
-│   ├── Notetaker.kt          # 笔记 Agent
-│   └── InfoPool.kt           # 状态池
-│
-├── tools/                    # Tools 层 - 原子能力
-│   ├── Tool.kt               # Tool 接口定义
-│   ├── ToolManager.kt        # 工具管理器
-│   ├── SearchAppsTool.kt     # 应用搜索
-│   ├── OpenAppTool.kt        # 打开应用
-│   ├── DeepLinkTool.kt       # DeepLink 跳转
-│   ├── ClipboardTool.kt      # 剪贴板操作
-│   ├── ShellTool.kt          # Shell 命令
-│   └── HttpTool.kt           # HTTP 请求
-│
-├── skills/                   # Skills 层 - 用户意图
-│   ├── Skill.kt              # Skill 接口定义
-│   ├── SkillRegistry.kt      # Skill 注册表
-│   └── SkillManager.kt       # Skill 管理器
-│
-├── controller/               # 设备控制
-│   ├── DeviceController.kt   # Shizuku 控制器
-│   └── AppScanner.kt         # 应用扫描 (拼音/语义搜索)
-│
-├── vlm/                      # VLM 客户端
-│   └── VLMClient.kt          # API 调用封装
-│
-├── ui/                       # 用户界面
-│   ├── screens/              # 各个页面
-│   ├── theme/                # 主题定义
-│   └── OverlayService.kt     # 悬浮窗服务
-│
-├── data/                     # 数据层
-│   └── SettingsManager.kt    # 设置管理
-│
-└── App.kt                    # Application 入口
-
-app/src/main/assets/
-└── skills.json               # Skills 配置文件
-```
+- 能力页 → Agent / Tool / Skill / 建议吐槽
+- 长按 Prompt 预览框编辑；支持恢复默认
+- 顶部 `⋮`：添加 Agent / Skill / Tool / 建议 / 吐槽、导入 JSON、导出 JSON
+- Prompt 编辑器：
+  - 动态占位符面板
+  - Agent 必需占位符检查
+  - Tool/Skill 首行格式检查
+- Agent 策略包：
+  - `basic`：仅无障碍 UI 策略
+  - `standard`：ADB/shell 优先策略
+  - `advanced`：Root 策略
+  - 运行时按权限自动选择；设置里的选择用于预览/编辑
 
 ---
 
-## 路线图
-
-### 已完成
-
-- [x] **原生 Android 实现** - Kotlin 重写 MobileAgent，摆脱 Python 依赖
-- [x] **Tools 层** - 原子能力封装（search_apps、deep_link、clipboard、shell、http 等）
-- [x] **Skills 层** - 用户意图映射，支持 Delegation 和 GUI 自动化两种模式
-- [x] **智能应用搜索** - 拼音、语义、分类多维度匹配
-- [x] **快速路径** - 高置信度 Skill 直接 DeepLink 跳转
-- [x] **统一 Prompt 编辑器** - 将 Prompt 持久化于 SQLite 数据库，支持 UI 预览、长按多行编辑器修改与恢复默认值，支持自定义添加与删除 Agent、Tool/Skill
-- [x] **无障碍服务与 UI 树感知** - 集成 `AccessibilityService`，实时 Dump UI 树节点，提取控件结构，大幅降低纯视觉误判
-- [x] **无障碍混合模式 (Index Mode + 坐标)** - 优先使用元素索引点击（不受屏幕变化与分辨率影响），索引失败时自动智能回退到坐标模式
-- [x] **定时提醒与任务调度** - 支持通过 `ReminderScheduler` 进行定时触发与提醒调度
-- [x] **专用 UI VLM 支持** - 增加对 GUIOwl、MAIUI 等专用 UI 模型的适配与 Client 调用支持
-
-### 🚀 规划与开发中
-
-- [ ] **宏脚本系统** - 录制、存储、回放操作序列
-  - 将执行过程录制为可重复播放的脚本
-  - 支持循环播放、延时控制
-  - 脚本管理界面（新增"脚本"导航页）
-
-- [ ] **设置增强**
-  - 无障碍服务开关与引导
-  - 混合模式状态展示
-
-### 近期计划
-
-- [ ] **MCP (Model Context Protocol)** - 接入更多能力扩展，如日历、邮件、文件管理等
-- [ ] **执行录屏** - 保存任务执行过程视频，方便回顾和调试
-- [ ] **更多 Skills** - 扩充内置 Skills，支持用户自定义
-
-### 中期计划
-
-- [ ] **更多设备支持** - 适配更多 Android 设备和定制系统（MIUI、ColorOS、HarmonyOS 等）
-- [ ] **本地模型** - 支持在设备端运行小型 VLM，实现离线使用
-- [ ] **任务模板** - 保存和分享常用任务
-
-### 长期愿景
-
-- [ ] **多应用协作** - 跨 App 联动完成复杂工作流
-- [ ] **智能学习** - 从用户操作习惯中学习，优化执行策略
-- [ ] **语音控制** - 语音唤醒和语音指令
-
----
-
-## 开发
-
-### 环境要求
-
-- Android Studio Hedgehog 或更高版本
-- JDK 17
-- Android SDK 34
-
-### 构建
+## 构建
 
 ```bash
-# 克隆仓库
-git clone https://github.com/yourusername/roubao.git
+git clone https://github.com/leoncoolmoon/roubao.git
 cd roubao
 
-# 构建 Debug 版本
+# Debug
 ./gradlew assembleDebug
 
-# 安装到设备
-./gradlew installDebug
+# Release（未签名）
+./gradlew assembleRelease
+
+# 本地签名示例
+zipalign -p -f 4 app-release-unsigned.apk app-release-aligned.apk
+apksigner sign --ks custom.keystore --ks-key-alias roubao_key \
+  --out roubao-signed.apk app-release-aligned.apk
 ```
+
+环境：JDK 17、Android SDK 34、Gradle 8.5。
+
+> 首次运行如果使用 Firebase Crashlytics，需要提供 `app/google-services.json`；没有真实配置时可关闭云端上报。
+
+---
+
+## 已知限制
+
+- `su-user`（`su 2000 -c`）provider 未实现：su-only 设备的 standard/adb shell 暂不可用。
+- `root_shell` 需要真机 root / Shizuku Root 验证；非 root 设备上不会出现。
+- MediaProjection 未接入；API <30 以 tree-only / shell 截图为主。
+- 宏脚本系统未实现。
+- `SkillManager.execute` 已接入主链：从 DB 的 `related_apps_json` 还原 Skill，Delegation 走 DeepLink，GUI 返回 ExecutionPlan；如果自定义 Skill 没有 `related_apps` / `type` / `deep_link` / `steps`，会回退到普通 Agent 循环。
+- `install_app` 是 prompt 规则，没有独立安装执行器。
+- 应用清单按需注入；安装/卸载后由缓存 TTL 和 `search_apps` 兜底，没有包变更广播即时刷新。
 
 ---
 
 ## 问题反馈
 
-遇到崩溃或 Bug？请通过以下方式反馈：
+请通过 [GitHub Issues](https://github.com/leoncoolmoon/roubao/issues) 反馈，附：
 
-### 导出日志
-
-1. 打开肉包 App → 设置
-2. 找到「反馈与调试」分组
-3. 点击「导出日志」
-4. 选择分享方式（微信、邮件等）发送给开发者
-
-### 日志包含的信息
-
-- 设备型号和 Android 版本
-- 应用版本号
-- 崩溃堆栈信息（如有）
-- 操作日志
-
-> 💡 日志文件不包含您的 API Key 或个人隐私信息
-
-### 提交 Issue
-
-请在 [GitHub Issues](https://github.com/Turbo1123/roubao/issues) 提交问题，附上：
 - 问题描述
 - 复现步骤
-- 导出的日志文件
+- 设备型号 / Android 版本 / App 版本
+- 设置 → 反馈与调试 → 导出日志
+
+日志不包含 API Key 或个人隐私。
 
 ---
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request！
-
 1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
+2. 创建特性分支
+3. 提交更改
+4. 推送分支
 5. 开启 Pull Request
 
 ---
 
 ## 许可证
 
-本项目基于 MIT 许可证开源。详见 [LICENSE](LICENSE) 文件。
+MIT License，详见 [LICENSE](LICENSE)。
 
 ---
 
 ## 致谢
 
-- [MobileAgent](https://github.com/X-PLUG/MobileAgent) - 阿里达摩院 X-PLUG 团队开源的移动端 Agent 框架，为本项目提供了重要的技术参考
-- [Shizuku](https://github.com/RikkaApps/Shizuku) - 优秀的 Android 权限管理框架
-
----
+- [MobileAgent](https://github.com/X-PLUG/MobileAgent) — 移动端 Agent 框架参考
+- [Shizuku](https://github.com/RikkaApps/Shizuku) — Android 权限管理框架
 
 <p align="center">
   Made with ❤️ by Roubao Team
 </p>
+
+
+

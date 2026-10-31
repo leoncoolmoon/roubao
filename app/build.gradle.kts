@@ -1,9 +1,16 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
 }
+
+// 编译时间戳：每次构建刷新，用于区分「同一版本号的第几次构建」
+val buildStamp: String = SimpleDateFormat("yyyyMMdd-HHmm").format(Date())
+val buildTimeReadable: String = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
 
 val cleanResDir = layout.buildDirectory.dir("clean-res")
 val copyCleanRes = tasks.register<Copy>("copyCleanRes") {
@@ -21,8 +28,12 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.4.4"
+        versionCode = 13
+        versionName = "1.4.7"
+
+        // 编译标记：设置页和任务日志都会显示，方便对应到某一版 APK
+        buildConfigField("String", "BUILD_STAMP", "\"$buildStamp\"")
+        buildConfigField("String", "BUILD_TIME", "\"$buildTimeReadable\"")
 
         vectorDrawables {
             useSupportLibrary = true
@@ -115,3 +126,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+
+

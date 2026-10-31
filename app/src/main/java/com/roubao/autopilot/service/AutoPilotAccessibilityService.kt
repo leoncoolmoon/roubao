@@ -42,6 +42,10 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
         println("[AccessibilityService] 无障碍服务已断开")
+        try {
+            com.roubao.autopilot.agent.AccessLevelManager.refresh(this)
+        } catch (_: Exception) {
+        }
         return super.onUnbind(intent)
     }
 
@@ -167,10 +171,12 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     /**
      * Dump 当前窗口所有可用的 UI 节点树结构信息
      */
-    fun dumpNodeTree(maxNodes: Int = 80): String {
+    fun dumpNodeTree(maxNodes: Int = 80, scale: Float = 1f): String {
         val root = rootInActiveWindow ?: return "UI 元素树为空 (未获取到 active window)"
-        val elements = mutableListOf<UIElementNode>()
-        collectNodes(root, elements, maxNodes)
+        // 收集比展示上限更多的节点，用于检测重复文本候选；展示仍只取前 maxNodes。
+        val allElements = mutableListOf<UIElementNode>()
+        collectNodes(root, allElements, maxOf(maxNodes, 300), scale)
+        val elements = allElements.take(maxNodes)
 
         if (elements.isEmpty()) {
             return "界面未提取到可见 UI 节点元素"
@@ -190,23 +196,85 @@ class AutoPilotAccessibilityService : AccessibilityService() {
                 if (node.isEditable) append("[可输入] ")
                 append("\n")
             }
+            append(duplicateTextCandidates(allElements))
         }
     }
 
     /**
-     * 提取当前界面中匹配查询条件的元素中心坐标（x, y）
-     * 查询匹配规则：不区分大小写匹配文本、描述、ID 或类名
+     * 同名/同描述候选集。模型在多个「确定」之间必须靠坐标选择，
+     * 不能依赖代码取第一个节点。
      */
-    fun findElementCoordinates(query: String): Pair<Int, Int>? {
-        if (query.isBlank()) return null
-        val root = rootInActiveWindow ?: return null
-        val matchedNode = findMatchingNode(root, query) ?: return null
+    private fun duplicateTextCandidates(
+        elements: List<UIElementNode>,
+        maxGroups: Int = 6,
+        maxPerGroup: Int = 4
+    ): String {
+        val groups = LinkedHashMap<String, MutableList<UIElementNode>>()
+        elements.forEach { node ->
+            val label = node.text.ifBlank { node.contentDescription }.trim()
+            if (label.isBlank()) return@forEach
+            val key = normalizeUiText(label)
+            if (key.isBlank()) return@forEach
+            groups.getOrPut(key) { mutableListOf() }.add(node)
+        }
 
-        val rect = Rect()
-        matchedNode.getBoundsInScreen(rect)
-        if (rect.isEmpty) return null
+        val duplicates = groups.values.filter { it.size > 1 }.take(maxGroups)
+        if (duplicates.isEmpty()) return ""
 
-        return Pair(rect.centerX(), rect.centerY())
+        return buildString {
+            append("\n### Duplicate Text Candidates (AUTHORITATIVE) ###\n")
+            duplicates.forEach { list ->
+                val label = list.first().text.ifBlank { list.first().contentDescription }
+                append("「").append(label).append("」出现 ").append(list.size).append(" 次：\n")
+                list.take(maxPerGroup).forEach { node ->
+                    append("- center=(").append(node.centerX).append(", ").append(node.centerY).append(")")
+                    append(" bounds=[").append(node.bounds.left).append(",").append(node.bounds.top)
+                    append(",").append(node.bounds.right).append(",").append(node.bounds.bottom).append("]")
+                    if (node.isClickable) append(" [clickable]")
+                    append('\n')
+                }
+                if (list.size > maxPerGroup) {
+                    append("- ... 还有 ").append(list.size - maxPerGroup).append(" 个\n")
+                }
+            }
+            append("Duplicated text: choose the intended occurrence by coordinate, ")
+            append("and put that occurrence's center in `coordinate`.\n")
+        }
+    }
+
+    private fun normalizeUiText(value: String): String =
+        value.trim().lowercase().replace(Regex("\\s+"), "")
+
+    /**
+     * 返回所有匹配的候选节点（exact 优先，其次 contains），而不是第一个。
+     */
+    fun findElementCandidates(query: String, limit: Int = 12): List<UIElementNode> {
+        if (query.isBlank()) return emptyList()
+        val root = rootInActiveWindow ?: return emptyList()
+        val all = mutableListOf<UIElementNode>()
+        collectNodes(root, all, 400)
+        val q = normalizeUiText(query)
+        if (q.isEmpty()) return emptyList()
+
+        val exact = all.filter { node ->
+            normalizeUiText(node.text) == q ||
+                normalizeUiText(node.contentDescription) == q ||
+                normalizeUiText(node.viewId) == q
+        }
+        val pool = if (exact.isNotEmpty()) {
+            exact
+        } else {
+            all.filter { node ->
+                (node.text.isNotEmpty() && normalizeUiText(node.text).contains(q)) ||
+                    (node.contentDescription.isNotEmpty() && normalizeUiText(node.contentDescription).contains(q)) ||
+                    (node.viewId.isNotEmpty() && normalizeUiText(node.viewId).contains(q))
+            }
+        }
+        return pool
+            .distinctBy {
+                "${it.bounds.left},${it.bounds.top},${it.bounds.right},${it.bounds.bottom}|${it.text}|${it.contentDescription}"
+            }
+            .take(limit)
     }
 
     /**
@@ -235,7 +303,36 @@ class AutoPilotAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 在焦点输入框里设置选区（start == end 就是移动光标）。
+     * 对当前焦点（或第一个）可编辑节点执行 ACTION_PASTE。
+     *
+     * 微信这类自绘输入框不响应 ACTION_SET_TEXT，但对 ACTION_PASTE 有效；
+     * 比 `input keyevent 279` 可靠（那种全局粘贴键在微信里经常没反应）。
+     */
+    fun pasteOnFocusedEditable(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val focused = try {
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        } catch (e: Exception) {
+            null
+        }
+        val target = if (focused?.isEditable == true) focused else findFirstEditable(root)
+        if (target == null) {
+            println("[AccessibilityService] paste: 找不到可编辑节点")
+            return false
+        }
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val ok = target.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (!ok) println("[AccessibilityService] paste: ACTION_PASTE 返回 false")
+            ok
+        } catch (e: Exception) {
+            println("[AccessibilityService] paste failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * 直接在输入框里设置选区（start == end 就是移动光标）。
      * 比长按拖拽/方向键更精确，适合“选中几个字/移动光标”。
      */
     fun setSelection(start: Int, end: Int): Boolean {
@@ -298,68 +395,76 @@ class AutoPilotAccessibilityService : AccessibilityService() {
      * 编号与 dumpNodeTree() 中的序号一致，每次动作前重新取树，避免使用过期节点。
      */
     fun clickByIndex(index: Int): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isClickable) {
-            node = node.parent
-        }
+        // 整段都要兜住：nodeByIndex 的树遍历、node.parent 上溯、performAction
+        // 都可能因为节点过期/窗口切换抛异常。之前只包了 performAction，
+        // 结果异常直接冒到任务协程，把整次执行打断（表现为“失败 + 0 步”）。
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isClickable) {
+                node = node.parent
+            }
             node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] clickByIndex failed: ${e.message}")
+            logNodeError("clickByIndex($index)", e)
             false
         }
     }
 
     fun longPressByIndex(index: Int): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isLongClickable) {
-            node = node.parent
-        }
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isLongClickable) {
+                node = node.parent
+            }
             node?.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] longPressByIndex failed: ${e.message}")
+            logNodeError("longPressByIndex($index)", e)
             false
         }
     }
 
     fun setTextByIndex(index: Int, text: String): Boolean {
-        val node = nodeByIndex(index) ?: return false
-        val target = if (node.isEditable) node else findEditableChild(node) ?: return false
         return try {
+            val node = nodeByIndex(index) ?: return false
+            val target = if (node.isEditable) node else findEditableChild(node) ?: return false
             target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
             val args = android.os.Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
             }
             target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         } catch (e: Exception) {
-            println("[AccessibilityService] setTextByIndex failed: ${e.message}")
+            logNodeError("setTextByIndex($index)", e)
             false
         }
     }
 
     fun scrollByIndex(index: Int, forward: Boolean): Boolean {
-        var node = nodeByIndex(index) ?: return false
-        while (node != null && !node.isScrollable) {
-            node = node.parent
-        }
         return try {
+            var node = nodeByIndex(index) ?: return false
+            while (node != null && !node.isScrollable) {
+                node = node.parent
+            }
             node?.performAction(
                 if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
                 else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
             ) == true
         } catch (e: Exception) {
-            println("[AccessibilityService] scrollByIndex failed: ${e.message}")
+            logNodeError("scrollByIndex($index)", e)
             false
         }
     }
 
     private fun nodeByIndex(index: Int): AccessibilityNodeInfo? {
         if (index <= 0) return null
-        val root = rootInActiveWindow ?: return null
-        val nodes = mutableListOf<AccessibilityNodeInfo>()
-        collectNodeRefs(root, nodes, 80)
-        return nodes.getOrNull(index - 1)
+        return try {
+            val root = rootInActiveWindow ?: return null
+            val nodes = mutableListOf<AccessibilityNodeInfo>()
+            collectNodeRefs(root, nodes, 80)
+            nodes.getOrNull(index - 1)
+        } catch (e: Exception) {
+            logNodeError("nodeByIndex($index)", e)
+            null
+        }
     }
 
     private fun collectNodeRefs(
@@ -368,23 +473,34 @@ class AutoPilotAccessibilityService : AccessibilityService() {
         maxNodes: Int
     ) {
         if (node == null || list.size >= maxNodes) return
-        if (node.isVisibleToUser) {
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            val text = node.text?.toString()?.trim() ?: ""
-            val desc = node.contentDescription?.toString()?.trim() ?: ""
-            val id = node.viewIdResourceName?.toString() ?: ""
-            if (!rect.isEmpty &&
-                (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() ||
-                    node.isClickable || node.isEditable)
-            ) {
-                list.add(node)
+        try {
+            if (node.isVisibleToUser) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                val text = node.text?.toString()?.trim() ?: ""
+                val desc = node.contentDescription?.toString()?.trim() ?: ""
+                val id = node.viewIdResourceName?.toString() ?: ""
+                if (!rect.isEmpty &&
+                    (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() ||
+                        node.isClickable || node.isEditable)
+                ) {
+                    list.add(node)
+                }
             }
+            for (i in 0 until node.childCount) {
+                if (list.size >= maxNodes) break
+                collectNodeRefs(node.getChild(i), list, maxNodes)
+            }
+        } catch (e: Exception) {
+            // 单个节点失效不应该让整棵树的遍历失败
+            logNodeError("collectNodeRefs", e)
         }
-        for (i in 0 until node.childCount) {
-            if (list.size >= maxNodes) break
-            collectNodeRefs(node.getChild(i), list, maxNodes)
-        }
+    }
+
+    /** 无障碍节点操作统一兜底：打印完整堆栈，方便在任务日志里定位。 */
+    private fun logNodeError(where: String, e: Throwable) {
+        println("[AccessibilityService] $where failed: ${e.javaClass.simpleName}: ${e.message}")
+        e.printStackTrace()
     }
 
     private fun findEditableChild(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -414,40 +530,55 @@ class AutoPilotAccessibilityService : AccessibilityService() {
      * @return 操作是否成功触发
      */
     fun performActionByAttribute(query: String, textToType: String? = null): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val targetNode = findMatchingNode(root, query) ?: return false
+        return try {
+            val root = rootInActiveWindow ?: return false
+            val targetNode = findMatchingNode(root, query) ?: return false
 
-        if (!textToType.isNullOrEmpty() && targetNode.isEditable) {
-            // 设置文本盲操
-            val args = android.os.Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
+            if (!textToType.isNullOrEmpty() && targetNode.isEditable) {
+                // 设置文本盲操
+                val args = android.os.Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, textToType)
+                }
+                val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                if (success) return true
             }
-            val success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-            if (success) return true
-        }
 
-        // 尝试触发点击盲操（若节点不可点击，向父节点查找可点击节点）
-        var clickableNode: AccessibilityNodeInfo? = targetNode
-        while (clickableNode != null && !clickableNode.isClickable) {
-            clickableNode = clickableNode.parent
-        }
+            // 尝试触发点击盲操（若节点不可点击，向父节点查找可点击节点）
+            var clickableNode: AccessibilityNodeInfo? = targetNode
+            while (clickableNode != null && !clickableNode.isClickable) {
+                clickableNode = clickableNode.parent
+            }
 
-        if (clickableNode != null && clickableNode.isClickable) {
-            return clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            clickableNode?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        } catch (e: Exception) {
+            logNodeError("performActionByAttribute($query)", e)
+            false
         }
-
-        return false
     }
 
     /**
      * 递归收集可用 UI 节点
      */
-    private fun collectNodes(node: AccessibilityNodeInfo?, list: MutableList<UIElementNode>, maxNodes: Int) {
+    private fun collectNodes(
+        node: AccessibilityNodeInfo?,
+        list: MutableList<UIElementNode>,
+        maxNodes: Int,
+        scale: Float = 1f
+    ) {
         if (node == null || list.size >= maxNodes) return
 
         if (node.isVisibleToUser) {
             val rect = Rect()
             node.getBoundsInScreen(rect)
+            // 截图被缩小后，坐标也要按同一比例缩放，保证「UI 树坐标 == 截图坐标」
+            if (scale != 1f) {
+                rect.set(
+                    (rect.left * scale).toInt(),
+                    (rect.top * scale).toInt(),
+                    (rect.right * scale).toInt(),
+                    (rect.bottom * scale).toInt()
+                )
+            }
 
             val text = node.text?.toString()?.trim() ?: ""
             val desc = node.contentDescription?.toString()?.trim() ?: ""
@@ -473,7 +604,7 @@ class AutoPilotAccessibilityService : AccessibilityService() {
 
         for (i in 0 until node.childCount) {
             if (list.size >= maxNodes) break
-            collectNodes(node.getChild(i), list, maxNodes)
+            collectNodes(node.getChild(i), list, maxNodes, scale)
         }
     }
 

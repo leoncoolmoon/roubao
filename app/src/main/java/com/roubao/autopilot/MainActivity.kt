@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -67,6 +68,7 @@ class MainActivity : ComponentActivity() {
 
     // 当前执行的协程 Job（用于停止任务）
     private var currentExecutionJob: kotlinx.coroutines.Job? = null
+    private var activeWakeLock: PowerManager.WakeLock? = null
 
     // 执行记录列表
     private val executionRecords = mutableStateOf<List<ExecutionRecord>>(emptyList())
@@ -77,6 +79,9 @@ class MainActivity : ComponentActivity() {
     // 定时任务通知点开后预填的 prompt
     private val scheduledPrompt = mutableStateOf<String?>(null)
     private val scheduledAutoRun = mutableStateOf(false)
+
+    // 悬浮窗输入的新任务：不依赖当前页面/Compose 的 HomeScreen，直接交给 runAgent
+    private val pendingOverlayCommand = mutableStateOf<String?>(null)
 
     // 当前执行的记录 ID（用于停止后跳转）
     private val currentRecordId = mutableStateOf<String?>(null)
@@ -98,6 +103,7 @@ class MainActivity : ComponentActivity() {
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
         Log.d(TAG, "Shizuku binder dead")
         shizukuAvailable.value = false
+        AccessLevelManager.refresh(this)
     }
 
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
@@ -111,8 +117,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
-        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        // 重新打开 App：清掉上次「退出应用」留下的屏蔽标记
+        OverlayService.resetShutdownFlag()
+        readScheduledIntent(intent)
         applyOverlayIntent(intent)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -175,6 +182,8 @@ class MainActivity : ComponentActivity() {
                 if (!settings.hasSeenOnboarding) {
                     OnboardingScreen(
                         onComplete = {
+                            // 引导去开无障碍时，设置里的无障碍模式默认就是开的。
+                            settingsManager.updateAccessibilityModeEnabled(true)
                             settingsManager.setOnboardingSeen()
                         }
                     )
@@ -195,6 +204,22 @@ class MainActivity : ComponentActivity() {
 
         val settings by settingsManager.settings.collectAsState()
         val colors = BaoziTheme.colors
+
+        LaunchedEffect(pendingOverlayCommand.value) {
+            val command = pendingOverlayCommand.value ?: return@LaunchedEffect
+            pendingOverlayCommand.value = null
+            currentScreen = Screen.Home
+            runAgent(
+                instruction = command,
+                apiKey = settings.apiKey,
+                baseUrl = settings.baseUrl,
+                model = settings.model,
+                maxSteps = settings.maxSteps,
+                isGUIAgent = settings.currentProvider.isGUIAgent,
+                providerId = settings.currentProviderId,
+                source = "overlay"
+            )
+        }
         val agent = mobileAgent.value
         val agentState by agent?.state?.collectAsState() ?: remember { mutableStateOf(null) }
         var pausedModelApplied by remember { mutableStateOf<String?>(null) }
@@ -325,8 +350,25 @@ class MainActivity : ComponentActivity() {
                                             model = settings.model,
                                             maxSteps = settings.maxSteps,
                                             isGUIAgent = settings.currentProvider.isGUIAgent,
-                                            providerId = settings.currentProviderId
+                                            providerId = settings.currentProviderId,
+                                            source = "home"
                                         )
+                                    },
+                                    onScheduledExecute = { instruction ->
+                                        runAgent(
+                                            instruction = instruction,
+                                            apiKey = settings.apiKey,
+                                            baseUrl = settings.baseUrl,
+                                            model = settings.model,
+                                            maxSteps = settings.maxSteps,
+                                            isGUIAgent = settings.currentProvider.isGUIAgent,
+                                            providerId = settings.currentProviderId,
+                                            source = "scheduled"
+                                        )
+                                    },
+                                    onInitialConsumed = {
+                                        scheduledPrompt.value = null
+                                        scheduledAutoRun.value = false
                                     },
                                     onStop = {
                                         mobileAgent.value?.stop()
@@ -356,14 +398,47 @@ class MainActivity : ComponentActivity() {
                                 onUpdateCachedModels = { settingsManager.updateCachedModels(it) },
                                 onUpdateThemeMode = { settingsManager.updateThemeMode(it) },
                                 onUpdateMaxSteps = { settingsManager.updateMaxSteps(it) },
+                                onUpdateOverlayScale = {
+                                    settingsManager.updateOverlayScale(it)
+                                    OverlayService.setScale(it)
+                                },
+                                onUpdateScreenshotMaxWidth = { px ->
+                                    settingsManager.updateScreenshotMaxWidth(px)
+                                },
+                                onUpdateDebugEnabled = { enabled ->
+                                    settingsManager.updateDebugEnabled(enabled)
+                                },
                                 onUpdateCloudCrashReport = { enabled ->
                                     settingsManager.updateCloudCrashReportEnabled(enabled)
                                     App.getInstance().updateCloudCrashReportEnabled(enabled)
                                 },
-                                onUpdateRootModeEnabled = { settingsManager.updateRootModeEnabled(it) },
+                                onUpdateRootModeEnabled = { enabled ->
+                                    settingsManager.updateRootModeEnabled(enabled)
+                                    // 高级模式开关与 Root 权限开关保持同步，等级才会真的切到 advanced
+                                    settingsManager.updateAdvancedModeEnabled(enabled)
+                                    if (enabled) {
+                                        AccessLevelManager.ensureRoot(this@MainActivity)
+                                    } else {
+                                        AccessLevelManager.invalidateSuCache()
+                                        AccessLevelManager.refresh(this@MainActivity)
+                                    }
+                                },
                                 onUpdateSuCommandEnabled = { settingsManager.updateSuCommandEnabled(it) },
-                                onUpdateAccessibilityModeEnabled = { settingsManager.updateAccessibilityModeEnabled(it) },
+                                onUpdateShizukuModeEnabled = { enabled ->
+                                    settingsManager.updateShizukuModeEnabled(enabled)
+                                    AccessLevelManager.invalidateSuCache()
+                                    AccessLevelManager.refresh(this@MainActivity)
+                                    refreshShizukuStatus()
+                                },
+                                onUpdateFileAccessRoot = { path ->
+                                    settingsManager.updateFileAccessRoot(path)
+                                },
+                                onUpdateAccessibilityModeEnabled = {
+                                    settingsManager.updateAccessibilityModeEnabled(it)
+                                    AccessLevelManager.refresh(this@MainActivity)
+                                },
                                 onUpdatePromptPackMode = { settingsManager.updatePromptPackMode(it) },
+                                onUpdateRootShellConfirmMode = { settingsManager.updateRootShellConfirmMode(it) },
                                 onUpdateAdvancedModeEnabled = { enabled ->
                                     settingsManager.updateAdvancedModeEnabled(enabled)
                                     if (enabled) {
@@ -375,6 +450,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onRefreshShizuku = { refreshShizukuStatus() },
                                 onSelectProvider = { settingsManager.selectProvider(it) },
+                                onExitApp = { exitApp() },
                                 shizukuAvailable = isShizukuAvailable,
                                 shizukuPrivilegeLevel = if (isShizukuAvailable) {
                                     when (deviceController.getShizukuPrivilegeLevel()) {
@@ -415,11 +491,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun acquireTaskWakeLock(): PowerManager.WakeLock? {
+        return try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            val lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "roubao:task")
+            lock.setReferenceCounted(false)
+            lock.acquire(30 * 60 * 1000L)
+            activeWakeLock = lock
+            Log.d(TAG, "task wake lock acquired")
+            lock
+        } catch (e: Exception) {
+            Log.e(TAG, "acquire wake lock failed", e)
+            null
+        }
+    }
+
+    private fun releaseTaskWakeLock(lock: PowerManager.WakeLock?) {
+        try {
+            if (lock?.isHeld == true) lock.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "release wake lock failed", e)
+        }
+        if (activeWakeLock === lock) activeWakeLock = null
+    }
+
     override fun onDestroy() {
         // 用户退出/划掉 App：取消任务并收起悬浮窗，避免残留“执行中”。
         if (isFinishing) {
             currentExecutionJob?.cancel()
             mobileAgent.value?.stop()
+            releaseTaskWakeLock(activeWakeLock)
             OverlayService.idle(this)
             isExecuting.value = false
         }
@@ -476,6 +577,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 彻底退出：停任务 → 停悬浮窗前台服务 → 关掉所有 Activity。
+     * 部分 ROM（如 moto / Android 15）上返回键只会把任务退到后台，这里给一个明确出口。
+     */
+    private fun exitApp() {
+        try {
+            currentExecutionJob?.cancel()
+            currentExecutionJob = null
+            mobileAgent.value?.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "exitApp: stop agent failed: ${e.message}")
+        }
+        try {
+            // 不要用 idle()：它会把悬浮窗重新拉起来（肉包图标）
+            OverlayService.shutdown(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "exitApp: stop overlay failed: ${e.message}")
+        }
+        finishAffinity()
+    }
+
     private fun refreshShizukuStatus() {
         Log.d(TAG, "refreshShizukuStatus called by user")
         Toast.makeText(this, "正在检查 Shizuku 状态...", Toast.LENGTH_SHORT).show()
@@ -522,12 +644,14 @@ class MainActivity : ComponentActivity() {
         model: String,
         maxSteps: Int,
         isGUIAgent: Boolean = false,
-        providerId: String = ""
+        providerId: String = "",
+        source: String = "home"
     ) {
         if (instruction.isBlank()) {
             Toast.makeText(this, "请输入指令", Toast.LENGTH_SHORT).show()
             return
         }
+        Log.i(TAG, "runAgent source=$source instruction=${instruction.take(80)}")
         // MAI-UI 本地部署不需要 API Key
         val requiresApiKey = providerId != "mai_ui"
         if (requiresApiKey && apiKey.isBlank()) {
@@ -614,13 +738,16 @@ class MainActivity : ComponentActivity() {
         // 取消之前的任务（如果有）
         currentExecutionJob?.cancel()
 
+        // 执行期间持有 partial wake lock，避免灭屏后 CPU/网络被挂起。
+        val taskWakeLock = acquireTaskWakeLock()
+
         currentExecutionJob = lifecycleScope.launch {
             // 保存初始记录
             executionRepository.saveRecord(record)
             executionRecords.value = executionRepository.getAllRecords()
 
             try {
-                val result = mobileAgent.value!!.runInstruction(instruction, maxSteps)
+                val result = mobileAgent.value!!.runInstruction(instruction, maxSteps, source = source)
 
                 // 更新记录状态
                 val agentState = mobileAgent.value?.state?.value
@@ -674,12 +801,21 @@ class MainActivity : ComponentActivity() {
                     shouldNavigateToRecord.value = true
                 }
             } catch (e: Exception) {
-                // 更新失败记录
+                // 更新失败记录：steps 必须一起保存，否则记录会显示“0 步/暂无执行步骤”，
+                // 看起来像进程被杀；异常堆栈也要落到日志里，后台 Toast 会被系统丢掉。
+                val agentState = mobileAgent.value?.state?.value
+                val steps = agentState?.executionSteps ?: emptyList()
                 val currentLogs = mobileAgent.value?.logs?.value ?: emptyList()
+                val trace = e.stackTraceToString()
+                android.util.Log.e(TAG, "runAgent failed", e)
                 val updatedRecord = record.copy(
                     endTime = System.currentTimeMillis(),
                     status = ExecutionStatus.FAILED,
-                    logs = currentLogs,
+                    steps = steps,
+                    logs = currentLogs + listOf(
+                        "❌ 执行异常: ${e.javaClass.simpleName}: ${e.message}",
+                        trace
+                    ),
                     resultMessage = "错误: ${e.message}"
                 )
                 executionRepository.saveRecord(updatedRecord)
@@ -693,6 +829,8 @@ class MainActivity : ComponentActivity() {
                 // 延迟3秒后清空日志，恢复默认状态
                 kotlinx.coroutines.delay(3000)
                 mobileAgent.value?.clearLogs()
+            } finally {
+                releaseTaskWakeLock(taskWakeLock)
             }
         }
     }
@@ -716,22 +854,35 @@ class MainActivity : ComponentActivity() {
         return if (instruction.length > 10) instruction.take(10) + "..." else instruction
     }
 
+    /**
+     * 读取定时任务 Intent 后立即移除 extras。
+     * 这样 Activity 被系统重建/从最近任务恢复时，不会再拿同一条旧 prompt 自动执行一次。
+     */
+    private fun readScheduledIntent(intent: Intent?) {
+        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
+        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        intent?.removeExtra(EXTRA_SCHEDULED_PROMPT)
+        intent?.removeExtra(EXTRA_SCHEDULED_AUTO_RUN)
+    }
+
     private fun applyOverlayIntent(intent: Intent?) {
         val command = intent?.getStringExtra("overlay_prompt") ?: return
         if (command.isBlank()) return
+        val hideAfterStart = intent.getBooleanExtra("hide_after_start", false)
         intent.removeExtra("overlay_prompt")
-        scheduledPrompt.value = command
-        scheduledAutoRun.value = true
-        if (intent.getBooleanExtra("hide_after_start", false)) {
-            window.decorView.postDelayed({ moveTaskToBack(true) }, 1200)
+        intent.removeExtra("hide_after_start")
+        // 不经过 HomeScreen 的 initialAutoRun，避免当前不在首页时丢任务。
+        pendingOverlayCommand.value = command
+        if (hideAfterStart) {
+            // 任务记录已经创建后再退到后台；给 runAgent 留出启动时间。
+            window.decorView.postDelayed({ moveTaskToBack(true) }, 3000)
         }
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        scheduledPrompt.value = intent?.getStringExtra(EXTRA_SCHEDULED_PROMPT)
-        scheduledAutoRun.value = intent?.getBooleanExtra(EXTRA_SCHEDULED_AUTO_RUN, false) == true
+        readScheduledIntent(intent)
         applyOverlayIntent(intent)
     }
 

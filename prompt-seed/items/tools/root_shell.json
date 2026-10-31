@@ -1,0 +1,20 @@
+﻿{
+  "id": "root_shell",
+  "kind": "tool",
+  "name": "root_shell",
+  "display_name": "Root Shell",
+  "description": "以 root 执行 shell 命令（需要 su / Shizuku Root）",
+  "prompt": "工具: root_shell\n说明: 以 root 执行 shell 命令（需要 su 或 Shizuku Root，仅高级模式）。高风险命令先只读确认。\n参数:\n  - command: string (必填) - 要执行的 root Shell 命令",
+  "usage": "",
+  "dependence": [
+    "root"
+  ],
+  "risk_level": "high",
+  "requires_confirmation": 1,
+  "executable": 1,
+  "params": [],
+  "keywords": [],
+  "related_apps": [],
+  "prompt_hint": "",
+  "domain": "系统"
+}

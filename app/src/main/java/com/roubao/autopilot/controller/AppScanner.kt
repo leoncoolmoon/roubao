@@ -21,6 +21,43 @@ class AppScanner(private val context: Context) {
         private var cachedApps: List<AppInfo>? = null
         private var lastRefreshAt: Long = 0L
 
+        /** 分词匹配时忽略的通用词，避免 "WeChat app" 里的 app 把结果全过滤掉。 */
+        private val TOKEN_STOPWORDS = setOf(
+            "app", "apps", "apk", "the", "a", "an", "应用", "软件"
+        )
+
+        /**
+         * 包名 -> 别名（英文名 / 俗称）。
+         * 微信包名是 com.tencent.mm，模型用 "WeChat" 搜索时包名里根本没有这个词，
+         * 只能靠这张表命中。
+         */
+        private val PACKAGE_ALIASES: Map<String, List<String>> = mapOf(
+            "com.tencent.mm" to listOf("wechat", "weixin", "微信"),
+            "com.tencent.mobileqq" to listOf("qq", "腾讯qq", "qq app"),
+            "com.tencent.wework" to listOf("wework", "企业微信"),
+            "com.eg.android.alipaygphone" to listOf("alipay", "支付宝"),
+            "com.taobao.taobao" to listOf("taobao", "淘宝"),
+            "com.jingdong.app.mall" to listOf("jd", "jd.com", "京东"),
+            "com.xingin.xhs" to listOf("xiaohongshu", "redbook", "小红书"),
+            "com.ss.android.ugc.aweme" to listOf("douyin", "tiktok", "抖音"),
+            "tv.danmaku.bili" to listOf("bilibili", "b站", "哔哩哔哩"),
+            "com.google.android.apps.maps" to listOf("google maps", "maps", "谷歌地图", "地图"),
+            "com.google.android.youtube" to listOf("youtube", "油管"),
+            "com.android.chrome" to listOf("chrome", "谷歌浏览器"),
+            "com.google.android.gm" to listOf("gmail", "谷歌邮箱"),
+            "com.autonavi.minimap" to listOf("amap", "高德地图", "高德"),
+            "com.baidu.BaiduMap" to listOf("baidu maps", "百度地图"),
+            "com.sdu.didi.psnger" to listOf("didi", "滴滴"),
+            "com.sankuai.meituan" to listOf("meituan", "美团"),
+            "com.netease.cloudmusic" to listOf("netease music", "网易云音乐"),
+            "com.spotify.music" to listOf("spotify"),
+            "com.whatsapp" to listOf("whatsapp"),
+            "org.telegram.messenger" to listOf("telegram", "tg"),
+            "com.instagram.android" to listOf("instagram", "ins"),
+            "com.ubercab" to listOf("uber", "优步"),
+            "com.alibaba.android.rimet" to listOf("dingtalk", "钉钉")
+        )
+
         // 预编译的正则表达式（避免重复创建）
         private val PINYIN_CLEAN_REGEX = Regex("[^a-z0-9\\u4e00-\\u9fa5]")
 
@@ -247,6 +284,11 @@ class AppScanner(private val context: Context) {
     fun searchApps(query: String, topK: Int = 5, includeSystem: Boolean = true): List<SearchResult> {
         val apps = getApps()
         val lowerQuery = query.lowercase().trim()
+        // 按非字母数字切词："Google Maps" -> [google, maps]，中文整体算一个词。
+        // 过滤 "app/应用" 这类通用词，否则 "WeChat app" 会因为 "app" 命中失败而搜不到微信。
+        val queryTokens = lowerQuery.split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.length >= 2 && it !in TOKEN_STOPWORDS }
+            .ifEmpty { listOf(lowerQuery) }
         val results = mutableListOf<SearchResult>()
 
         // 先检查是否是语义查询，转换为分类
@@ -259,10 +301,29 @@ class AppScanner(private val context: Context) {
             var score = 0f
             var matchType = ""
 
+            // 别名表：很多应用的包名看不出品牌（微信 = com.tencent.mm），
+            // 模型用英文名搜索时只能靠别名命中。
+            val aliases = PACKAGE_ALIASES[app.packageName].orEmpty()
+            val searchable = (
+                app.appName + " " + app.pinyin + " " +
+                    app.packageName + " " +
+                    app.keywords.joinToString(" ") + " " +
+                    aliases.joinToString(" ")
+                ).lowercase()
+            val allTokensHit = queryTokens.isNotEmpty() && queryTokens.all { token ->
+                searchable.contains(token) || aliases.any { it.contains(token) }
+            }
+            val aliasExact = aliases.any { it.equals(lowerQuery, ignoreCase = true) }
+
             // 1. 精确匹配应用名 (最高优先级)
             if (app.appName.equals(query, ignoreCase = true)) {
                 score = 1.0f
                 matchType = "exact"
+            }
+            // 2. 别名精确匹配（wechat -> 微信）
+            else if (aliasExact) {
+                score = 0.97f
+                matchType = "alias"
             }
             // 2. 拼音映射精确匹配
             else if (pinyinMapped != null && app.appName.contains(pinyinMapped)) {
@@ -274,22 +335,27 @@ class AppScanner(private val context: Context) {
                 score = 0.9f
                 matchType = "contains"
             }
-            // 4. 拼音包含
+            // 4. 分词全命中（跨语言最常见：英文查询命中中文应用名）
+            else if (allTokensHit) {
+                score = 0.85f
+                matchType = "tokens"
+            }
+            // 5. 拼音包含
             else if (app.pinyin.contains(lowerQuery)) {
                 score = 0.8f
                 matchType = "pinyin"
             }
-            // 5. 关键词匹配
-            else if (app.keywords.any { it.contains(lowerQuery) || lowerQuery.contains(it) }) {
+            // 6. 关键词包含查询词（只做正向包含，反向会把 "google" 类关键词扩散到所有 Google 应用）
+            else if (app.keywords.any { it.length >= 2 && it.contains(lowerQuery) }) {
                 score = 0.7f
                 matchType = "keyword"
             }
-            // 6. 分类匹配（语义查询）
+            // 7. 分类匹配（语义查询）
             else if (semanticCategory != null && app.category == semanticCategory) {
                 score = 0.6f
                 matchType = "semantic"
             }
-            // 7. 包名包含
+            // 8. 包名包含
             else if (app.packageName.lowercase().contains(lowerQuery)) {
                 score = 0.5f
                 matchType = "package"

@@ -18,11 +18,17 @@ class ActionReflector {
             PromptRepository.DEFAULT_REFLECTOR_PROMPT
         }
 
+        val summaryWithTarget = if (infoPool.lastClickTarget.isNotBlank()) {
+            "${infoPool.lastSummary}\nClicked target: ${infoPool.lastClickTarget}"
+        } else {
+            infoPool.lastSummary
+        }
+
         return rawPrompt
             .replace("{{instruction}}", infoPool.instruction)
             .replace("{{completedPlan}}", infoPool.completedPlan.ifEmpty { "No progress yet." })
             .replace("{{lastAction}}", infoPool.lastAction?.toString() ?: "")
-            .replace("{{lastSummary}}", infoPool.lastSummary)
+            .replace("{{lastSummary}}", summaryWithTarget)
     }
 
     /**

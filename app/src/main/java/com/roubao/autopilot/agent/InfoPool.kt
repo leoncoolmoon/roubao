@@ -36,6 +36,9 @@ data class InfoPool(
     // 屏幕尺寸
     var screenWidth: Int = 1080,
     var screenHeight: Int = 2400,
+    // 模型看到的截图尺寸（可能因无障碍截图/缩放与 tap 的 display 尺寸不同）
+    var imageWidth: Int = 0,
+    var imageHeight: Int = 0,
 
     // 额外知识
     var additionalKnowledge: String = "",
@@ -48,8 +51,12 @@ data class InfoPool(
     var selectedSkillId: String = "",
     // 选中 Skill 的完整执行上下文，只给 Executor
     var activeSkillContext: String = "",
+    // 本次任务是否已经尝试过 Skill 快速路径（DeepLink / ExecutionPlan）
+    var skillFastPathDone: Boolean = false,
     // 最近一次工具执行结果（如 shell 输出）
     var lastToolResult: String = "",
+    // 最近一次点击选中的 UI 候选（用于 Reflector 验证）
+    var lastClickTarget: String = "",
     // 是否向模型发送截图；UI 树足够时可由模型关闭
     var visionEnabled: Boolean = true,
     // ask_user 的用户补充内容
@@ -64,16 +71,15 @@ data class InfoPool(
     // 无障碍 UI 元素树信息
     var accessibilityTree: String = "",
 
-    // 本次任务快照的提示词包与访问等级
+    // 本次任务快照的 Agent 策略包与访问等级
     var packId: String = "standard",
-    var packLevel: String = "adb",
     var accessLevel: String = "user"
 ) {
-    /** pack 是上限：basic 包在 adb 环境下也只能用 user 级工具。 */
-    fun effectiveLevel(): AccessLevel = AccessLevel.cap(
-        AccessLevel.fromId(accessLevel),
-        AccessLevel.fromId(packLevel)
-    )
+    /**
+     * 工具/Skill 只看系统权限等级。
+     * pack 只决定 Agent prompt（Manager/Executor/Reflector/Notetaker），不限制 tool/skill。
+     */
+    fun effectiveLevel(): AccessLevel = AccessLevel.fromId(accessLevel)
 }
 
 /**
@@ -107,7 +113,10 @@ data class Action(
     val start: Int? = null,          // set_selection 起始字符下标
     val end: Int? = null,            // set_selection 结束字符下标
     val command: String? = null,     // shell 动作的命令
-    val enabled: Boolean? = null     // set_screenshot 开关
+    val enabled: Boolean? = null,    // set_screenshot 开关
+    val op: String? = null,          // file 动作：list/read/mkdir/copy/move/delete/write
+    val path: String? = null,        // file 动作：目标路径（相对授权目录或绝对）
+    val dest: String? = null         // file 动作：copy/move 的目标路径
 ) {
     companion object {
         private const val SCALE_FACTOR = 999  // MAI-UI 坐标缩放因子
@@ -140,12 +149,19 @@ data class Action(
                 val obj = JSONObject(json)
                 val type = obj.optString("action", "")
 
+                // 模型经常把 swipe 的起终点写成 start/end 数组；这里兼容成坐标，
+                // 避免 optInt 把数组读成 0 导致 (0,0)->(0,0) 的空滑动。
+                val coord = obj.optJSONArray("coordinate")
+                val coord2 = obj.optJSONArray("coordinate2")
+                val startArr = obj.optJSONArray("start")
+                val endArr = obj.optJSONArray("end")
+
                 Action(
                     type = type,
-                    x = obj.optJSONArray("coordinate")?.optInt(0),
-                    y = obj.optJSONArray("coordinate")?.optInt(1),
-                    x2 = obj.optJSONArray("coordinate2")?.optInt(0),
-                    y2 = obj.optJSONArray("coordinate2")?.optInt(1),
+                    x = coord?.optInt(0) ?: startArr?.optInt(0),
+                    y = coord?.optInt(1) ?: startArr?.optInt(1),
+                    x2 = coord2?.optInt(0) ?: endArr?.optInt(0),
+                    y2 = coord2?.optInt(1) ?: endArr?.optInt(1),
                     index = if (obj.has("index")) obj.optInt("index") else null,
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
@@ -155,10 +171,13 @@ data class Action(
                     direction = obj.optString("direction", null),
                     status = obj.optString("status", null),
                     key = obj.optString("key", null),
-                    start = if (obj.has("start")) obj.optInt("start") else null,
-                    end = if (obj.has("end")) obj.optInt("end") else null,
+                    start = if (obj.has("start") && startArr == null) obj.optInt("start") else null,
+                    end = if (obj.has("end") && endArr == null) obj.optInt("end") else null,
                     command = obj.optString("command", null),
-                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null
+                    enabled = if (obj.has("enabled")) obj.optBoolean("enabled") else null,
+                    op = obj.optString("op", null),
+                    path = obj.optString("path", null),
+                    dest = obj.optString("dest", null)
                 )
             } catch (e: Exception) {
                 null
@@ -261,6 +280,9 @@ data class Action(
         start?.let { obj.put("start", it) }
         end?.let { obj.put("end", it) }
         command?.let { obj.put("command", it) }
+        op?.let { obj.put("op", it) }
+        path?.let { obj.put("path", it) }
+        dest?.let { obj.put("dest", it) }
         if (needConfirm) obj.put("need_confirm", true)
 
         return obj.toString()

@@ -81,6 +81,8 @@ fun CapabilitiesScreen() {
     var refreshTrigger by remember { mutableStateOf(0) }
 
     var agentsList by remember { mutableStateOf<List<AgentPromptEntity>>(emptyList()) }
+    var packLevel by remember { mutableStateOf(0) }
+    var customizedAgentIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var toolSkillList by remember { mutableStateOf<List<ToolSkillPromptEntity>>(emptyList()) }
     var feedbackList by remember { mutableStateOf<List<UserFeedbackEntity>>(emptyList()) }
 
@@ -190,9 +192,14 @@ fun CapabilitiesScreen() {
     }
 
     LaunchedEffect(refreshTrigger, activePackId) {
-        agentsList = repository.getAllAgentPrompts().map { base ->
+        val bases = repository.getAllAgentPrompts()
+        agentsList = bases.map { base ->
             repository.getAgentPromptForEditing(base.id, activePackId) ?: base
         }
+        packLevel = AccessLevel.fromId(repository.getPack(activePackId)?.level ?: "user").rank
+        customizedAgentIds = bases.map { it.id }
+            .filter { repository.isAgentCustomizedForPack(it, activePackId) }
+            .toSet()
         toolSkillList = repository.getAllToolSkillPrompts()
         feedbackList = repository.getAllFeedback()
     }
@@ -268,7 +275,8 @@ fun CapabilitiesScreen() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            // 标题列必须让出 48dp 给右侧菜单按钮：否则副标题变长后会把 ⋮ 挤成 0 宽（看不见但可点）
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "能力与 Prompt 管理",
                     fontSize = 24.sp,
@@ -276,9 +284,12 @@ fun CapabilitiesScreen() {
                     color = colors.primary
                 )
                 Text(
-                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前等级可用 ${availableToolSkillCount}）· 等级 ${currentLevel.label} · 包 $activePackId",
+                    text = "${agentsList.size} 个 Agent，${toolSkillList.size} 个 Tool/Skill（当前权限可用 ${availableToolSkillCount}）· " +
+                        "权限 ${currentLevel.label} → 策略包 ${packDisplayName(activePackId)}（${activePackId}）",
                     fontSize = 13.sp,
-                    color = colors.textSecondary
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
@@ -287,7 +298,8 @@ fun CapabilitiesScreen() {
                 IconButton(onClick = { showAddMenu = true }) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
-                        contentDescription = "菜单"
+                        contentDescription = "菜单",
+                        tint = colors.textSecondary
                     )
                 }
                 DropdownMenu(
@@ -412,6 +424,8 @@ fun CapabilitiesScreen() {
                 tools = visibleTools,
                 skills = visibleSkills,
                 currentLevel = currentLevel,
+                packLevel = packLevel,
+                customizedAgentIds = customizedAgentIds,
                 onEditAgent = { agent -> activePromptTarget = PromptTarget.AgentTarget(agent) },
                 onDeleteAgent = { agent -> deleteConfirmTarget = PromptTarget.AgentTarget(agent) },
                 onToggleAgent = { agent, enabled ->
@@ -565,12 +579,20 @@ fun CapabilitiesScreen() {
     }
 }
 
+private fun packDisplayName(packId: String): String = when (packId) {
+    "basic" -> "基础包"
+    "advanced" -> "高级包"
+    else -> "标准包"
+}
+
 @Composable
 fun UnifiedCapabilitiesList(
     agents: List<AgentPromptEntity>,
     tools: List<ToolSkillPromptEntity>,
     skills: List<ToolSkillPromptEntity>,
     currentLevel: AccessLevel,
+    packLevel: Int = 0,
+    customizedAgentIds: Set<String> = emptySet(),
     onEditAgent: (AgentPromptEntity) -> Unit,
     onDeleteAgent: (AgentPromptEntity) -> Unit,
     onToggleAgent: (AgentPromptEntity, Boolean) -> Unit,
@@ -604,7 +626,9 @@ fun UnifiedCapabilitiesList(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         "用上方标签过滤。右侧开关控制是否参与运行；关闭 Agent 会跳过对应模型调用，" +
-                            "关闭 Tool/Skill 会从工具描述和技能匹配中隐藏。长按 Prompt 可编辑。",
+                            "关闭 Tool/Skill 会从工具描述和技能匹配中隐藏。长按 Prompt 可编辑。" +
+                            "名字后的 0/1/2 是该 Agent 所属权限包等级（无障碍/ADB/Root），" +
+                            "带 * 表示这条提示词在当前包里被改过，切换包不会覆盖它。",
                         fontSize = 13.sp,
                         color = colors.textSecondary
                     )
@@ -621,6 +645,8 @@ fun UnifiedCapabilitiesList(
             items(agents, key = { "agent_${it.id}" }) { agent ->
                 AgentCard(
                     agent = agent,
+                    packLevel = packLevel,
+                    customized = agent.id in customizedAgentIds,
                     onEditPrompt = { onEditAgent(agent) },
                     onDelete = { onDeleteAgent(agent) },
                     onToggleEnabled = { onToggleAgent(agent, it) },
@@ -884,6 +910,8 @@ fun FeedbackCard(
 @Composable
 fun AgentCard(
     agent: AgentPromptEntity,
+    packLevel: Int = 0,
+    customized: Boolean = false,
     onEditPrompt: () -> Unit,
     onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
@@ -923,6 +951,14 @@ fun AgentCard(
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.textPrimary
+                        )
+                        // 角标：权限等级 0/1/2；带 * 表示这条提示词在当前包里被改过
+                        Text(
+                            text = if (customized) "$packLevel*" else "$packLevel",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (customized) colors.primary else colors.textHint,
+                            modifier = Modifier.padding(start = 3.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(
@@ -1177,7 +1213,7 @@ fun ToolSkillCard(
                     )
                     if (!available) {
                         Text(
-                            text = "当前等级不可用（仍可编辑/启用）",
+                            text = "当前权限不足（仍可编辑/启用）",
                             fontSize = 11.sp,
                             color = colors.error
                         )
@@ -2196,8 +2232,17 @@ Provide step by step actions."""
                 if (isEdit && !isFeedback) {
                     OutlinedButton(
                         onClick = {
+                            // 恢复的是「当前包」的出厂默认，不是 base 的默认，避免在 basic/advanced 包里填错文案
+                            val factory = if (isAgent && agent != null && activePackId.isNotBlank()) {
+                                PromptRepository.getInstance()
+                                    .getAgentFactoryPromptForPack(agent.id, activePackId)
+                            } else {
+                                ""
+                            }
                             promptValue = TextFieldValue(
-                                agent?.defaultPrompt ?: toolSkill?.defaultPrompt ?: ""
+                                factory.ifBlank {
+                                    agent?.defaultPrompt ?: toolSkill?.defaultPrompt ?: ""
+                                }
                             )
                             errorText = null
                         },

@@ -136,6 +136,8 @@ fun HistoryRecordCard(
 ) {
     val colors = BaoziTheme.colors
     var showDeleteDialog by remember { mutableStateOf(false) }
+    // 长按复制任务原文，方便在模型不稳时重新提交
+    val context = LocalContext.current
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -162,7 +164,24 @@ fun HistoryRecordCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .pointerInput(record.id) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = {
+                        val clipboard = context.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE
+                        ) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(
+                            android.content.ClipData.newPlainText("task", record.instruction)
+                        )
+                        android.widget.Toast.makeText(
+                            context,
+                            "已复制任务内容",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                )
+            },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
     ) {
@@ -403,6 +422,26 @@ fun HistoryDetailScreen(
                         Text("耗时", fontSize = 12.sp, color = colors.textHint)
                         Text(record.formattedDuration, fontSize = 14.sp, color = colors.textPrimary)
                     }
+                }
+                // 失败/中断时把结果原因显示出来，不再只藏在 Toast 里
+                if (record.resultMessage.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("结果", fontSize = 12.sp, color = colors.textHint)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = record.resultMessage,
+                        fontSize = 13.sp,
+                        color = when (record.status) {
+                            ExecutionStatus.FAILED -> colors.error
+                            ExecutionStatus.STOPPED -> colors.warning
+                            else -> colors.textSecondary
+                        },
+                        modifier = Modifier.pointerInput(record.resultMessage) {
+                            detectTapGestures(onLongPress = {
+                                copyToClipboard(context, "执行结果", record.resultMessage)
+                            })
+                        }
+                    )
                 }
             }
         }

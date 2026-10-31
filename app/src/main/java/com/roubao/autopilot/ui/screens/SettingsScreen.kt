@@ -67,11 +67,18 @@ fun SettingsScreen(
     onUpdateCachedModels: (List<String>) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
+    onUpdateOverlayScale: (Float) -> Unit = {},
+    onUpdateScreenshotMaxWidth: (Int) -> Unit = {},
+    onUpdateDebugEnabled: (Boolean) -> Unit = {},
+    onExitApp: () -> Unit = {},
     onUpdateCloudCrashReport: (Boolean) -> Unit,
     onUpdateRootModeEnabled: (Boolean) -> Unit,
     onUpdateSuCommandEnabled: (Boolean) -> Unit,
+    onUpdateShizukuModeEnabled: (Boolean) -> Unit = {},
+    onUpdateFileAccessRoot: (String) -> Unit = {},
     onUpdateAccessibilityModeEnabled: (Boolean) -> Unit = {},
     onUpdatePromptPackMode: (String) -> Unit = {},
+    onUpdateRootShellConfirmMode: (String) -> Unit = {},
     onUpdateAdvancedModeEnabled: (Boolean) -> Unit = {},
     onRefreshShizuku: () -> Unit = {},
     onSelectProvider: (ApiProvider) -> Unit,
@@ -86,13 +93,26 @@ fun SettingsScreen(
     var showModelDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMaxStepsDialog by remember { mutableStateOf(false) }
+    var showOverlayScaleDialog by remember { mutableStateOf(false) }
+    var showScreenshotSizeDialog by remember { mutableStateOf(false) }
     var showBaseUrlDialog by remember { mutableStateOf(false) }
     var showShizukuHelpDialog by remember { mutableStateOf(false) }
     var showOverlayHelpDialog by remember { mutableStateOf(false) }
     var showRootModeWarningDialog by remember { mutableStateOf(false) }
+    var showFileRootDialog by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
     var showSuCommandWarningDialog by remember { mutableStateOf(false) }
     var showPackDialog by remember { mutableStateOf(false) }
+    var showRootShellConfirmDialog by remember { mutableStateOf(false) }
     val currentLevel by AccessLevelManager.level.collectAsState()
+    val anyPermissionOn = settings.accessibilityModeEnabled ||
+        settings.shizukuModeEnabled || settings.rootModeEnabled
+    val effectivePackLabel = when {
+        currentLevel.rank >= 2 -> "高级包（Root）"
+        currentLevel.rank == 1 -> "标准包（ADB）"
+        !anyPermissionOn -> "未开启任何权限"
+        else -> "基础包（无障碍）"
+    }
     val context = LocalContext.current
     var accessibilityServiceRunning by remember {
         mutableStateOf(AutoPilotAccessibilityService.isServiceRunning())
@@ -170,6 +190,92 @@ fun SettingsScreen(
             )
         }
 
+        // 悬浮窗大小
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "悬浮窗大小",
+                subtitle = "${(settings.overlayScale * 100).toInt()}%",
+                onClick = { showOverlayScaleDialog = true }
+            )
+        }
+
+        // 截图大小（决定发给模型的图像像素数）
+        item {
+            SettingsItem(
+                icon = Icons.Default.Settings,
+                title = "截图大小",
+                subtitle = if (settings.screenshotMaxWidth <= 0) {
+                    "原始分辨率（最费 token）"
+                } else {
+                    "宽 ${settings.screenshotMaxWidth}px · 越小越省 token"
+                },
+                onClick = { showScreenshotSizeDialog = true }
+            )
+        }
+
+        // 调试模式：截图落盘 + 详细日志
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.warning.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Build,
+                            contentDescription = null,
+                            tint = colors.warning,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "调试模式",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (settings.debugEnabled) {
+                                "开：截图存到应用目录，详细日志进 App 日志"
+                            } else {
+                                "关：只保留每步耗时汇总"
+                            },
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            maxLines = 2
+                        )
+                    }
+                    Switch(
+                        checked = settings.debugEnabled,
+                        onCheckedChange = onUpdateDebugEnabled,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.warning,
+                            checkedTrackColor = colors.warning.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput
+                        )
+                    )
+                }
+            }
+        }
+
         // 权限与服务：无障碍 / Shizuku / Root 相邻
         item {
             SettingsSection(title = "权限与服务")
@@ -207,7 +313,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "无障碍支持模式",
+                            text = "无障碍权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary
@@ -270,18 +376,7 @@ fun SettingsScreen(
             }
         }
 
-        // Shizuku 连接 / 授权
-        item {
-            SettingsItem(
-                icon = Icons.Default.Build,
-                title = "Shizuku 连接 / 授权",
-                subtitle = if (shizukuAvailable) "已连接" else "未连接或未授权；basic 模式不需要 Shizuku",
-                onClick = { onRefreshShizuku() }
-            )
-        }
-
-        // Root 模式 / 高级权限（并入「权限与服务」，不再单独分组）
-        // 显示当前权限级别
+        // ADB 权限开关：关闭后不探测 Shizuku，策略包退回 basic（仅无障碍）
         item {
             Card(
                 modifier = Modifier
@@ -300,51 +395,76 @@ fun SettingsScreen(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                when (shizukuPrivilegeLevel) {
-                                    "ROOT" -> colors.error.copy(alpha = 0.15f)
-                                    else -> colors.primary.copy(alpha = 0.15f)
-                                }
-                            ),
+                            .background(colors.primary.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Info,
+                            imageVector = Icons.Default.Lock,
                             contentDescription = null,
-                            tint = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> colors.error
-                                else -> colors.primary
-                            },
+                            tint = colors.primary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "当前权限级别",
+                            text = "ADB 权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
                             color = colors.textPrimary
                         )
                         Text(
-                            text = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> "Root 模式 (UID 0)"
-                                "ADB" -> "ADB 模式 (UID 2000)"
-                                else -> "未连接"
+                            text = when {
+                                !settings.shizukuModeEnabled ->
+                                    "已关闭：策略包停在 basic（仅无障碍）"
+                                !shizukuAvailable ->
+                                    "未连接 Shizuku，开启后也不生效"
+                                else ->
+                                    "已开启（$shizukuPrivilegeLevel），激活 standard 包"
                             },
                             fontSize = 13.sp,
-                            color = when (shizukuPrivilegeLevel) {
-                                "ROOT" -> colors.error
-                                else -> colors.textSecondary
+                            color = if (settings.shizukuModeEnabled && shizukuAvailable) {
+                                colors.primary
+                            } else {
+                                colors.textSecondary
                             },
-                            maxLines = 1
+                            maxLines = 2
                         )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (shizukuAvailable) "Shizuku：已连接" else "Shizuku：未连接",
+                                fontSize = 11.sp,
+                                color = if (shizukuAvailable) colors.success else colors.error
+                            )
+                            TextButton(
+                                onClick = { onRefreshShizuku() },
+                                contentPadding = PaddingValues(horizontal = 6.dp)
+                            ) {
+                                Text("刷新授权", fontSize = 11.sp)
+                            }
+                        }
                     }
+                    Switch(
+                        checked = settings.shizukuModeEnabled,
+                        onCheckedChange = onUpdateShizukuModeEnabled,
+                        enabled = shizukuAvailable,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.primary,
+                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput,
+                            disabledCheckedThumbColor = colors.textHint,
+                            disabledCheckedTrackColor = colors.backgroundInput,
+                            disabledUncheckedThumbColor = colors.textHint.copy(alpha = 0.5f),
+                            disabledUncheckedTrackColor = colors.backgroundInput.copy(alpha = 0.5f)
+                        )
+                    )
                 }
             }
         }
 
-        // Root 模式开关（仅在 Shizuku 以 Root 权限运行时可用）
+        // Root 权限开关（仅在 Shizuku 以 Root 权限运行时可用）
         item {
             val isShizukuRoot = shizukuPrivilegeLevel == "ROOT"
             Card(
@@ -380,24 +500,27 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(16.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Root 模式",
+                            text = "Root 权限",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
-                            color = if (isShizukuRoot) colors.textPrimary else colors.textHint
+                            color = colors.textPrimary
                         )
                         Text(
                             text = when {
-                                !isShizukuRoot -> "需要 Shizuku 以 Root 权限运行"
-                                settings.rootModeEnabled -> "已启用高级权限"
-                                else -> "启用后可使用 Root 功能"
+                                !settings.rootModeEnabled ->
+                                    if (isShizukuRoot) "已关闭：策略包停在 standard" else "已关闭"
+                                !isShizukuRoot ->
+                                    "需要 Shizuku 以 Root 权限运行，开启后也不生效"
+                                else ->
+                                    "已开启（UID 0），激活 advanced 包"
                             },
                             fontSize = 13.sp,
-                            color = when {
-                                !isShizukuRoot -> colors.textHint
-                                settings.rootModeEnabled -> colors.error
-                                else -> colors.textSecondary
+                            color = if (settings.rootModeEnabled && isShizukuRoot) {
+                                colors.error
+                            } else {
+                                colors.textSecondary
                             },
-                            maxLines = 1
+                            maxLines = 2
                         )
                     }
                     Switch(
@@ -491,18 +614,93 @@ fun SettingsScreen(
             }
         }
 
-        // 提示词包选择
+        // Agent 策略包（只影响 Agent prompt，不影响 tool/skill 可用性）
         item {
             SettingsItem(
                 icon = Icons.Default.Star,
-                title = "提示词包",
-                subtitle = when (settings.promptPackMode) {
-                    "basic" -> "基础包（仅无障碍）"
-                    "standard" -> "标准包（Shizuku / su-user）"
-                    "advanced" -> "高级包（Root）"
-                    else -> "自动（当前等级：${currentLevel.label}）"
+                title = "Agent 策略包（预览/编辑）",
+                subtitle = buildString {
+                    append(
+                        when (settings.promptPackMode) {
+                            "basic" -> "预览：基础包"
+                            "standard" -> "预览：标准包"
+                            "advanced" -> "预览：高级包"
+                            else -> "自动（按当前权限选）"
+                        }
+                    )
+                    append(" · 当前生效：")
+                    append(effectivePackLabel)
+                    if (!anyPermissionOn) append(" —— 请先开启一项权限")
                 },
                 onClick = { showPackDialog = true }
+            )
+        }
+
+        // 文件工具授权目录：所有 file 操作必须落在这个目录内
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clickable { showFileRootDialog = true },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "文件授权目录（file 工具）",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = settings.fileAccessRoot,
+                            fontSize = 12.sp,
+                            color = colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = "修改",
+                        fontSize = 13.sp,
+                        color = colors.primary
+                    )
+                }
+            }
+        }
+
+        // Root 命令确认（仅影响 root_shell，不影响普通 shell）
+        item {
+            SettingsItem(
+                icon = Icons.Default.Build,
+                title = "Root 命令确认",
+                subtitle = if (settings.rootShellConfirmMode == "auto") {
+                    "默认通过（root_shell 不再逐次确认）"
+                } else {
+                    "每次提醒（root_shell 执行前弹确认）"
+                },
+                onClick = { showRootShellConfirmDialog = true }
             )
         }
 
@@ -714,7 +912,7 @@ fun SettingsScreen(
             SettingsItem(
                 icon = Icons.Default.Info,
                 title = "版本",
-                subtitle = BuildConfig.VERSION_NAME,
+                subtitle = "${BuildConfig.VERSION_NAME} · build ${BuildConfig.BUILD_TIME}",
                 onClick = { }
             )
         }
@@ -728,10 +926,77 @@ fun SettingsScreen(
             )
         }
 
+        // 退出应用（部分 ROM 上返回键退不掉，这里给一个明确入口）
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .clickable { showExitDialog = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.error.copy(alpha = 0.12f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = colors.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "退出应用",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.error
+                    )
+                }
+            }
+        }
+
         // 底部间距
         item {
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+
+    // 退出确认
+    if (showExitDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("退出肉包", color = colors.textPrimary) },
+            text = {
+                Text(
+                    text = if (isExecuting) {
+                        "当前有任务在执行，退出会先停止任务，再关闭悬浮窗并退出应用。确定退出？"
+                    } else {
+                        "将停止悬浮窗并关闭应用。无障碍服务本身由系统持有，需要在系统设置里单独关闭。"
+                    },
+                    color = colors.textSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExitDialog = false
+                    onExitApp()
+                }) {
+                    Text("退出", color = colors.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitDialog = false }) {
+                    Text("取消", color = colors.textSecondary)
+                }
+            }
+        )
     }
 
     // 主题选择对话框
@@ -754,6 +1019,75 @@ fun SettingsScreen(
             onConfirm = {
                 onUpdateMaxSteps(it)
                 showMaxStepsDialog = false
+            }
+        )
+    }
+
+    // 悬浮窗大小
+    if (showOverlayScaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showOverlayScaleDialog = false },
+            title = { Text("悬浮窗大小") },
+            text = {
+                Column {
+                    val options = listOf(0.5f, 0.6f, 0.65f, 0.7f, 0.8f, 1.0f)
+                    options.forEach { scale ->
+                        TextButton(
+                            onClick = {
+                                onUpdateOverlayScale(scale)
+                                showOverlayScaleDialog = false
+                            }
+                        ) {
+                            Text(
+                                text = "${(scale * 100).toInt()}%" +
+                                    if (kotlin.math.abs(scale - settings.overlayScale) < 0.01f) "  ✓" else "",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showOverlayScaleDialog = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // 截图大小（宽度像素）
+    if (showScreenshotSizeDialog) {
+        AlertDialog(
+            onDismissRequest = { showScreenshotSizeDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("截图大小") },
+            text = {
+                Column {
+                    Text(
+                        text = "数值是截图宽度（竖屏手机看宽度最直观）。越小越省 token，但小字也越容易糊。1080 宽 ≈ 原图。",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    val options = listOf(540, 720, 900, 1080, 0)
+                    options.forEach { px ->
+                        TextButton(
+                            onClick = {
+                                onUpdateScreenshotMaxWidth(px)
+                                showScreenshotSizeDialog = false
+                            }
+                        ) {
+                            val mark = if (settings.screenshotMaxWidth == px) "  ✓" else ""
+                            Text(
+                                text = (if (px == 0) "不缩放（原图）" else "宽 $px px") + mark,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showScreenshotSizeDialog = false }) { Text("关闭") }
             }
         )
     }
@@ -802,6 +1136,18 @@ fun SettingsScreen(
         )
     }
 
+    // 文件工具授权目录
+    if (showFileRootDialog) {
+        FileRootDialog(
+            current = settings.fileAccessRoot,
+            onDismiss = { showFileRootDialog = false },
+            onConfirm = {
+                onUpdateFileAccessRoot(it)
+                showFileRootDialog = false
+            }
+        )
+    }
+
     // Shizuku 帮助对话框
     if (showShizukuHelpDialog) {
         ShizukuHelpDialog(onDismiss = { showShizukuHelpDialog = false })
@@ -812,17 +1158,66 @@ fun SettingsScreen(
         OverlayHelpDialog(onDismiss = { showOverlayHelpDialog = false })
     }
 
-    // 提示词包选择
+    // Root 命令确认模式
+    if (showRootShellConfirmDialog) {
+        val options = listOf(
+            "always" to "每次提醒（推荐）",
+            "auto" to "默认通过（不再逐次确认）"
+        )
+        AlertDialog(
+            onDismissRequest = { showRootShellConfirmDialog = false },
+            containerColor = colors.backgroundCard,
+            title = { Text("Root 命令确认") },
+            text = {
+                Column {
+                    Text(
+                        "仅影响 root_shell（su / Shizuku Root）；普通 shell 不受影响。",
+                        fontSize = 13.sp,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    options.forEach { (mode, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onUpdateRootShellConfirmMode(mode)
+                                    showRootShellConfirmDialog = false
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = settings.rootShellConfirmMode == mode,
+                                onClick = {
+                                    onUpdateRootShellConfirmMode(mode)
+                                    showRootShellConfirmDialog = false
+                                }
+                            )
+                            Text(label, fontSize = 14.sp, color = colors.textPrimary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showRootShellConfirmDialog = false }) {
+                    Text("关闭", color = colors.textSecondary)
+                }
+            }
+        )
+    }
+
+    // Agent 策略包选择
     if (showPackDialog) {
         val options = listOf(
-            "auto" to "自动（按当前等级选最高可用包）",
-            "basic" to "基础包 · 仅无障碍",
-            "standard" to "标准包 · Shizuku / su-user",
-            "advanced" to "高级包 · Root"
+            "auto" to "自动（按当前等级选 Agent 策略）",
+            "basic" to "基础 Agent · 仅无障碍策略",
+            "standard" to "标准 Agent · Shizuku / ADB 策略",
+            "advanced" to "高级 Agent · Root 策略"
         )
         AlertDialog(
             onDismissRequest = { showPackDialog = false },
-            title = { Text("提示词包") },
+            title = { Text("Agent 策略包（预览/编辑）") },
             text = {
                 Column {
                     Text(
@@ -866,7 +1261,7 @@ fun SettingsScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "提示：标准/高级包需要相应权限；等级不够时选择不会生效，会自动回退到可用包。",
+                        "只影响 Agent prompt，不影响 tool / skill 的可用性；tool/skill 只看当前权限等级。运行时按当前权限自动选 Agent 策略，这里的选项只影响预览/编辑。",
                         fontSize = 11.sp,
                         color = colors.textHint
                     )
@@ -1150,6 +1545,68 @@ fun ApiKeyDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(key) }) {
+                Text("确定", color = colors.primary)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textSecondary)
+            }
+        }
+    )
+}
+
+
+/**
+ * 文件工具授权目录的编辑对话框。
+ */
+@Composable
+fun FileRootDialog(
+    current: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val colors = BaoziTheme.colors
+    var path by remember { mutableStateOf(current) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.backgroundCard,
+        title = {
+            Text("文件授权目录", color = colors.textPrimary)
+        },
+        text = {
+            Column {
+                Text(
+                    text = "模型只能在这个目录内读写文件。移动、删除、覆盖已有文件会先征求你的同意。",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.backgroundInput)
+                        .padding(4.dp)
+                ) {
+                    BasicTextField(
+                        value = path,
+                        onValueChange = { path = it },
+                        textStyle = TextStyle(
+                            color = colors.textPrimary,
+                            fontSize = 14.sp
+                        ),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(path) }) {
                 Text("确定", color = colors.primary)
             }
         },

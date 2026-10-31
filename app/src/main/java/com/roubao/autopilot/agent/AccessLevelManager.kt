@@ -53,15 +53,15 @@ object AccessLevelManager {
             false
         }
 
-        val shizukuUid = shizukuUid()
+        val shizukuUid = if (settings?.shizukuModeEnabled != false) shizukuUid() else null
         val rootAllowed = settings?.advancedModeEnabled == true
 
+        // 无障碍只决定 UI 能力（tree/gesture/screenshot），不是 shell/root 等级的前置条件。
+        // 例如无障碍意外断开但 Shizuku ADB 仍在，level 必须保持 adb，shell/skill 不能被隐藏。
         val next = when {
-            accessibility.not() -> AccessLevel.USER
             shizukuUid == 0 && rootAllowed -> AccessLevel.ROOT
-            shizukuUid == 0 -> AccessLevel.USER // Shizuku Root 但未开高级模式：没有 user shell
-            shizukuUid == 2000 -> AccessLevel.ADB
             rootAvailable == true && rootAllowed -> AccessLevel.ROOT
+            shizukuUid == 2000 -> AccessLevel.ADB
             suUserAvailable == true -> AccessLevel.ADB
             else -> AccessLevel.USER
         }
@@ -75,7 +75,12 @@ object AccessLevelManager {
      */
     fun ensureSuUser(context: Context) {
         if (suUserAvailable != null) return
-        if (shizukuUid() == 2000) {
+        val shizukuOn = try {
+            App.getInstance().settingsManager.settings.value.shizukuModeEnabled
+        } catch (e: Exception) {
+            true
+        }
+        if (shizukuOn && shizukuUid() == 2000) {
             suUserAvailable = false
             refresh(context)
             return

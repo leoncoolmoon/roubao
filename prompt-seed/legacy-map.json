@@ -66,11 +66,6 @@
   "set_alarm": {
     "dependence": []
   },
-  "shell_calc": {
-    "dependence": [
-      "adb"
-    ]
-  },
   "shopping": {
     "dependence": []
   },
@@ -119,5 +114,10 @@
   },
   "type": {
     "dependence": []
+  },
+  "root_shell": {
+    "dependence": [
+      "root"
+    ]
   }
 }

@@ -18,12 +18,20 @@ class ConversationMemory {
     private val messages = mutableListOf<Message>()
 
     /**
+     * 本轮待发送的截图。**不进历史**，只在渲染请求时作为最后一条消息追加。
+     *
+     * 之前把图挂在当轮的 user 消息上，下一轮再删掉，导致同一条历史消息在两次请求里
+     * 序列化结果不同 —— 前缀从那张图的位置开始就全部失配，缓存命中率永远是 0。
+     */
+    private var pendingImageBase64: String? = null
+
+    /**
      * 消息类型
      */
     data class Message(
         val role: String,  // "system", "user", "assistant"
         val textContent: String,
-        var imageBase64: String? = null  // 图片用完后置为 null
+        var imageBase64: String? = null  // 已废弃：历史消息不再带图
     )
 
     /**
@@ -34,11 +42,11 @@ class ConversationMemory {
     }
 
     /**
-     * 添加用户消息（带截图）
+     * 添加用户消息（截图单独走 pendingImage，不写进历史）
      */
     fun addUserMessage(text: String, image: Bitmap? = null) {
-        val imageBase64 = image?.let { bitmapToBase64(it) }
-        messages.add(Message(role = "user", textContent = text, imageBase64 = imageBase64))
+        messages.add(Message(role = "user", textContent = text))
+        pendingImageBase64 = image?.let { bitmapToBase64(it) }
     }
 
     /**
@@ -49,17 +57,11 @@ class ConversationMemory {
     }
 
     /**
-     * 删除最后一条用户消息中的图片（节省 token）
-     * 在获取模型响应后调用
+     * 清掉本轮待发送的截图（响应回来后调用）。
+     * 历史消息本身不含图，所以这里不会改变任何已发送过的内容。
      */
     fun stripLastUserImage() {
-        for (i in messages.indices.reversed()) {
-            if (messages[i].role == "user" && messages[i].imageBase64 != null) {
-                messages[i].imageBase64 = null
-                println("[ConversationMemory] 已删除第 $i 条消息的图片")
-                break
-            }
-        }
+        pendingImageBase64 = null
     }
 
     /**
@@ -72,40 +74,36 @@ class ConversationMemory {
 
     /**
      * 构建 OpenAI 兼容的 messages JSON
-     * @param includeImages 是否包含图片（最后一条用户消息的图片）
+     * @param includeImages 是否附加本轮截图
      */
     fun toMessagesJson(includeImages: Boolean = true): JSONArray {
         val jsonArray = JSONArray()
 
-        for ((index, msg) in messages.withIndex()) {
-            val msgJson = JSONObject()
-            msgJson.put("role", msg.role)
+        // 历史消息永远只序列化成 "role + 纯文本"，逐字节稳定，才能命中前缀缓存
+        for (msg in messages) {
+            jsonArray.put(JSONObject().apply {
+                put("role", msg.role)
+                put("content", msg.textContent)
+            })
+        }
 
-            // 判断是否需要包含图片
-            val shouldIncludeImage = includeImages &&
-                    msg.imageBase64 != null &&
-                    index == messages.indexOfLast { it.role == "user" }
-
-            if (shouldIncludeImage && msg.imageBase64 != null) {
-                // 多模态消息格式
-                val contentArray = JSONArray()
-                contentArray.put(JSONObject().apply {
-                    put("type", "text")
-                    put("text", msg.textContent)
+        val image = pendingImageBase64
+        if (includeImages && !image.isNullOrBlank()) {
+            val contentArray = JSONArray()
+            contentArray.put(JSONObject().apply {
+                put("type", "text")
+                put("text", "Current screen (latest screenshot):")
+            })
+            contentArray.put(JSONObject().apply {
+                put("type", "image_url")
+                put("image_url", JSONObject().apply {
+                    put("url", "data:image/jpeg;base64,$image")
                 })
-                contentArray.put(JSONObject().apply {
-                    put("type", "image_url")
-                    put("image_url", JSONObject().apply {
-                        put("url", "data:image/jpeg;base64,${msg.imageBase64}")
-                    })
-                })
-                msgJson.put("content", contentArray)
-            } else {
-                // 纯文本消息
-                msgJson.put("content", msg.textContent)
-            }
-
-            jsonArray.put(msgJson)
+            })
+            jsonArray.put(JSONObject().apply {
+                put("role", "user")
+                put("content", contentArray)
+            })
         }
 
         return jsonArray

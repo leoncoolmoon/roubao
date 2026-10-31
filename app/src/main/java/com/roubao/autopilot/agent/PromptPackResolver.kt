@@ -13,6 +13,9 @@ import com.roubao.autopilot.data.PromptRepository
  */
 object PromptPackResolver {
 
+    /** 运行时：Agent 策略包跟随当前权限等级自动选择，避免 basic Agent 策略配 adb/root 工具。 */
+    fun resolveRuntime(level: AccessLevel): PromptPackEntity? = resolve(level, "auto")
+
     fun resolve(level: AccessLevel, mode: String): PromptPackEntity? {
         val packs = try {
             PromptRepository.getInstance().getAllPacks()
