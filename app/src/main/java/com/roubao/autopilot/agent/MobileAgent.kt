@@ -122,8 +122,42 @@ Output exactly one action:
     // 连续模型失败计数：达到阈值就暂停，交回用户决定
     private var consecutiveModelFailures = 0
 
-    /** 排除 null / None / 空串这类无效文本，避免一次坏响应冲掉计划。 */
-    private fun isUsableText(text: String): Boolean {
+    /** 启动信息：模型 + 服务商，方便从日志判断这次跑的是哪个组合。 */
+    private fun startupInfo(): String {
+        val model = try {
+            vlmClient?.modelName()?.takeIf { it.isNotBlank() } ?: "未配置"
+        } catch (e: Exception) {
+            "未知"
+        }
+        val provider = try {
+            App.getInstance().settingsManager.settings.value.currentProvider.name
+        } catch (e: Exception) {
+            "未知"
+        }
+        return "模型: $model · 服务商: $provider"
+    }
+
+    /** Agent 提示词来源：默认还是被改过，以及每个 agent 是否启用。 */
+    private fun promptSourceInfo(packId: String): String {
+        val repo = try {
+            PromptRepository.getInstance()
+        } catch (e: Exception) {
+            null
+        } ?: return "Agent 提示词: 未知"
+
+        val ids = listOf("manager", "executor", "reflector", "notetaker")
+        val customized = ids.filter {
+            runCatching { repo.isAgentCustomizedForPack(it, packId) }.getOrDefault(false)
+        }
+        val enabled = ids.filter {
+            runCatching { repo.isAgentEnabled(it) }.getOrDefault(true)
+        }
+        val source = if (customized.isEmpty()) "默认" else "自定义(${customized.joinToString(",")})"
+        val states = ids.joinToString(" ") { if (it in enabled) "$it✓" else "$it✗" }
+        return "Agent 提示词: $source · 启用: $states"
+    }
+
+    /** 排除 null / None / 空串这类无效文本，避免一次坏响应冲掉计划。 */    private fun isUsableText(text: String): Boolean {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return false
         return !trimmed.equals("null", ignoreCase = true) && !trimmed.equals("none", ignoreCase = true)
@@ -244,6 +278,7 @@ Output exactly one action:
 
         log("使用 OpenAI 兼容模式")
         fileTool.resetApprovals()
+        log(startupInfo())
 
         AccessLevelManager.refresh(context)
         val accessLevel = AccessLevelManager.current()
@@ -258,6 +293,7 @@ Output exactly one action:
         infoPool.packId = packId
         infoPool.accessLevel = accessLevel.id
         log("访问等级: ${accessLevel.id}, Agent 策略包: $packId")
+        log(promptSourceInfo(packId))
         infoPool.availableSkills = try {
             skillManager?.getEnabledSkillRoster(infoPool.effectiveLevel())
                 ?.joinToString("\n") { "- ${it.id}: ${it.description}" }
